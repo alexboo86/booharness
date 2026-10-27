@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="351.75" viewBox="0 0 1280 351.75" preserveAspectRatio="xMinYMin meet" role="img" aria-label="Chat"><style>
+:root {
+  --bg: #f4f4f2; --surface: #fcfcfb; --raised: #ffffff; --ink: #1c1c1a; --ink-2: #4a4a45; --muted: #85847d;
+  --line: #e4e3de; --track: #ebeae5; --accent: #465e80; --accent-soft: #e9edf3; --badge-ink: #304760; --badge-muted: #67665f;
+  --skill-1-soft: #e2efe2; --skill-1-ink: #2c5b33; --skill-2-soft: #e6efda; --skill-2-ink: #495217; --skill-3-soft: #dbeee4; --skill-3-ink: #175247;
+  --tool-1-soft: #f6ecd3; --tool-1-ink: #644a04; --tool-2-soft: #f8e7d6; --tool-2-ink: #70380b; --tool-3-soft: #f3eedd; --tool-3-ink: #59491a;
+  --pi-1-soft: #e9e3f3; --pi-1-ink: #48367a; --pi-2-soft: #f1e3f4; --pi-2-ink: #6a2b79;
+  --mcp-1-soft: #dbeff0; --mcp-1-ink: #0f5052; --mcp-2-soft: #dfeef6; --mcp-2-ink: #18496a;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #bc3030; --critical-soft: #fbeaea; --on-critical: #ffffff; --warning-soft: #fdf4e1;
+  --shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #121211; --surface: #1a1a19; --raised: #1f1f1d; --ink: #edece7; --ink-2: #c3c2bb; --muted: #8d8c85;
+    --line: #2d2c29; --track: #2a2926; --accent: #aabbd5; --accent-soft: #28313d; --badge-ink: #d9e3f1; --badge-muted: #aaa9a0; --critical: #ec8c8c; --critical-soft: #3a1f1f; --on-critical: #121211; --warning-soft: #3a3120;
+    --skill-1-soft: #20321f; --skill-1-ink: #b7e2bb; --skill-2-soft: #2f3421; --skill-2-ink: #d2e2a2; --skill-3-soft: #1d332b; --skill-3-ink: #abe1cf;
+    --tool-1-soft: #38321c; --tool-1-ink: #ecd9a0; --tool-2-soft: #3a2c1d; --tool-2-ink: #f0cfae; --tool-3-soft: #36331f; --tool-3-ink: #e4dcae;
+    --pi-1-soft: #2c2740; --pi-1-ink: #cfc4f0; --pi-2-soft: #38203c; --pi-2-ink: #e6bdf0;
+    --mcp-1-soft: #1c3638; --mcp-1-ink: #abdfe2; --mcp-2-soft: #1e3240; --mcp-2-ink: #b3d8ec;
+    --shadow: none; }
+}
+text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.brand, .big { font-weight: 700; letter-spacing: -.01em; }
+.host { font-weight: 700; }
+.section { font-weight: 600; letter-spacing: .08em; }
+.sect-label { letter-spacing: .05em; }
+.skill { font-style: italic; }
+.verdict { font-weight: 700; letter-spacing: .03em; }
+.card { filter: drop-shadow(var(--shadow)); }
+@media (prefers-color-scheme: dark) { .card { filter: none; } }
+</style><rect x="0" y="0" width="1280" height="351.75" rx="12" fill="var(--raised)" stroke="var(--line)" class="card"/><text x="14" y="27" fill="var(--muted)" font-size="13">Live handles: lead-a, lead-b, lead-c, lead-d, lead-e, lead-f, lead-g, lead-h, lead-i, lead-j, lead-k, lead-l, lead-m, lead-n, lead-o, lead-p, lead-q, lead-r, lead-s, lead-t, lead-u, lead-v, lead-w, lead-x, lead-y,</text><text x="14" y="45.849999999999994" fill="var(--muted)" font-size="13">lead-z · 3 watching</text><text x="14" y="80.69999999999999" fill="var(--ink-2)" font-size="11.5" class="mono">17:41</text><text x="56.5" y="80.69999999999999" fill="var(--critical)" font-size="13" font-weight="600">lead-t</text><g><title>wake</title><text x="1252" y="80.69999999999999" fill="var(--serious)" font-size="13">⚑</text></g><text x="14" y="106.04999999999998" fill="var(--ink-2)" font-size="11.5" class="mono">lead-f:</text><text x="14" y="128.22499999999997" fill="var(--ink)" font-size="13">Parser checks passed. The change is ready for review.</text><g><title>lead-f: read · delivered 17:41 · confirmed 17:41</title><rect x="14.5" y="147.22499999999997" width="106.70000000000002" height="27.675" rx="4" fill="var(--surface)" stroke="var(--line)"/><text x="23" y="165.40949999999998" fill="var(--ink-2)" font-size="11.5" class="mono">lead-f · read</text></g><path d="M14 194.72499999999997H1266" stroke="var(--line)"/><text x="14" y="223.72499999999997" fill="var(--ink-2)" font-size="11.5" class="mono">17:42</text><text x="56.5" y="223.72499999999997" fill="var(--serious)" font-size="13" font-weight="600">lead-x</text><text x="14" y="249.07499999999996" fill="var(--ink-2)" font-size="11.5" class="mono">lead-t:</text><text x="14" y="271.25" fill="var(--ink)" font-size="13">I will review the API response and report the result.</text><g><title>lead-t: pending</title><rect x="14.5" y="290.25" width="127.40000000000003" height="27.675" rx="4" fill="var(--surface)" stroke="var(--line)"/><text x="23" y="308.4345" fill="var(--ink-2)" font-size="11.5" class="mono">lead-t · pending</text></g></svg>

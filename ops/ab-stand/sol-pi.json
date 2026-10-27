@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/NVlabs/SoL-Pi.git",
+  "commit": "e1a586af0ad8956f42ae5b26bba20e48fbf30e00",
+  "license": "MIT",
+  "extension": "src/sol-pi/index.ts",
+  "tools": ["edit", "write", "obs_recall"],
+  "config": {
+    "version": 1,
+    "actionFusion": true,
+    "observationPack": true,
+    "evidencePreservingReducer": false,
+    "onlineContextCompact": false
+  }
+}

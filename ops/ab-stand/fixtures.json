@@ -1,0 +1,137 @@
+{
+  "scout-1": {
+    "role": "scout",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "At the pinned commit, explain how orch persists a seat, a turn, and its usage, including what happens to running turns on restart. Cite exact repo-relative file:line for each fact. Do not inspect other checkouts or live tracks. Return only the required scout JSON report; put citations in findings.evidence or checked.",
+    "truth": [
+      { "id": "seat-row", "fact": "A seat is persisted in the seats table with a JSON data column.", "claimPatterns": ["\\bseat\\b", "\\b(row|table)\\b", "\\b(JSON|data)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "MIGRATIONS[0]::seats", "contains": "data TEXT NOT NULL" },
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "openStore.insertSeat", "contains": "INSERT INTO seats" }
+      ] },
+      { "id": "turn-row", "fact": "One turn is persisted per prompt with a seat ID and sequence.", "claimPatterns": ["\\bturn\\b", "\\b(row|prompt)\\b", "\\b(seq|sequence)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "MIGRATIONS[1]", "contains": "UNIQUE (seat_id, seq)" },
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "openStore.insertTurn", "contains": "seatId" }
+      ] },
+      { "id": "usage-json", "fact": "The turn usage value is stored as JSON or NULL.", "claimPatterns": ["\\busage\\b", "\\b(stored|persisted|serialized)\\b", "\\b(JSON|NULL)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "MIGRATIONS[1]::turns.usage", "contains": "usage TEXT CHECK" },
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "openStore.finishTurn", "contains": "JSON.stringify(end.usage)" }
+      ] },
+      { "id": "restart-interrupt", "fact": "Restart marks running turns interrupted; queued turns stay queued.", "claimPatterns": ["\\b(restart|recover|orphan)\\b", "\\b(interrupt(?:ed|s)?|mark(?:ed|s)?)\\b", "\\bturns?\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "openStore.interruptOrphans", "contains": "status = 'interrupted'" }
+      ] }
+    ]
+  },
+  "scout-2": {
+    "role": "scout",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "At the pinned commit, identify the Codex adapter's convention for cached input, the actual calculation of uncached input, and how a seat's digest presents token totals. Cite exact repo-relative file:line for each fact. Do not inspect live tracks. Return only the required scout JSON report; put citations in findings.evidence or checked.",
+    "truth": [
+      { "id": "codex-cached", "fact": "Codex includes cached input inside inputTokens.", "claimPatterns": ["\\b(cache[ds]?|cachedInputTokens)\\b", "\\b(inputTokens|input tokens)\\b", "\\b(includ(?:e|es|ed)|inside)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/providers/codex.ts", "symbol": "codexUsage", "contains": "cachedInputTokens" }
+      ] },
+      { "id": "codex-uncached", "fact": "The adapter subtracts cached input to compute uncached input.", "claimPatterns": ["\\b(cache[ds]?|cachedInputTokens)\\b", "\\b(subtract(?:s|ed)?|minus|uncached)\\b", "\\b(inputTokens|input tokens)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/providers/codex.ts", "symbol": "codexUsage.inputTokens", "contains": "last.inputTokens - cached" }
+      ] },
+      { "id": "digest-total", "fact": "The seat digest combines input, cache and output tokens in the presented total.", "claimPatterns": ["\\b(digest|token total|total tokens)\\b", "\\b(input|cache)\\b", "\\b(total|sum|combin(?:es|ed))\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/seats.ts", "symbol": "SeatManager.digest", "contains": "usage.inputTokens +" }
+      ] }
+    ]
+  },
+  "coder-1": {
+    "role": "coder",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "In your disposable checkout at the pinned commit, make human wait digests put Unicode line separators U+2028 and U+2029 on continuation lines as ordinary newlines (currently item() handles only CR/LF). Add a regression named 'AB stand: Unicode separators in wait error' to scripts/test-orchestrator.mjs. Own only ops/orchestrator/src/digest-text.ts and scripts/test-orchestrator.mjs. Run node --test --test-name-pattern='AB stand: Unicode separators in wait error' scripts/test-orchestrator.mjs. No commits or memory writes. Report the exact check.",
+    "owned": ["ops/orchestrator/src/digest-text.ts", "scripts/test-orchestrator.mjs"],
+    "mustChange": "ops/orchestrator/src/digest-text.ts",
+    "test": "scripts/test-orchestrator.mjs",
+    "testName": "AB stand: Unicode separators in wait error"
+  },
+  "coder-2": {
+    "role": "coder",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "In your disposable checkout at the pinned commit, reject malformed Codex usage where cachedInputTokens exceeds inputTokens: codexUsage must return null rather than negative uncached input. Add regression named 'AB stand: cached tokens cannot exceed input' to scripts/test-orch-providers.mjs. Own only ops/orchestrator/src/providers/codex.ts and scripts/test-orch-providers.mjs. Run node --test --test-name-pattern='AB stand: cached tokens cannot exceed input' scripts/test-orch-providers.mjs. No commits or memory writes. Report the exact check.",
+    "owned": ["ops/orchestrator/src/providers/codex.ts", "scripts/test-orch-providers.mjs"],
+    "mustChange": "ops/orchestrator/src/providers/codex.ts",
+    "test": "scripts/test-orch-providers.mjs",
+    "testName": "AB stand: cached tokens cannot exceed input"
+  },
+  "edit-1": {
+    "role": "coder",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "In your disposable checkout at the pinned commit, make human wait digests put Unicode line separators U+2028 and U+2029 on continuation lines as ordinary newlines (currently item() handles only CR/LF). Change only ops/orchestrator/src/digest-text.ts, and write no test and run no test: your seat contract forbids both. No commits or memory writes. Report the exact diff of that one file.",
+    "owned": ["ops/orchestrator/src/digest-text.ts"],
+    "mustChange": "ops/orchestrator/src/digest-text.ts"
+  },
+  "edit-2": {
+    "role": "coder",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "In your disposable checkout at the pinned commit, reject malformed Codex usage where cachedInputTokens exceeds inputTokens: codexUsage must return null rather than negative uncached input. Change only ops/orchestrator/src/providers/codex.ts, and write no test and run no test: your seat contract forbids both. No commits or memory writes. Report the exact diff of that one file.",
+    "owned": ["ops/orchestrator/src/providers/codex.ts"],
+    "mustChange": "ops/orchestrator/src/providers/codex.ts"
+  },
+  "scout-short": {
+    "role": "scout",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "At this pinned commit, where is a seat persisted? Cite the seats table's JSON data column as repo-relative file:line. Use at most two tool calls. Return the required JSON report; do not write files or memory.",
+    "truth": [
+      { "id": "seat-row", "fact": "A seat is persisted in the seats table with a JSON data column.", "claimPatterns": ["\\bseat\\b", "\\b(row|table)\\b", "\\b(JSON|data)\\b"], "symbols": [
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "MIGRATIONS[0]::seats", "contains": "data TEXT NOT NULL" },
+        { "path": "ops/orchestrator/src/store.ts", "symbol": "openStore.insertSeat", "contains": "INSERT INTO seats" }
+      ] }
+    ]
+  },
+  "lesson-12805": {
+    "role": "coder",
+    "base": "0ac5b3ae16f6330a82868079b7262c758361595d",
+    "brief": "Task 1787 round 3. HEAD (0ac5b3ae1) holds two rounds of fixes to the commit gate in ops/bootstrap/code-intel-order-hook.mjs, which allows `git commit` only after `npm run check:commit` succeeded in the same Bash command. Each review round found new bypasses by enumerating shell shapes. Stop enumerating; narrow what re-arms the gate.\n\nStill open (bash with the check replaced by `false` runs COMMIT; the hook allows):\n- `[ $rc -eq 0 ] # || exit 1` and `false # &&\\ngit commit`: the hook splits operators before handling comments (~:428; splitTopLevel rtk-rewrite-lib.mjs:313). Strip comments (a word starting `#`, outside quotes, to end of line) BEFORE the split. `a#b` and quoted `#` are not comments; `check && # c\\ngit commit` stays allowed.\n- `|| exit 1a` / `|| exit \"\"` do not exit. Accept only `exit` or `exit <digits>`.\n- `((rc=0))`, `: $((rc=0))`, `rc[0]=0`, `printf -v rc 0`, a nameref before the guard. Fix by adjacency: honour the rc re-arm (`|| exit` and `&&` forms) only when the `<v>=$?` segment immediately follows the check segment and `[ $v -eq 0 ]` / `test $v -eq 0` immediately follows the capture.\n- `enable -n exit` earlier: add `enable` to the exit-redefinition refusal.\nUnclear shapes fail closed.\n\nAcceptance: one test per shape; each fails on HEAD, passes after. The prescribed `npm run check:commit -- p > log; rc=$?\\n[ $rc -eq 0 ] || exit 1\\ngit commit -m x -- p` stays allowed; existing cases keep their verdicts. Run `node scripts/test-code-intel-hook.mjs`, `npm run test:harness-audit`, and verify each allowed shape with real `bash -c`.\n\nOut of scope: subshells, `eval`, `bash -c`, substitutions (~:399/:408; they need a real parser); `[[ ]]` and `if` guards, denied today (safe direction). Leave no stray files (round 2 left an empty `l`).\n\nA/B stand override: write no test and run no test, including the historical test instructions above. No commits or memory writes. Own only ops/bootstrap/code-intel-order-hook.mjs.",
+    "owned": ["ops/bootstrap/code-intel-order-hook.mjs"],
+    "mustChange": "ops/bootstrap/code-intel-order-hook.mjs",
+    "probe": "12805",
+    "history": { "author": "coder-grok-47c759.1", "reviewer": "reviewer-glm-adef26.1", "clean": "ef1a8b434" }
+  },
+  "lesson-12713": {
+    "role": "coder",
+    "base": "ce0374c953f3c0d303e881309e8a32c3aa9bc3af",
+    "brief": "Your checkout (`git diff HEAD^`) holds task 1774's commit gate in ops/bootstrap/code-intel-order-hook.mjs: refuse a Bash command where `check:commit` is followed by a `git commit` not gated by check:commit's exit status. Two reviewers (reviewer-mimo-75fb96, reviewer-kimi-40d5a1) reproduced one root cause: the gate matches only a segment-initial bare `git` and its own peel drops only assignments and `&`, so wrapped commits after a losing separator are allowed: `rtk git commit` (the rtk hook rewrites commands into exactly this form, so it is the realistic miss), `env git commit`, `command git commit`, `exec git commit`, `/usr/bin/git commit`, `git.exe commit`; the same applies to recognising `rtk npm run check:commit` and `npm run --silent check:commit`.\n\nChange: factor ONE shared peel from the rg rule's existing wrapper handling (WRAPPERS ~:504, normalize ~:473: assignments, rtk/proxy/env/command/exec, basename and .exe normalisation) and use it for both the check:commit and the git commit recognisers; delete the gate's own shallower peel. Keep every currently passing case passing.\n\nTests (scripts/test-code-intel-hook.mjs): one refused case per spelling above after `;` and after `| tail &&`; one allowed case each for `rtk npm run check:commit -- p && rtk git commit -m x` and `env GIT_X=1 git -C d commit` gated by `&&`. Each new refusal test must fail on the current hook.\n\nAcceptance: `node scripts/test-code-intel-hook.mjs` green (report counts).\n\nOut of scope, with reasons:\n- `$(git commit)`, backticks, `(…)` subshells, `{ …; }` groups, `if/then`, `time`, `bash -c '…'`: deliberate evasion rather than the accidental piping this gate targets; the sibling read-order rule accepts the same limit (lesson 10856). Add one comment at the gate saying so.\n- The early-rg rule's behaviour (reviewed, unchanged): refactor its peel only as far as sharing requires, with its tests green.\n- Hook ordering against the rtk rewrite hook: the shared peel covers both orders.\n\nA/B stand override: write no test and run no test, including the historical test instructions above. No commits or memory writes. Own only ops/bootstrap/code-intel-order-hook.mjs.",
+    "owned": ["ops/bootstrap/code-intel-order-hook.mjs"],
+    "mustChange": "ops/bootstrap/code-intel-order-hook.mjs",
+    "probe": "12713",
+    "history": { "author": "coder-codex-cfe463.1", "reviewer": "reviewer-kimi-502e8d.1", "clean": "4ce85ad05" }
+  },
+  "lesson-12737": {
+    "role": "coder",
+    "base": "e23ba47ce73a836ccb95065a23dfb068c221baad",
+    "brief": "Task 1791, slice 1 (read `memoryctl task show --id 1791`): kimi is never picked. Operator decision #12717: kimi paces on its 5h window, and the month only throttles (profiles.ts:131-145).\n\nEvidence 2026-09-28 18:0x:\n- orch_status shows kimi `windows: month 3%` only, with no 5h reading.\n- A direct `kimi()` read from ops/usage-snapshot.mjs throws 'token expired in both Pi and kimi CLI'.\n- limits-last-good.json (17:47) holds only `month`, resetsAt 2026-10-29.\n- The picker therefore ranks kimi on the month (elapsed 0%, used 3%, headroom -3%), so codex (+2%) wins.\n- kimi CLI 2.1.1 tokens live about 15 min, but token-kick.ts COOLDOWN_MS is 30 min. A kick at 16:35 timed out with the expiry unchanged.\n\nDo:\n1. Find the cause with a live token. Run the kick (`kimi -p ok`), then read the raw `https://api.kimi.com/coding/v1/usages` body. Establish whether `limits[]` still carries the 300-minute window with `detail.used` on the plan bought 2026-09-28, or why the parser at usage-snapshot.mjs:356-364 drops it. Fix the parser if it is the cause. Put the redacted raw shape (no tokens) in your report.\n2. Keep kimi's reading fresh within its token lifetime. Make the kick cadence and cooldown fit a ~15 min token, and make a kick that timed out retry sooner.\nIf the plan no longer reports any 5h window, report that with the raw evidence and stop.\n\nAcceptance: lean tests in scripts/test-orch-usage.mjs (operator #12673) for the parse and cooldown behavior. Also run `npx tsc --noEmit -p ops/orchestrator/tsconfig.json` and `node --test $(ls scripts/test-orch-*.mjs | rg -v live)`.\n\nOut of scope:\n- How a missing 5h shows in orch_status: the next slice.\n- Other families' readers, which work.\n- The month window-length math: task 1788.\n- Restarting orch: the lead owns it (#12709).\n- The pace policy: an operator decision.\n\nA/B stand override: write no test and run no test, including the historical test instructions above. No commits or memory writes. Do not contact live providers or kick real tokens; use a local injected usages body. Own only ops/usage-snapshot.mjs and ops/orchestrator/src/token-kick.ts.",
+    "owned": ["ops/usage-snapshot.mjs", "ops/orchestrator/src/token-kick.ts"],
+    "mustChange": "ops/usage-snapshot.mjs",
+    "probe": "12737",
+    "history": { "author": "coder-claude-7bcce9.1", "reviewer": "reviewer-glm-aebdd5.1", "clean": "83c3da362" }
+  },
+  "lesson-12562": {
+    "role": "coder",
+    "base": "2196fa14ed3e14e004df99c08fbfd85669d843f6",
+    "brief": "Operator wants full harness parity for seats on the Windows host `win`. Audit coder-claude-65024c.1 found: ops/orchestrator/src/context.ts:269-270 lists a seat's routed skills as Mac absolute paths (fileURLToPath(REPO) → <home>/.../SKILL.md). A seat whose checkout is on a remote host (<checkout>/... on win) cannot read those paths. Required skills, knowledge pages and lessons are inlined and arrive; only the listed-by-path skills break.\n\nTask: the seat context names skill files by a path valid inside the seat's own checkout on any platform — relative to the checkout root (e.g. `.agents/skills/<name>/SKILL.md`), with a one-line instruction that paths are relative to the working directory. Local Mac seats must keep working (their cwd is the worktree root; confirm that for every role, including scouts/researchers that read the repo in place).\n\nCheck every other place the seat context emits an absolute Mac path the seat is told to read (knowledge page links, lesson anchors, artifact links); fix the ones that are seat-facing the same way, list the rest with file:line in the report. Only context building; not remote-provision.ts, spawn.ts, pi.ts, seats.ts, dashboard.ts (other seats own them).\n\nAcceptance: a unit test in the existing context test file (name it) asserting no seat-facing skill path starts with the Mac REPO root and each relative path resolves to an existing SKILL.md from the repo root; the existing context/seat-report tests green; `npx tsc --noEmit -p ops/orchestrator/tsconfig.json` clean.\n\nA/B stand override: write no test and run no test, including the historical test instructions above. No commits or memory writes. Own only ops/orchestrator/src/context.ts.",
+    "owned": ["ops/orchestrator/src/context.ts"],
+    "mustChange": "ops/orchestrator/src/context.ts",
+    "probe": "12562",
+    "history": { "author": "coder-codex-1fe9e7.1", "reviewer": "reviewer-grok-ca8913.1", "clean": "b2d8ee56f" }
+  },
+  "lesson-12703": {
+    "role": "coder",
+    "base": "6bb0c6efceca87d7b4a350b57b28d652bcc4557d",
+    "brief": "Problem (operator, 2026-09-28): only codex seats use scout_request. orch store, last 7 days, seats that asked at least one scout: codex coder 206/436, reviewer 195/264; claude coder 2/209; kimi coder 2/84, reviewer 1/52; glm reviewer 2/301; grok reviewer 5/282. The tool IS delivered: session of coder-kimi-7efb50 lists scout_request and the context line \"Scouts: when a sweep spans 3+ files…\" (context.ts:272-275); codex on win uses it too (27/44). Other models ignore a one-line instruction.\n\nChange:\n1. New skill .agents/skills/scout-request/SKILL.md (frontmatter and size like neighbouring skills; `npm run check:skill-contract` passes): when to call scout_request (a sweep across 3+ files, logs or memory; \"who calls X\", \"where is Y handled\"), when not (a file you already know: read it), how to write ONE question (at most MAX_QUESTION_WORDS, name files when known), one good and one bad example, limits from scout-tool.ts.\n2. .agents/domains/_skill-map.json roleDefaults: add it to coder, reviewer, bughunter. Run the routing tests that read this file (`npm run test:memory-routing`, any skill-map test).\n3. ops/orchestrator/src/pi-extension.ts: on the seat's FIRST read-like tool call (Pi read/grep/find, or bash rg/grep/cat/sed/head) of its first turn, only when the scout tool is registered, append once to that tool result a short line: send any 3+-file sweep to scout_request before reading on. Once per seat process; never block. Test it in the existing pi-extension test file.\n\nAcceptance: check:skill-contract, the routing tests, the extension test and `npx tsc --noEmit -p ops/orchestrator/tsconfig.json` green; report commands and counts.\n\nOut of scope:\n- No hard refusal of reads (operator chose a nudge; a block breaks seats that already know their files).\n- Do not change scout_request limits or the scout role (decision #11990).\n- Do not install skills or restart orch (the lead does after landing).\n\nA/B stand override: write no test and run no test, including the historical test instructions above. No commits or memory writes. Own only .agents/skills/scout-request/SKILL.md, .agents/domains/_skill-map.json, ops/orchestrator/src/pi-extension.ts and docs/agent/harness-allowlist.md.",
+    "owned": [".agents/skills/scout-request/SKILL.md", ".agents/domains/_skill-map.json", "ops/orchestrator/src/pi-extension.ts", "docs/agent/harness-allowlist.md"],
+    "mustChange": "ops/orchestrator/src/pi-extension.ts",
+    "probe": "12703",
+    "history": { "author": "coder-codex-13b885.1", "reviewer": "reviewer-grok-88aec1.1", "clean": "b8536622a" }
+  },
+  "coder-short": {
+    "role": "coder",
+    "base": "5e77e0a9a287997128a35eea2b2ec5b5b4d5b9df",
+    "brief": "In this disposable checkout, make digest-text.ts item() treat Unicode U+2028/U+2029 as newlines. Add regression 'AB stand: Unicode separators in wait error' in scripts/test-orchestrator.mjs. Own only these two files. Run the named test. Use few tool calls; no commit or memory write. Return the required JSON report.",
+    "owned": ["ops/orchestrator/src/digest-text.ts", "scripts/test-orchestrator.mjs"],
+    "mustChange": "ops/orchestrator/src/digest-text.ts",
+    "test": "scripts/test-orchestrator.mjs",
+    "testName": "AB stand: Unicode separators in wait error"
+  }
+}

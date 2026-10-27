@@ -1,0 +1,737 @@
+{
+  "version": 1,
+  "about": "Project-neutral role methods and optional task-triggered skills. Stack skills are selected only from evidence in the target project.",
+  "roles": [
+    "lead",
+    "scout",
+    "researcher",
+    "debater",
+    "advisor",
+    "coder",
+    "tester",
+    "designer",
+    "copywriter",
+    "reviewer",
+    "bughunter",
+    "legal",
+    "security"
+  ],
+  "leadInstalledSkills": [
+    "orch-team",
+    "memoryctl",
+    "next",
+    "handoff",
+    "land-worktree",
+    "verify-change",
+    "plan-before-code",
+    "premortem",
+    "enumerate-cases",
+    "surgical-patch",
+    "verify-and-stop",
+    "edit-contract-mirror",
+    "consolidate-memory",
+    "curate",
+    "find-skills",
+    "test-audit",
+    "i-have-adhd",
+    "setup-routines"
+  ],
+  "supportLeadSkills": [],
+  "roleDefaults": {
+    "lead": [
+      "memoryctl",
+      "orch-team"
+    ],
+    "scout": [],
+    "critic": [
+      "plan-critic"
+    ],
+    "researcher": [
+      "web-search"
+    ],
+    "debater": [
+      "enumerate-cases"
+    ],
+    "advisor": [
+      "enumerate-cases",
+      "premortem"
+    ],
+    "coder": [
+      "plan-before-code",
+      "verify-change",
+      "test-audit",
+      "scout-request"
+    ],
+    "tester": [
+      "tester",
+      "test-audit",
+      "flaky-test-reproduction",
+      "verify-and-stop"
+    ],
+    "designer": [
+      "design-direction"
+    ],
+    "copywriter": [
+      "anti-slop"
+    ],
+    "reviewer": [
+      "review-verification-protocol",
+      "test-audit",
+      "scout-request"
+    ],
+    "bughunter": [
+      "investigate-first",
+      "test-audit",
+      "scout-request"
+    ],
+    "legal": [],
+    "security": [
+      "security-and-hardening"
+    ]
+  },
+  "domains": {
+    "harness": {
+      "all": [
+        "memoryctl"
+      ],
+      "coder": [
+        "sensor-strength-audit"
+      ],
+      "reviewer": [
+        "agent-input-safety"
+      ],
+      "advisor": [
+        "harness-economy-audit"
+      ],
+      "lead": [
+        "harness-economy-audit"
+      ]
+    },
+    "platform-shell": {}
+  },
+  "triggers": [
+    {
+      "id": "unknown-cause",
+      "match": "\\b(bug|regression|intermittent|flaky|root cause|crash(es|ed)?)\\b|баг|почему не|не работает|сломал",
+      "skills": [
+        "investigate-first"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "advisor",
+        "scout"
+      ]
+    },
+    {
+      "id": "diagnosing-bugs",
+      "match": "\\b(bug|regression|intermittent|flaky|root cause|crash(es|ed)?|diagnos(e|is|ing)|debug(ging)?|broken|failing)\\b|баг|почему не|не работает|сломал",
+      "skills": [
+        "diagnosing-bugs"
+      ],
+      "roles": [
+        "coder",
+        "bughunter"
+      ],
+      "jevAdds": true
+    },
+    {
+      "id": "fix",
+      "match": "\\bfix(es|ed|ing)?\\b|почин|исправ",
+      "skills": [
+        "surgical-patch"
+      ],
+      "roles": [
+        "lead",
+        "coder"
+      ],
+      "jevAdds": true
+    },
+    {
+      "id": "design-fork",
+      "match": "\\b(design|architecture|trade-?offs?|which option|alternatives?)\\b|архитектур|какой вариант|развилк",
+      "skills": [
+        "enumerate-cases"
+      ],
+      "roles": [
+        "lead",
+        "advisor",
+        "debater",
+        "coder"
+      ]
+    },
+    {
+      "id": "irreversible",
+      "match": "\\b(deploy|migration|migrate|drop table|purchase|rollout)\\b|деплой|выкат|миграц",
+      "skills": [
+        "premortem"
+      ],
+      "roles": [
+        "lead",
+        "advisor",
+        "coder"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "contract-edit",
+      "match": "\\b(AGENTS|CLAUDE)\\.md\\b",
+      "skills": [
+        "edit-contract-mirror"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "land-worktree",
+      "match": "\\bworktree\\b.*\\b(land|merge)\\b|\\b(land|merge)\\b.*\\bworktree\\b|влей|смерж",
+      "skills": [
+        "land-worktree"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "completion",
+      "match": "\\b(completion check|validation-only|prove (it|that))\\b|докажи|проверь что",
+      "skills": [
+        "verify-and-stop"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "reviewer",
+        "bughunter"
+      ],
+      "jevAdds": true
+    },
+    {
+      "id": "ui",
+      "match": "\\b(ui|css|theme|panel|layout|toolbar|dialog|screen(shot)?|visual|pixel)\\b|интерфейс|панел|вкладк|экран|вёрстк|скрин",
+      "skills": [
+        "visual-critique",
+        "desktop-interaction-review",
+        "impeccable"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "reviewer",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "design-direction",
+      "match": "\\b(redesign|re-design|visual direction|art direction|mood ?boards?|new look|look and feel)\\b|редизайн|новый (вид|облик|дизайн)|\\bdesign-direction\\b",
+      "skills": [
+        "design-direction",
+        "impeccable",
+        "visual-critique",
+        "ui-ux-pro-max",
+        "emil-design-eng"
+      ],
+      "roles": [
+        "coder",
+        "reviewer",
+        "designer"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "runtime-hang",
+      "match": "\\b(hang|stuck|deadlock|starv\\w*|backpressure|unbounded channel)\\b|(?<![а-яё])завис",
+      "skills": [
+        "tokio-runtime-diagnostics"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "scout",
+        "advisor"
+      ]
+    },
+    {
+      "id": "memory-write",
+      "match": "\\bmemoryctl\\b|запиши в память|хендоф",
+      "skills": [
+        "memoryctl"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "memory-curation",
+      "match": "\\b(curate|consolidate|dedup(licate)? memory|admit)\\b|почисти память",
+      "skills": [
+        "curate",
+        "consolidate-memory",
+        "admit",
+        "memory-domain-extraction"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "team",
+      "match": "\\b(seat|scout|reviewer|coder|paseo|create_agent|delegate)\\b|скаут|тимлид|тим лид|ревьюер|агент",
+      "skills": [
+        "orch-team"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "human-prose",
+      "match": "\\b(release notes?|announcement|changelog|blog|article|postmortem)\\b|анонс|статья|пост для",
+      "skills": [
+        "sepia"
+      ],
+      "roles": [
+        "lead",
+        "coder"
+      ]
+    },
+    {
+      "id": "security",
+      "match": "\\b(security|vulnerab\\w*|credential|capabilit(y|ies)|csp|permission scope)\\b|безопасн|уязвим",
+      "skills": [
+        "security-and-hardening",
+        "tauri-security-checklist",
+        "agent-input-safety",
+        "rust-code-review"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "reviewer",
+        "advisor",
+        "bughunter",
+        "security"
+      ],
+      "jevAdds": true
+    },
+    {
+      "id": "agent-surface",
+      "match": "\\b(mcp|prompt injection|tool call|llm|model output)\\b",
+      "skills": [
+        "agent-input-safety"
+      ],
+      "roles": [
+        "lead",
+        "coder",
+        "reviewer",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "web",
+      "match": "\\b(research|pricing|latest version|upstream docs?|compare (tools|vendors))\\b|https?://|исследуй|в интернете|сравни",
+      "skills": [
+        "web-search"
+      ],
+      "roles": [
+        "lead",
+        "researcher",
+        "advisor"
+      ]
+    },
+    {
+      "id": "react-composition",
+      "match": "(?=[\\s\\S]*\\bReact\\b)[\\s\\S]*\\b(compound components?|boolean props?|render props?|composition patterns?|component architecture|reusable component API)\\b|\\bvercel-composition-patterns\\b",
+      "skills": [
+        "vercel-composition-patterns"
+      ],
+      "roles": [
+        "coder",
+        "reviewer"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "playwright-tests",
+      "match": "\\bPlaywright\\b",
+      "skills": [
+        "playwright-best-practices"
+      ],
+      "roles": [
+        "coder",
+        "reviewer"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "react-best-practices",
+      "match": "(?=[\\s\\S]*\\b(React|Next\\.js|NextJS)\\b)[\\s\\S]*\\b(performance|rendering|data fetching|bundles?|hydration)\\b|\\bvercel-react-best-practices\\b",
+      "skills": [
+        "vercel-react-best-practices"
+      ],
+      "roles": [
+        "coder",
+        "reviewer"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "vitest-tests",
+      "match": "\\bvitest\\b|[\\w./-]+\\.test\\.tsx?\\b|\\bvitest\\.config\\.[cm]?[jt]s\\b",
+      "skills": [
+        "vitest"
+      ],
+      "roles": [
+        "coder",
+        "reviewer",
+        "bughunter"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "ai-slop",
+      "match": "\\bslop\\b|\\bmachine[- ](written |generated )?text\\b|(?<![а-яё])слоп(а|у|ом|е|ы|ов)?(?![а-яё])|машинн[а-яё]* текст",
+      "skills": [
+        "anti-slop"
+      ],
+      "roles": [
+        "reviewer"
+      ],
+      "jevAdds": true
+    },
+    {
+      "id": "rust-async",
+      "match": "\\b(tokio|async fn|spawn_blocking|JoinHandle|mpsc)\\b|\\.await\\b|\\bselect!|Arc<Mutex|(?=[\\s\\S]*(?:\\brust\\b|\\btokio\\b|\\.rs\\b))[\\s\\S]*\\bawait\\b",
+      "skills": [
+        "rust-async-rules"
+      ],
+      "roles": [
+        "coder",
+        "advisor",
+        "scout",
+        "reviewer",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "rust-review",
+      "match": "\\.rs\\b|\\brust\\b",
+      "skills": [
+        "rust-code-review"
+      ],
+      "roles": [
+        "reviewer",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "harness-economy",
+      "match": "\\b(token economy|context budget|limits burn|cache[_ ]read)\\b|токен|лимит|экономи",
+      "skills": [
+        "harness-economy-audit"
+      ],
+      "roles": [
+        "lead",
+        "advisor"
+      ]
+    },
+    {
+      "id": "new-skill",
+      "match": "\\b(new skill|distill)\\b|новый скил|сделай скил",
+      "skills": [
+        "distill-skill"
+      ],
+      "roles": [
+        "lead"
+      ]
+    },
+    {
+      "id": "tokio-review",
+      "match": "tokio::(spawn|select|sync)|\\bspawn_blocking\\b|\\bJoinHandle\\b",
+      "skills": [
+        "tokio-async-code-review"
+      ],
+      "roles": [
+        "reviewer",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "tauri-security",
+      "match": "\\btauri\\b|tauri::command|tauri\\.conf",
+      "skills": [
+        "tauri-security-checklist"
+      ],
+      "roles": [
+        "reviewer",
+        "coder",
+        "bughunter"
+      ]
+    },
+    {
+      "id": "flaky-test",
+      "match": "\\b(flaky|flakiness|intermittent(ly)? fail\\w*)\\b|нестабильн\\w* тест|плавающ\\w* тест",
+      "skills": [
+        "flaky-test-reproduction"
+      ],
+      "roles": [
+        "coder",
+        "reviewer",
+        "bughunter"
+      ],
+      "negatable": true
+    },
+    {
+      "id": "sensor-strength",
+      "match": "\\b(sensors?|mutation (score|testing)|mutants?)\\b|сенсор|мутант",
+      "skills": [
+        "sensor-strength-audit"
+      ],
+      "roles": [
+        "coder",
+        "reviewer"
+      ]
+    },
+    {
+      "id": "tester",
+      "match": "\\btesters?\\b|тестер",
+      "skills": [
+        "tester"
+      ],
+      "roles": [
+        "coder"
+      ],
+      "negatable": true
+    }
+  ],
+  "negation": "(?:\\b(?:never|no|do not|don't|does not|must not|without)\\b|(?<![а-яё])(?:не|нельзя|никогда|без)(?![а-яё]))(?:(?!\\b(?:but|however|yet)\\b|(?<![а-яё])(?:но|однако)(?![а-яё]))[^.;!?\\n])*",
+  "skills": {
+    "admit": {
+      "class": "method",
+      "requires": []
+    },
+    "agent-input-safety": {
+      "class": "method",
+      "requires": []
+    },
+    "clickhouse-architecture-advisor": {
+      "class": "stack",
+      "stack": "clickhouse",
+      "requires": []
+    },
+    "clickhouse-best-practices": {
+      "class": "stack",
+      "stack": "clickhouse",
+      "requires": []
+    },
+    "consolidate-memory": {
+      "class": "lead",
+      "requires": []
+    },
+    "anti-slop": {
+      "class": "core",
+      "requires": []
+    },
+    "curate": {
+      "class": "lead",
+      "requires": []
+    },
+    "design-direction": {
+      "class": "core",
+      "requires": [
+        "input:image"
+      ]
+    },
+    "desktop-interaction-review": {
+      "class": "method",
+      "requires": []
+    },
+    "diagnosing-bugs": {
+      "class": "method",
+      "requires": []
+    },
+    "distill-skill": {
+      "class": "method",
+      "requires": []
+    },
+    "edit-contract-mirror": {
+      "class": "lead",
+      "requires": []
+    },
+    "emil-design-eng": {
+      "class": "method",
+      "requires": []
+    },
+    "enumerate-cases": {
+      "class": "core",
+      "requires": []
+    },
+    "find-skills": {
+      "class": "lead",
+      "requires": []
+    },
+    "flaky-test-reproduction": {
+      "class": "core",
+      "requires": []
+    },
+    "handoff": {
+      "class": "lead",
+      "requires": []
+    },
+    "harness-economy-audit": {
+      "class": "method",
+      "requires": []
+    },
+    "i-have-adhd": {
+      "class": "lead",
+      "requires": []
+    },
+    "impeccable": {
+      "class": "method",
+      "requires": []
+    },
+    "investigate-first": {
+      "class": "core",
+      "requires": []
+    },
+    "land-worktree": {
+      "class": "lead",
+      "requires": []
+    },
+    "llm-grounding-audit": {
+      "class": "method",
+      "requires": []
+    },
+    "memory-domain-extraction": {
+      "class": "method",
+      "requires": []
+    },
+    "memoryctl": {
+      "class": "core",
+      "requires": []
+    },
+    "next": {
+      "class": "lead",
+      "requires": []
+    },
+    "orch-team": {
+      "class": "core",
+      "requires": []
+    },
+    "plan-before-code": {
+      "class": "core",
+      "requires": []
+    },
+    "plan-critic": {
+      "class": "core",
+      "requires": []
+    },
+    "playwright-best-practices": {
+      "class": "stack",
+      "stack": "web",
+      "requires": []
+    },
+    "premortem": {
+      "class": "core",
+      "requires": []
+    },
+    "review-verification-protocol": {
+      "class": "core",
+      "requires": []
+    },
+    "rust-async-rules": {
+      "class": "stack",
+      "stack": "rust",
+      "requires": []
+    },
+    "rust-code-review": {
+      "class": "stack",
+      "stack": "rust",
+      "requires": []
+    },
+    "scout-request": {
+      "class": "core",
+      "requires": []
+    },
+    "security-and-hardening": {
+      "class": "core",
+      "requires": []
+    },
+    "sensor-strength-audit": {
+      "class": "method",
+      "requires": []
+    },
+    "sepia": {
+      "class": "method",
+      "requires": []
+    },
+    "setup-routines": {
+      "class": "lead",
+      "requires": []
+    },
+    "surgical-patch": {
+      "class": "lead",
+      "requires": []
+    },
+    "tauri-security-checklist": {
+      "class": "stack",
+      "stack": "tauri",
+      "requires": []
+    },
+    "test-audit": {
+      "class": "core",
+      "requires": []
+    },
+    "tester": {
+      "class": "core",
+      "requires": []
+    },
+    "tokio-async-code-review": {
+      "class": "stack",
+      "stack": "rust",
+      "requires": []
+    },
+    "tokio-runtime-diagnostics": {
+      "class": "stack",
+      "stack": "rust",
+      "requires": []
+    },
+    "ui-ux-pro-max": {
+      "class": "method",
+      "requires": []
+    },
+    "vercel-composition-patterns": {
+      "class": "stack",
+      "stack": "web",
+      "requires": []
+    },
+    "vercel-react-best-practices": {
+      "class": "stack",
+      "stack": "web",
+      "requires": []
+    },
+    "verify-and-stop": {
+      "class": "core",
+      "requires": []
+    },
+    "verify-change": {
+      "class": "core",
+      "requires": []
+    },
+    "visual-critique": {
+      "class": "method",
+      "requires": []
+    },
+    "vitest": {
+      "class": "method",
+      "requires": []
+    },
+    "web-search": {
+      "class": "core",
+      "requires": [
+        "mcp:brightdata-web"
+      ]
+    }
+  }
+}

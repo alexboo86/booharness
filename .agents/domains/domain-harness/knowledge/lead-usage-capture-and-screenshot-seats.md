@@ -1,0 +1,28 @@
+## Lead usage, capture, and screenshot seats
+
+`ops/orchestrator/src/limits.ts` reads `ops/usage-snapshot.mjs`, storing stale last-good in state. Qwen without monthly share is unknown, never zero. Grok absent creditUsagePercent reads 0% only with whole currentPeriod type/start/end; null/blank/missing period fails. Reset inventory survives FRESH_MS + INVENTORY_GRACE_MS (2 min), then is unknown until fresh snapshot, never lastGood. Grok grokResetTokens/getGrpcWeb use five-byte empty frame/application/grpc-web; empty message means resets: []. withResets preserves inventoryReason or body-free `reset request failed: HTTP <n>`.
+
+`ops/orchestrator/src/token-kick.ts` refreshes expired grok/kimi tokens through their CLIs, never credential writes. Persisted cooldowns: grok 30 min, kimi 10 min; unchanged expiry after 30 s SIGKILL deadline retries after 2 min. Kimi CLI uses freshest `~/.kimi-code/credentials/kimi-code.json` or kimi-code-env-<hex>.json (`kimiCliCredential`/`credentialExpiry`). Load warns, not blocks seats (`ops/orchestrator/src/http.ts`).
+
+`ops/orchestrator/src/leads.ts` reads provider logs, dates leads by timestamped entries, not mtime, and excludes stored seat session IDs regardless of entrypoint/cwd. Board activity window is ten minutes (`ACTIVE_LEAD_MINUTES`). `claudeHandedOver` drops a lead after next skill/command plus successor spawn_task/run_scheduled_task or handover run with `clear:true`, since last human message. Without clear the same log continues. `activeLeads` retains handedOver rows for family exclusion/context hook. Sender uses origin.kind/turnOrigin: human counts; peer/task-notification/sdk skip. Without origin it falls back to promptSource, skipping system.
+
+RTK registry matches without RTK count missed for Codex leads; Claude lead/native Claude/GLM seat pre-hook matches get credit because hooks rewrite them. Pi streams are post-rewrite, so bare matches are misses (`ops/orchestrator/src/toolkinds.ts`). Lead verdicts are asynchronous/memoised, unjudged pending. A killed/timed-out two-second rewrite is not cached and retries next log scan (`settleRtk`); seat turns instead resolve null as rtk-pending (`ops/orchestrator/src/seats.ts`). `ops/bootstrap/lead-context-hook.mjs` triggers next-skill advice past min(400k, 70% of window).
+
+`ops/orchestrator/src/dashboard.ts` displays active leads/seats/tools/load, RTK gain/calls across Mac and registered-host history DBs, and Jev monthly-ledger spend against operator `jev-balance`. `ops/orchestrator/src/rtk-gain.ts` rereads at most every 10 s; host calls use spawnProvider, cached 30 s, failed hosts named in missing, never zero. `ops/bootstrap/jev-ledger.mjs` accepts safe-integer token counts; `scripts/jev-test-state.mjs` isolates test ledger access, checked by `scripts/test-jev-ledger-isolation.mjs`. Tool badges observe executed calls, not correctness. Cards group skills/tools/mcp/pi; unused instruments have no badge, other shell programs fold into shell. `piExtensions` lists orch-loaded guard/edit/stand extensions, with edit extensions lit by their calls.
+
+`settled` in `ops/orchestrator/src/dashboard.ts` serves last settled RTK/Jev totals (null until first read), starting refresh after poll returns. `ops/orchestrator/src/machine-load.ts` defers load/disk likewise; injected readers are awaited. Poll limit is 50 ms for two seats.
+
+No hook refuses capture and no capture-specific role exists. `stripLeadCaptureHook` in `ops/bootstrap/install-harness.mjs` removes lead-capture-hook entries while keeping user hooks; `scripts/check-hook-topology.mjs` checks non-wiring. Stored screenshotter rows remain closed history; old surfaces/probes/sheet reports digest invalid with raw text behind seat_report; seat_create refuses the unknown role (`scripts/test-orch-seats-core.mjs`).
+
+`ops/bootstrap/lead-worktree-hook.mjs` gives EnterWorktree advice in top-level Claude, never denies. Desktop Edit/Write refuse other `.claude/worktrees/<other>/` without EnterWorktree path; Bash/git -C/external worktrees are not refused. After entry, git outside the worktree is refused until ExitWorktree keep, which preserves tree/branch. ORCH_SEAT_ID/SEAT_POLICY_ROLE suppress advice; malformed/empty stdin silently passes. Installer wires only Claude; coverage `scripts/check-hook-topology.mjs`, `scripts/test-lead-worktree-hook.mjs`.
+
+`peekabooVerdict` in `ops/orchestrator/src/peekaboo.ts` feeds doctor (`ops/bootstrap/doctor.mjs`): permissions JSON, 5 s bound, data.permissions. Missing binary/call/shape/right faults name fixes (approved brew route/grantInstructions). Deadline kill means NO ANSWER, unknown, not dead; tests never run the binary.
+
+UI capture uses a coder seat and the adopted project's documented offscreen route. Name the target, approved runtime and output paths in the brief; the seat must read its own captures and report evidence for each surface. Configure project-specific capture methods explicitly rather than inheriting another application's driver.
+
+Windows font control accepts appFont integer 8–24, safe mode allowed, with persistent root setting (`scripts/dev/ui-drive.mjs:parseStep`, `scripts/dev/ui-drive.mjs:runStep`, `src/components/GlobalSettingsPanel.tsx:GlobalSettingsContent`).
+
+Tester is a seat_create role with branch worktree/coder-style landing, outside coder cap/rechecks. `TESTER_WRITE_SCOPE` in `ops/orchestrator/src/seats-defs.ts` permits tests/fixtures/captures; Pi guards other writes, seat_land requires stored override_reason for out-of-scope paths, digest flags changed existing tests. Role skills in `.agents/domains/_skill-map.json`: tester, test-audit, flaky-test-reproduction, verify-and-stop.
+
+verified: 2026-09-23
+

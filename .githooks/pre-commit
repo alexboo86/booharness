@@ -1,0 +1,107 @@
+#!/bin/sh
+# Blocks a commit that deletes a path something still reads — today's P0, where four
+# include_str! kept reading a deleted skill tree and the crate stopped compiling.
+#
+# Deliberately narrow. A pre-commit hook CANNOT judge staging discipline: `git commit --
+# <pathspec>` materialises a temporary index before hooks run, so a file staged partially
+# already looks whole in here (verified). What it CAN judge is the content of the commit
+# itself, and a staged deletion is part of that content.
+# It also refuses an index tree check:commit did not stamp. A partial stage
+# committed without a pathspec has a different tree and is refused.
+#
+# It also covers less than it looks like it covers, which is why .githooks/pre-push runs
+# the same check over the range being published. Verified in a scratch repository:
+# cherry-pick, merge --no-ff and rebase never fire this hook at all, and `--amend` fires it
+# but diffs the index against the commit being replaced, so a deletion already inside that
+# commit reads as "no staged deletions". Nothing here can fix that; the push gate can.
+#
+# Only checks that are fast and currently green belong here. check-ui-canon (2743 legacy
+# hits) and check-portability are red on master today, and check-module-boundary-ratchet
+# takes 13s; wiring any of them would teach everyone to set SKIP_GIT_GUARD, which costs
+# more than it saves. check-lint-ratchet is green but costs a full `eslint .` run (~58s,
+# measured 2026-09-17) — same cost bar, same verdict: run it by name when touching lint
+# policy or a downgraded rule. The large-file ratchet runs below, in staged mode, on the
+# staged additions, copies, modifications, renames and typechanges: it lists those names itself, and
+# a file above its entry blocks. Nothing of that kind staged: it does not run.
+#
+# Costs nothing per turn: it runs on `git commit`, never on a tool call, and prints only
+# when it blocks.
+#
+# Escape for a deliberate exception: SKIP_GIT_GUARD=1 git commit ...
+
+[ "$SKIP_GIT_GUARD" = "1" ] && exit 0
+
+repo=$(git rev-parse --show-toplevel) || {
+    echo "pre-commit: blocked. Could not resolve the repository." >&2
+    exit 1
+}
+
+# debt: task 2675, remove when no live worktree branch lacks the stamp writer
+# $repo is the committing tree (git rev-parse --show-toplevel). Its check:commit
+# is what would have written the stamp. No literal check-pass means that branch
+# cannot write one, so skip this check only. A missing file keeps the refusal.
+writer="$repo/scripts/check-commit.mjs"
+if [ -f "$writer" ] && ! grep -q 'check-pass' "$writer"; then
+    echo "pre-commit: this branch's check:commit writes no pass stamp; merge master to get the git gate" >&2
+else
+    # Pass stamp from check:commit: <git-common-dir>/check-pass/<commitTree>-<workTree>.
+    # The work-tree half is that command's cache key. This hook authorizes the index
+    # tree git handed us, a pathspec commit's temporary index included. No stamp, or
+    # a git error, fails closed.
+    tree=$(git write-tree) || {
+        echo "pre-commit: blocked. Could not hash the index." >&2
+        exit 1
+    }
+    common=$(git rev-parse --path-format=absolute --git-common-dir) || {
+        echo "pre-commit: blocked. Could not find the git common dir." >&2
+        exit 1
+    }
+    found=
+    for f in "$common/check-pass/$tree"-*; do
+        [ -e "$f" ] || continue
+        found=1
+        break
+    done
+    if [ -z "$found" ]; then
+        echo "pre-commit: blocked. No check:commit pass stamp for this index tree." >&2
+        echo "Run npm run check:commit -- <paths>, then commit. SKIP_GIT_GUARD=1 for a deliberate exception." >&2
+        exit 1
+    fi
+fi
+
+# The check comes from beside this file (the main checkout's copy, run by the
+# common-dir shim); GUARD_REPO points it at the tree being committed.
+here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)
+[ -f "$here/scripts/check-deletion-refs.mjs" ] || exit 0
+
+if ! GUARD_REPO="$repo" node "$here/scripts/check-deletion-refs.mjs"; then
+    echo ""
+    echo "pre-commit: blocked. Repoint or remove each reference above, then run the build —"
+    echo "a compiled-in reference breaks it and no domain gate will notice."
+    echo "SKIP_GIT_GUARD=1 for a deliberate exception."
+    exit 1
+fi
+
+# Staged additions, copies, modifications, renames and typechanges. Deletions are the check above.
+# Presence only. The ratchet lists the names itself, NUL-delimited. Passing them
+# through this shell C-quotes a non-ASCII or quoted name, and a leading colon is
+# pathspec magic, so a new large file would be judged as zero files and commit green.
+staged=$(git -C "$repo" diff --cached --name-only -z --diff-filter=ACMRT) || {
+    echo "pre-commit: blocked. Could not list staged files for the large-file ratchet." >&2
+    exit 1
+}
+if [ -n "$staged" ]; then
+    ratchet="$here/scripts/check-large-file-ratchet.mjs"
+    if [ ! -f "$ratchet" ]; then
+        echo "pre-commit: blocked. $ratchet is missing: the large-file ratchet cannot run." >&2
+        exit 1
+    fi
+    # Staged mode reads the index, including GIT_INDEX_FILE, so the blob about
+    # to be committed is judged — not a shorter copy left in the work tree.
+    if ! GUARD_REPO="$repo" node "$ratchet" --staged; then
+        echo ""
+        echo "pre-commit: blocked. Split the file or raise its baseline entry with a justification in the same commit."
+        echo "SKIP_GIT_GUARD=1 for a deliberate exception."
+        exit 1
+    fi
+fi

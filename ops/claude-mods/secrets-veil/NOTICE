@@ -1,0 +1,23 @@
+secrets-veil is vendored unchanged from https://github.com/yonatangross/orchestkit/tree/0fe5beba22aac523980db5b769242a32c3663a05/mods/secrets-veil (mod version 0.0.6; read 2026-10-17). All shipped files are byte-identical to that commit except hooks/register.ts, tests/register.test.ts and README.md: the empty-named-list $.ui.notice at session start is removed, because a notice there has no open tool call and the engine dropped it with an error line in every session. hooks/register.ts also masks a media field (a base64 or data key holding the base64 of an image or PDF, checked by its decoded file signature) with the named values only: the entropy pattern and a chance shape prefix covered such base64, and the API refused every image a session read. This NOTICE and VENDOR.json are added.
+
+MIT License
+
+Copyright (c) 2026 OrchestKit Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

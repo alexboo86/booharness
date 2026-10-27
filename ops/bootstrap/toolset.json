@@ -1,0 +1,74 @@
+{
+  "_comment": "SSOT of the mandatory agent toolset. Read by ops/bootstrap/session-start.mjs (session-start delivery + health), by the installers, and by the smoke harness. One list, every runtime, every launch mode (GUI, CLI).",
+  "version": 1,
+  "tools": {
+    "rtk": {
+      "probe": [
+        "rtk",
+        "--version"
+      ],
+      "why": "All heavy shell output (git, cargo, tests, tsc, grep, read) goes through rtk. Raw passthrough is forbidden."
+    },
+    "memoryctl": {
+      "probe": [
+        "memoryctl",
+        "status"
+      ],
+      "why": "Durable memory. Read the operator-named handoff and search on demand; before editing domain code: memoryctl lessons --path <file>."
+    },
+    "codegraph": {
+      "probe": [
+        "codegraph",
+        "--version"
+      ],
+      "why": "A graph of symbols, call edges and dependencies, kept fresh by a file watcher. It answers who calls X and what depends on a file through a re-export - the two questions a text search cannot. Replaced probe 2026-09-19 (memory #9838).",
+      "use": "A NEW WORKTREE ANSWERS FROM THE PARENT BRANCH until you run `codegraph init` in it. Its MCP surface is ONE tool, codegraph_explore; the narrow verbs (callers, callees, impact, node) are CLI. It is not an exhaustive shape query (72 of 79 project-trait impls, no impl among 214 std/external-trait impls, where ast-grep finds all; codegraph 1.6.2, 2026-10-03; baseline memory #12974) and not rg on a literal (3183 tokens against 78, cl100k_base)."
+    },
+    "ast-grep": {
+      "probe": [
+        "ast-grep",
+        "--version"
+      ],
+      "why": "Structural search by SHAPE, no index. This is what finds every Rust trait impl: ast-grep run -l rust -p 'impl $T for $S { $$$ }'.",
+      "use": "ALWAYS bound the output. Measured 2026-09-18 on a live codex seat: `ast-grep run -l rust -p 'impl $T for $S { $$$ }' <project-specific>/` produced ~83 000 tokens before the runtime truncated it. Since rtk 0.50 the hook rewrites it to `rtk ast-grep` (same query: 340 KB -> 4 KB, measured 2026-09-27), which shows the first files and ends with `… N more match line(s) in M more file(s) not shown` plus `rtk recall <hash>`. For an EXHAUSTIVE answer run `rtk recall <hash>` or add `--json=stream` (passes through whole); narrow the path or ask for the count first."
+    },
+    "rg": {
+      "probe": [
+        "rg",
+        "--version"
+      ],
+      "why": "The contract's FIRST code-intel instrument for a known literal, and the engine behind `rtk rg`. It was mandated in CLAUDE.md and absent from this list, so nothing noticed it was not installed at all: measured 2026-09-18 on Windows, `rtk rg` answered `Failed to resolve 'rg' via PATH ... program not found` and `rtk grep` silently degraded to Git Bash grep. Half the search surface was dead while four runtimes were told to use it, which is why seats fell back to reading whole files."
+    },
+    "git": {
+      "probe": [
+        "git",
+        "--version"
+      ],
+      "why": "The Code intel rule's instrument for when or by whom a string appeared or vanished: bounded `git log -S'<text>' -- <path>` (`-G` for a regex), mandated by commit ace3207cd (operator decision 13515) and absent here until task 2369, so nothing probed it."
+    },
+    "scout": {
+      "probe": [
+        "curl",
+        "-sSf",
+        "-m",
+        "2",
+        "http://127.0.0.1:7760/health"
+      ],
+      "why": "A lead scouts only through an orch scout seat (decision #12069): orch picks the family and the seat runs on its quota. The probe asks the orch daemon for /health because a scout seat needs a live daemon; the former `grok --version` probe proved one family was installed, not that the route works, and orch may send the scout to another family or pause grok. curl is called by name, not as POSIX text: a `sh -c` probe reached cmd.exe on Windows and read DEAD where the tool worked (2026-09-16).",
+      "use": "a sweep of 3+ files, another branch, logs, transcripts or memory -> an orch scout seat (seat_create role scout, one question)"
+    }
+  },
+  "trigger_map": [
+    "bug / test failure / unexpected behavior -> investigate-first BEFORE proposing a fix",
+    "production / data-plane incident -> investigate-first BEFORE any root-cause claim; use the adopted project incident runbook",
+    "'where is X' in any language -> a known literal is rg; an unnamed question is codegraph (MCP codegraph_explore, or the CLI verbs node/explore)",
+    "'who calls X' / 'what breaks if I change Y' -> codegraph callers|callees|impact carries the call graph, including re-export dependents; the SHAPE of a call is still ast-grep, and the compiler-level blast radius is node scripts/blast-radius.mjs",
+    "every Rust impl of a trait -> ast-grep run -l rust -p 'impl $T for $S { $$$ }'; types and anything a macro generates are read in the source",
+    "editing domain code -> lessons for that file FIRST: the Edit hook delivers them on claude/codex/kimi, but grok and glm have no hook, so ask yourself — memoryctl lessons --path <repo-relative-file>, or the memory MCP tool with action=lessons",
+    "ClickHouse schema / query / config -> clickhouse-best-practices (31 rules) + clickhouse-architecture-advisor skills",
+    "Tauri API question (IPC, capabilities, permissions, sidecar, config) -> live framework docs via context7",
+    "building a feature -> enumerate-cases, then plan-before-code",
+    "about to say 'done/fixed/passing' -> verify-and-stop: run the command, show output",
+    "heavy shell command (git/cargo/test/tsc/grep/read) -> rtk <cmd>, raw output only via rtk proxy"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "package": "jcodemunch-mcp",
+  "distribution": "jcodemunch_mcp",
+  "version": "1.108.320",
+  "python": "3.12",
+  "registry": "https://pypi.org/pypi/jcodemunch-mcp/1.108.320/json",
+  "wheel": "jcodemunch_mcp-1.108.320-py3-none-any.whl",
+  "url": "https://files.pythonhosted.org/packages/86/d0/c47ad84cf5e336a5b14065b9cb1622a553a72730a368da2c6ec376f25cfc/jcodemunch_mcp-1.108.320-py3-none-any.whl",
+  "sha256": "658ccb0a902b5ae3010fccf403a86973291fc65040d180bb5d98ffe561ecca3e",
+  "license": "LicenseRef-jCodeMunch-Dual-Use-1"
+}

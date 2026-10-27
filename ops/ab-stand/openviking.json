@@ -1,0 +1,12 @@
+{
+  "package": "openviking",
+  "version": "0.4.22",
+  "registry": "https://pypi.org/pypi/",
+  "wheel": "openviking-0.4.22-cp310-abi3-macosx_14_0_arm64.whl",
+  "sha256": "ddfa3d23274cbd9afcdfaf1a1542b0a9e5e8286221a96bb7e40bd63e312d5bae",
+  "port": 11497,
+  "chatModel": "qwen3:4b",
+  "chatModelManifestSha": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+  "embeddingModel": "nomic-embed-text:v1.5",
+  "embeddingDimension": 768
+}

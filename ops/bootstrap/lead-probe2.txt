@@ -1,0 +1,1 @@
+List the installed lead skills available in this session. Do not infer a language, framework, product domain or remote host from the harness. Read the adopted project manifests before selecting stack-specific skills.

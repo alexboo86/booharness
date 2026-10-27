@@ -1,0 +1,3 @@
+#!/bin/sh
+# Portable kit: no implicit sync remote or automatic publication.
+exit 0

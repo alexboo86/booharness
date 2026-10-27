@@ -1,0 +1,8 @@
+{
+  "name": "orch-pi-runtime",
+  "private": true,
+  "description": "Pinned Pi that orch seats launch. Kept out of ops/orchestrator/package.json on purpose: worktree-setup.json runs npm ci for ops/orchestrator in every seat worktree, and Pi must not be installed per seat.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  }
+}

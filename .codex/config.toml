@@ -1,0 +1,15 @@
+[agents]
+max_threads = 10
+max_depth = 1
+
+[agents.default]
+description = "Default bounded native Codex worker pinned to Terra."
+config_file = "./agents/default.toml"
+
+[agents.worker]
+description = "Implementation and verification native Codex worker pinned to Terra."
+config_file = "./agents/worker.toml"
+
+[agents.explorer]
+description = "Read-heavy native Codex explorer pinned to Terra."
+config_file = "./agents/explorer.toml"

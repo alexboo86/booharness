@@ -1,0 +1,10 @@
+[
+  "scripts/test-orch-target-sweep.mjs",
+  "scripts/test-orch-tmp-sweep.mjs",
+  "scripts/test-orch-worktree-sweep.mjs",
+  "scripts/test-orch-check-verify.mjs",
+  "scripts/test-orch-usage.mjs",
+  "scripts/test-orch-remote-repo.mjs",
+  "scripts/test-orch-install.mjs",
+  "scripts/test-orch-seats-lifecycle-darwin.mjs"
+]

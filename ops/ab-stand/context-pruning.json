@@ -1,0 +1,7 @@
+{
+  "package": "pi-dynamic-context-pruning",
+  "version": "0.1.10",
+  "registry": "https://registry.npmjs.org/",
+  "integrity": "sha512-0FoTqkS2evBRcRVFGLf3WoadD6wKB+UtEzQrcOySdcbgDO18uvhPdbiqfSVTdZfqYKZrZJ95naGHLlllAs7eVQ==",
+  "extension": "index.ts"
+}

@@ -1,0 +1,12 @@
+{
+  "package": "@probelabs/probe",
+  "version": "0.6.0-rc339",
+  "registry": "https://registry.npmjs.org/",
+  "integrity": "sha512-v6vqdUNO19A6RXY4+haAS2LNIOWpDUvArkArIm1XuCsz1uqqHCTBDuh5oxjbskj75+p9N2c4fF5vRgVDby2XRA==",
+  "binary": {
+    "platform": "aarch64-apple-darwin",
+    "archive": "probe-v0.6.0-rc339-aarch64-apple-darwin.tar.gz",
+    "member": "probe-v0.6.0-rc339-aarch64-apple-darwin/probe",
+    "sha256": "c2db3416997099ff81963da8b1185298054fbd675f42a98d39617b42e0e39c34"
+  }
+}

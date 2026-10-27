@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "description": "Project-neutral compass. Configure project directions after inspecting its manifests.",
+  "stacks": [],
+  "directions": [],
+  "keywords": [],
+  "always": []
+}

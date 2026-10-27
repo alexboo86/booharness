@@ -1,0 +1,76 @@
+#!/bin/sh
+# Rejects a commit message that a shell mangled on the way in.
+#
+# The failure this exists for, measured twice on 2026-08-03 and reported by the
+# operator as happening "every session": an agent writes the message as a
+# PowerShell here-string
+#
+#     git commit -m @'
+#     subject
+#     ...
+#     '@ -- <paths>
+#
+# and runs it through Git Bash, where `@'...'@` is not a here-string at all. The
+# shell hands git a message whose first line is a bare `@`, and every line after
+# the closing quote is executed AS COMMANDS - so the tail of the message (the
+# measurements, the Co-Authored-By trailer) is lost to `command not found` while
+# the commit itself succeeds. The tree is fine and the history is not: the
+# subject line is `@`, and nothing downstream notices.
+#
+# Narrow on purpose. It judges the shape a mangled message actually has - a bare
+# `@` subject, or a stray here-string delimiter on its own line - and nothing
+# else. The mangling check does not police wording or length; the separate Docs
+# trailer policy below applies only to selected UI paths.
+#
+# The fix it asks for is the one that works in both shells: a real heredoc, or
+# `git commit -F <file>`.
+#
+# Escape for a deliberate exception: SKIP_GIT_GUARD=1 git commit ...
+
+[ "$SKIP_GIT_GUARD" = "1" ] && exit 0
+
+message_file=$1
+[ -f "$message_file" ] || exit 0
+
+# The subject is the first non-empty, non-comment line - the same line git will
+# show in `git log --oneline`.
+subject=$(grep -v '^#' "$message_file" | sed '/^[[:space:]]*$/d' | head -1)
+
+fail() {
+	echo "commit-msg: $1" >&2
+	echo >&2
+	echo "  This is what a PowerShell here-string (@'...'@) does in Git Bash: the" >&2
+	echo "  quote is not a here-string, so git gets a broken message and the rest" >&2
+	echo "  of your text runs as shell commands." >&2
+	echo >&2
+	echo "  Write the message with a real heredoc:" >&2
+	echo "      git commit -F - -- <paths> <<'EOF'" >&2
+	echo "      subject" >&2
+	echo >&2
+	echo "      body" >&2
+	echo "      EOF" >&2
+	echo >&2
+	echo "  Deliberate exception: SKIP_GIT_GUARD=1 git commit ..." >&2
+	exit 1
+}
+
+case "$subject" in
+	'@'|"@'"|'@"')
+		fail "the subject line is '$subject' - the message was mangled by the shell." ;;
+esac
+
+# Only the four here-string delimiters alone on a line, never a line that merely
+# contains one: a body explaining this trap quotes them, indented, and must pass.
+if grep -qxE "(@'|'@|@\"|\"@)[[:space:]]*" "$message_file"; then
+	fail "the message carries a here-string delimiter on its own line."
+fi
+
+# Resolve the checker beside this hook: installed shims execute the main
+# checkout's hook even when the committing worktree has an older scripts tree.
+here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd) || here=
+checker="$here/scripts/check-docs-trailer.mjs"
+if [ -z "$here" ] || [ ! -f "$checker" ]; then
+	echo "commit-msg: docs trailer checker is missing; skipping (old branch worktree)." >&2
+	exit 0
+fi
+node "$checker" "$message_file"

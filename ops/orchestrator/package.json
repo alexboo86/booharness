@@ -1,0 +1,18 @@
+{
+  "name": "booharness-orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "orch: the local orchestration daemon that will replace Paseo. Phase 0 is the skeleton: state store, health endpoint and a read-only MCP surface on 127.0.0.1. TypeScript run directly by Node type stripping, so there is no build step and only erasable syntax is allowed.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "serve": "node src/main.ts serve",
+    "status": "node src/main.ts status"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "undici": "8.12.3"
+  }
+}

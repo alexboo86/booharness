@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/nateherkai/claude-code-mods",
+  "sha": "33a936f2ec6bbfea5a30a1a4d71d992487a5c769",
+  "path": "collision-guard",
+  "license": "MIT",
+  "files": {
+    ".claude-plugin/plugin.json": "5282915edb089d64a225df18f529ccc580168ee1e74c555cd5ae993118500bf4",
+    "hooks/coach.mjs": "5d943bbdc995898951f99a9d2671da09004d2cf6367fbc7d4981a6157bdee9fb",
+    "hooks/fmt.mjs": "efba9275bdeb6b081a3b61f0482ca59075b9c2de3a5a83206e5df9923a62e31a",
+    "hooks/hooks.json": "7337d7f0589e94da9df683cc8bb49a7beacbc699b4d264515f029fa54d24e657",
+    "hooks/pricing.mjs": "2b466b4229bb1867342aef32eff39dab0b20ddf9509f6d92e378b4732b85abd3",
+    "hooks/privacy.mjs": "db293c1a495f16c21f53be45d6eef08196d2075107fcc11e4146be914660c513",
+    "hooks/register.mjs": "0ea21376e654d7031036be1d7b23bcf3dc81e26245dc574acea0957aab1e2ade"
+  }
+}

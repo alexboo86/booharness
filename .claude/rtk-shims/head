@@ -1,0 +1,163 @@
+#!/bin/bash
+# RTK PATH shim — transparent token filter for agent (and optional shell) sessions.
+# Re-entry safe: when parent is rtk (or __RTK_SHIM__ set), exec the real binary.
+#
+# REPO-LOCAL variant (P2.5 rtkg gateway, orchestration-v2): identical routing to the
+# global ~/.local/rtk-shims/_rtk_shim PLUS a fire-and-forget telemetry line per call —
+# Telemetry is append-only local JSONL, written before exec, capped, and never
+# affects command execution.
+
+set -euo pipefail
+
+# --- telemetry spool (fire-and-forget; must stay cheap + unbreakable) ---
+# HARD RULE: pure bash + ABSOLUTE binary paths ONLY in here. This function runs with the
+# shim dir at PATH head — calling any shimmed name (head/tr/cat/wc/...) via PATH would
+# re-enter this shim and FORK-BOMB (found live 2026-07-18: `head -c 160` in the pipeline
+# resolved to shim-head -> telemetry -> head -> ... -> "fork: Resource unavailable").
+telemetry() {  # telemetry <route:rtk|missing> [args...]
+  local route="$1"; shift
+  local spool args
+  if [ -n "${RTK_RUN_DIR:-}" ] && [ -d "${RTK_RUN_DIR:-}" ]; then
+    spool="$RTK_RUN_DIR/rtk-telemetry.jsonl"
+  else
+    spool="${HOME}/.local/state/rtkg/telemetry.jsonl"
+    /bin/mkdir -p "${HOME}/.local/state/rtkg" 2>/dev/null || return 0
+  fi
+  # Spool size cap prevents unbounded local growth.
+  # /usr/bin/wc is ABSOLUTE (never a shim) and portable across macOS plus
+  # Git Bash; on failure size=0 so telemetry remains fail-open.
+  local ssize
+  if [ -f "$spool" ]; then
+    ssize="$(/usr/bin/wc -c < "$spool" 2>/dev/null || echo 0)"
+  else
+    ssize=0
+  fi
+  [ "${ssize:-0}" -gt 2097152 ] && return 0   # 2MB cap: stop logging, never stop the command
+  # cap 160 chars + strip JSON-hostile chars — pure parameter expansion, no externals
+  args="$*"
+  args="${args:0:160}"
+  args="${args//\\/ }"; args="${args//\"/\'}"
+  args="${args//$'\n'/ }"; args="${args//$'\t'/ }"
+  printf '{"ts":%s,"agent":"%s","slug":"%s","cmd":"%s","via":"%s","args":"%s"}\n' \
+    "$(/bin/date +%s)" "${RTK_AGENT_ID:-unattributed}" "${RTK_RUN_SLUG:-}" "$NAME" \
+    "$route" "$args" >> "$spool" 2>/dev/null || true
+}
+
+NAME="$(basename "$0")"
+
+# cargo is the one shimmed command that can take the whole machine.
+#
+# Measured on this box (16 logical cores, 2026-07-30): one lead running
+# `cargo test` in one worktree pinned every core, because cargo defaults `jobs`
+# to the core count AND the test harness defaults its thread count to the core
+# count - and several leads work in parallel worktrees while Svod members build
+# in theirs. Compilation is capped machine-wide in `~/.cargo/config.toml`
+# (`[build] jobs`), but the test harness reads no config file at all: the only
+# lever is this variable, and a session started before it was set at user scope
+# never inherits it. So the shim supplies the default, and an explicit value -
+# a member's profile, or an operator who means it - still wins.
+if [ "$NAME" = "cargo" ] && [ -z "${RUST_TEST_THREADS:-}" ]; then
+  export RUST_TEST_THREADS=4
+fi
+
+resolve_rtk() {
+  local candidate name fallback
+  if [ -n "${RTK_BIN:-}" ] && [ -x "$RTK_BIN" ]; then
+    printf '%s\n' "$RTK_BIN"
+    return 0
+  fi
+
+  # Git Bash exposes Windows executables through PATH with their `.exe`
+  # suffix. Prefer the current machine's PATH before any Mac-only fallback.
+  for name in rtk rtk.exe; do
+    candidate="$(command -v "$name" 2>/dev/null || true)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ] \
+      && [ "$(dirname "$candidate")" != "$(dirname "$0")" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  # Known Mac install locations are fallback-only. Explicitly setting
+  # RTK_FALLBACK_DIRS="" is useful for hermetic verification.
+  fallback="${RTK_FALLBACK_DIRS-/opt/homebrew/bin:/usr/local/bin}"
+  local IFS=':'
+  for candidate in $fallback; do
+    if [ -x "$candidate/rtk" ]; then
+      printf '%s\n' "$candidate/rtk"
+      return 0
+    fi
+  done
+  return 1
+}
+
+RTK_BIN="$(resolve_rtk || true)"
+
+find_real() {
+  local name="$1" d
+  local IFS=':'
+  # Project-local node_modules/.bin FIRST — npm/npx semantics: a local dev tool
+  # (tsc, vitest, eslint, tsx) is project-pinned and shadows any global copy.
+  # Walk up from CWD to filesystem root so it resolves from any subdir/worktree.
+  # Without this, `rtk npx tsc` routed to a `tsc` shim whose real binary lives only
+  # at ./node_modules/.bin/tsc hit the exit-127 "not found" path (found 2026-07-19:
+  # a prior tsc gate silently no-ran, masking real type errors).
+  local wd="$PWD"
+  while [ -n "$wd" ] && [ "$wd" != "/" ]; do
+    if [ -x "$wd/node_modules/.bin/$name" ] && [ "$wd/node_modules/.bin" != "$(dirname "$0")" ]; then
+      printf '%s\n' "$wd/node_modules/.bin/$name"
+      return 0
+    fi
+    wd="$(dirname "$wd")"
+  done
+  # Prefer known absolute locations first (fast + stable)
+  for d in /opt/homebrew/bin /usr/local/bin /usr/bin /bin "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+    if [ -x "$d/$name" ] && [ "$d" != "$(dirname "$0")" ]; then
+      printf '%s\n' "$d/$name"
+      return 0
+    fi
+  done
+  # Fall back to PATH, skipping this shim dir
+  for d in $PATH; do
+    case "$d" in
+      *rtk-shims*) continue ;;
+    esac
+    if [ -x "$d/$name" ]; then
+      printf '%s\n' "$d/$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+REAL="$(find_real "$NAME" || true)"
+if [ -z "${REAL:-}" ]; then
+  # No real binary — fail clearly
+  echo "rtk-shim: real binary for '$NAME' not found on PATH" >&2
+  exit 127
+fi
+
+# Already inside rtk proxy → run real tool
+if [ -n "${__RTK_SHIM__:-}" ]; then
+  exec "$REAL" "$@"
+fi
+
+# Parent process is rtk → run real tool (rtk re-invokes via PATH)
+ppcomm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr -d '[:space:]' || true)"
+case "$ppcomm" in
+  rtk|rtk-*) exec "$REAL" "$@" ;;
+esac
+
+# A managed shim without RTK must never silently execute the heavy command
+# raw: that bypasses the token/safety enforcement the shim exists to provide.
+if [ -z "$RTK_BIN" ] || [ ! -x "$RTK_BIN" ]; then
+  telemetry missing "$@"
+  echo "rtk-shim: rtk binary not found (set RTK_BIN or add rtk/rtk.exe to PATH)" >&2
+  exit 127
+fi
+
+# Commands rtk does not wrap for this name should passthrough.
+# (rtk rewrite returns original if unmapped; still fine to go through rtk.)
+telemetry rtk "$@"
+export __RTK_SHIM__=1
+exec "$RTK_BIN" "$NAME" "$@"

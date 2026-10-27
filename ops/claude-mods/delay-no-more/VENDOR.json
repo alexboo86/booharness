@@ -1,0 +1,24 @@
+{
+  "source": "https://github.com/ruihe774/cc-delay-no-more",
+  "sha": "135b2889418753a634d05aa424672f6c4392ab7c",
+  "path": "",
+  "license": "Unlicense",
+  "files": {
+    ".gitignore": "16d097e7a991afc3970e69ce7be64c49345554499c7e4353cdc2e6021674cc79",
+    "CLAUDE.md": "2d84a91f531d13fd73e0f018a70e607d8caab3f0b8d880cddbbf79f9d7571028",
+    "LICENSE": "328f7a29fe35eabd6a9f68bc244257f6fd82d00c2b81e9b77546c06a5c325305",
+    "README.md": "798c60a106f3a15e6365dcddf481bc965abfa9117b29dcb1cb7caa70d883a2c7",
+    "tsconfig.json": "4087cf0ba92fde503ed0e7c56f37bcb26ad0c085873f10219d0336c0f19b5a8f",
+    ".claude-plugin/icon.png": "a9260b5a9089495bb01439ac7344cec2547f022a6e3e687254880d1e3648d2bf",
+    ".claude-plugin/plugin.json": "3824604ed3398ff16dc3910b0777285fb358ed90c2d89b991088c2208b98d9d5",
+    "docs/mods-api.md": "c005bf7103ff554bae4589e7959cfdef094ec48bb5b342c8a33691c8ff0c9736",
+    "docs/mods-create.md": "77e0dfcafccb81da1017f10352061d1902c6a7d634fad7d8930a0794a78df5d8",
+    "docs/mods-events.md": "47d89481af4203b6c89ae0fac2008358e14f72b92d27ad42566954e4f6548760",
+    "docs/mods-reference.md": "9f3e0fd3803098f1a321886e983bc65e74a726a968767ccb8f171960efeae4b2",
+    "docs/mods-test.md": "c32f802959dd4c967a4d0a8024d57abd4a8e0c8d8f819f6e0ca2392ab51c7549",
+    "hooks/hooks.json": "9a73203d586c92abab6502cf4a50d4f17794f9e440425d6a13647c85f3169912",
+    "hooks/patterns.ts": "3846d128f8c67b43128c200be6ecddd56af7398b6b8827e8092cb56d760276c4",
+    "hooks/register.ts": "098afaa510458b52d5bec8b813adc5d2f60fddf29eda66456bf16e2e2ca01586",
+    "tests/patterns.test.ts": "9159397c073bebbc4385aceecbdb0e252fefe0f4b9b44023e8020bbe89a99628"
+  }
+}

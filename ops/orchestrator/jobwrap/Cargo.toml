@@ -1,0 +1,21 @@
+[package]
+name = "orch-jobwrap"
+version = "0.1.0"
+edition = "2021"
+description = "orch remote-exec helper: runs one command inside a kill-on-close Windows Job Object"
+license = "MIT"
+publish = false
+
+# Standalone crate (task 1838): not part of the repository's root workspace,
+# with its own Cargo.lock beside this manifest.
+[workspace]
+
+[dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

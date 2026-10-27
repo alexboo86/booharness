@@ -1,0 +1,5 @@
+{
+  "_comment": "Optional operator MCP profile; configure your own endpoints explicitly.",
+  "schema_version": 1,
+  "servers": {}
+}

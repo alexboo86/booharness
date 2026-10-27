@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "retired": [
+    "probe",
+    "exa-search",
+    "youtube-transcript",
+    "grep-app",
+    "context7",
+    "operator-trade"
+  ],
+  "servers": {
+    "codegraph": {
+      "why": "A pre-built graph of symbols, call edges and dependencies, kept fresh by a file watcher on native OS events. It answers the two questions a text search cannot: WHO CALLS a symbol, and WHAT DEPENDS on a file through a re-export. Measured 2026-10-03 on codegraph 1.6.2 (baseline memory #9838): `Called by <- process_append_group (<project-specific>/src/raw_trades/runtime.rs:1783)` where ripgrep returned 42 matches that were almost all tests, and 18 dependents of moduleRegistry.ts including src/features/indicators/public.ts, whose downstream consumers a search for the import string misses (7 direct matches) because it is a re-export. It replaced probe, which answered only WHERE text is. It does NOT replace ast-grep: `codegraph node PollSource` returns a structural outline, not the 23 implementations that `ast-grep -p 'impl PollSource for $S { $$$ }'` returns; implements edges cover 72 of 79 project-trait impls and 0 of 214 std/external-trait impls, because a graph of symbols is not a matcher over shapes. It does NOT replace ripgrep for an exact literal: 3183 tokens against 78 (cl100k_base) for one symbol location, because it always returns the source.",
+      "why_one_tool": "It exposes ONE tool, `codegraph_explore`, by the author's own measurement that one strong tool steers agents better than a menu of narrow ones. The narrower tools stay reachable through the CLI.",
+      "transport": "stdio",
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ],
+      "required": true
+    },
+    "memoryctl": {
+      "why": "Durable memory where a hook cannot reach. The PreToolUse domain-lessons hook is installed on every runtime (claude/glm via ~/.claude/settings.json, grok via ~/.grok/hooks/booharness.json, codex and kimi in their config.toml). Under Paseo (ACP) that hook's output is not guaranteed to reach grok or kimi (task #1212), so the seat asks memoryctl lessons --path itself. Measured 2026-08-02 across two review rounds: every runtime now holds this tool and calls it. Kimi was the exception for one round, its server connected while the roster allowlist left the tool uncallable, which the driver registry fixed. MCP is not better than a hook; it is the channel that still works when hook output does not arrive.",
+      "why_one_tool": "ONE tool with an action enum, not one tool per verb: a tool schema is re-sent on every turn of every session that enables the server, so eight tools would be eight schemas of permanent overhead to save the model a single enum lookup. Pinned by a test at under 3000 bytes.",
+      "why_not_a_promise": "It does NOT promise better tool choice. Measured 2026-08-02: code intelligence had been delivered over MCP to three runtimes for weeks and the week's transcripts still held 6816 grep/rg calls against 619 index ones. What this buys is reach - plus attribution, since every write carries the calling client's name and the journal can finally answer how much memory the MEMBERS write versus the lead.",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "{repo}/scripts/memory/mcp-server.mjs"
+      ],
+      "required": true
+    },
+    "brightdata-web": {
+      "why": "Веб для профиля deep-research: Bright Data вместо Exa (решение оператора 2026-08-04). Exa ищет СТРАНИЦЫ и отдаёт выжимку; Bright Data отдаёт саму страницу через Web Unlocker, проходя капчу и анти-бот — а канон ордерфлоу и профиля живёт на площадках, которые обычному fetch не отвечают. Замер 2026-08-04: teletype и Notion взяты с первого раза, публичная папка cloud.mail.ru прочитана без логина.",
+      "why_id_contains_web": "Профиль deep-research отказывает члену без способности, в имени которой есть 'web' или 'search' (было в svod/src/named_team.rs:1430, Svod-эра; правило теперь у Paseo). Поэтому id несёт 'web' — переименование сервера ломает запуск профиля, а не только читаемость.",
+      "why_not_npx": "То же, что у exa-search: сервер с командой npx встаёт у члена в pending approval и не отдаёт НИ ОДНОГО инструмента, молча. Пиннованный локальный вход обязателен.",
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "{repo}/ops/mcp-vendor/node_modules/@brightdata/mcp/server.js"
+      ],
+      "requires_file": "{repo}/ops/mcp-vendor/node_modules/@brightdata/mcp/server.js",
+      "probe_start": true,
+      "probe_timeout_ms": 30000,
+      "probe_expect_tool": "search_engine",
+      "probe_call": {
+        "tool": "search_engine",
+        "arguments": {
+          "query": "mcp {nonce}",
+          "engine": "google"
+        }
+      },
+      "why_probe": "Канарейка здесь ОБЯЗАТЕЛЬНА, и первая редакция этого блока утверждала обратное — ошибочно. `initialize` действительно печатает в stderr проверку зон, и на живом токене там «Required zone mcp_unlocker already exists», поэтому казалось, что сервер аутентифицируется сам. Замерено 2026-08-19 подстановкой заведомо мёртвого токена: сервер печатает «Error checking/creating zones: Invalid credentials» и ВСЁ РАВНО стартует, отдавая полный каталог из пяти инструментов — `initialize`+`tools/list` проходят зелёными на токене, которого не существует. Это ровно инцидент 2026-08-19, когда четыре ресёрч-места потеряли веб. Вызов `search_engine` на мёртвом токене отвечает `isError` с «HTTP 401: Invalid token» за 949 мс, на живом возвращает выдачу за 3150 мс отдельным замером и 5483 мс под нагрузкой параллельного прогона — отсюда бюджет 30000 мс, а не 15000: ложный отзыв веба у ресёрч-круга дороже, чем лишние секунды ожидания на сервере, который и правда мёртв. Цена — один SERP-запрос на запуск круга против четырёх сожжённых мест. Запрос несёт {nonce} и подставляется заново на каждое рукопожатие: Bright Data держит остывание НА СТРОКУ запроса, и 2026-08-24 фиксированное «mcp» один раз упало в парсере, после чего следующие четыре запуска получили «This query recently failed and cannot be attempted at this time» и были отказаны — каждая ретрайка заново взводила то остывание, которое пережидала. Тем же днём канарейка перестала быть приговором: isError, узнанный как временный (список в mcp_handshake::is_transient_canary_failure), даёт verdict inconclusive — сервер выдаётся местам с предупреждением, а отказ остаётся за мёртвым ключом и за сервером, который не умеет позвать свой же инструмент.",
+      "env_from_secrets": [
+        {
+          "env": "API_TOKEN",
+          "secret": "BRIGHTDATA_API_KEY"
+        }
+      ],
+      "skip_if_secrets_missing": true,
+      "install_hint": "либо BRIGHTDATA_API_KEY отсутствует в ~/.claude/<prefix>-secrets.env (ключ лежит в %APPDATA%/brightdata-cli/credentials.json после `bdata login`), либо пиннованный сервер не установлен: npm ci --prefix ops/mcp-vendor. Затем перезапустить install-harness.mjs",
+      "required": false
+    },
+    "orch": {
+      "why": "The local orchestration daemon (ops/orchestrator) that will replace Paseo: seats, reports and an append-only event journal in ~/.local/state/orch. Operator decision 2026-09-22 (memory #10457): the lead is Claude Code or the Codex desktop app and reaches orch over MCP. Phase 0 exposes two read-only tools, orch_status and seats_list.",
+      "why_http": "A resident service, not a per-session child: every lead session talks to the SAME daemon and the same store, which a stdio server spawned per session cannot be. Loopback only; the daemon refuses a non-loopback Host or Origin (DNS rebinding).",
+      "why_runtimes": "Leads only. `runtimes` names the installer's plan runtimes (install-harness.mjs installMcp) a server lands in; absent means every runtime. orch goes to ~/.claude.json (Claude Code and zcode) and ~/.codex/config.toml, never to the grok, kimi or glm worker configs: a worker seat has no business with the orchestrator that commissions it.",
+      "transport": "http",
+      "url": "http://127.0.0.1:7760/mcp",
+      "runtimes": [
+        "claude(global)+zcode",
+        "codex"
+      ],
+      "install_hint": "The daemon is installed by the same installer (step `orchestrator`, skip with --skip-orchestrator); its dependencies come from npm ci --omit=dev --prefix ops/orchestrator.",
+      "required": false
+    }
+  },
+  "preserve_existing": [
+    "node_repl"
+  ]
+}

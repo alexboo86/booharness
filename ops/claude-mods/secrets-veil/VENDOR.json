@@ -1,0 +1,24 @@
+{
+  "source": "https://github.com/yonatangross/orchestkit",
+  "sha": "0fe5beba22aac523980db5b769242a32c3663a05",
+  "path": "mods/secrets-veil",
+  "license": "MIT",
+  "files": {
+    ".gitignore": "5f553b5e4cb6d72067e49d198a0bccc3b9948520253eee50354f6c3f26f4109d",
+    "package-lock.json": "74dda2a071053f93acaab82e528f8f8773b9798ffb26f42554bc6ab069668ba5",
+    "package.json": "9d78aabe525bce3ee6b49e0dc6b7b1fb25b666d8b175dadc07957ac8e3bb4cb3",
+    "tsconfig.json": "7398fb6baadc6b51e19e5f5db581d1e8aa9a76dcd29d3995cf050b818b462c96",
+    "vitest.config.ts": "54b7edda5e3d94145ed60508173c2419c21774d408cdf8a3bb4536eb8811fcd7",
+    ".claude-plugin/plugin.json": "fb3d7c728b59175fb58e9953687a4f6770b0ff2a92d1872308cebae107a4f824",
+    "hooks/hooks.json": "1eefaf884ec2c5b0b8e68000f9ef34625dfa5e733a934267b04cf507f8908858",
+    "src/mask.ts": "474358625035c2cabda94e2ce013c18bae0f9e92d32ef2b0ce4fb8b980a54e79",
+    "src/types.ts": "017a91d0f0d142cfbf7484ab5b95815252f09ee4ff5ff4b3353e2e11e8e971fb",
+    "tests/entropy-corpus.test.ts": "a6f18c13f17aba0fb2f3ff56d3df9fe8ff82a66e1fa41cbe20fd91e7562c7909",
+    "tests/fail-closed-env.test.ts": "0712c32c1fcb70b49229b22c443d94499b8acee7c6c66ecd0d6f10e0bdb2cef0",
+    "tests/fail-closed.test.ts": "4f02c1039d29d4610fca92a40b4b8722ebed2faa7886ea9c8756d5f6adb2b346",
+    "tests/mask.test.ts": "a693e32f4c41c7c6a63c884442b61095f838eecbd576563f71fc48dceae838dc",
+    "tests/overlap.test.ts": "aeeb7f1cf6d15e133abc28dd434e12e8ddb1041ec362db315d0a5cad11a11ca8",
+    "tests/scan-time.test.ts": "643b09887da0efe0e78e2d811b996d5f1cffe4871cc93a0820e214ee8e177da3",
+    "tests/fixtures/repo-output.txt": "977d5e121c70183bb8115ec01877c9fc678bc1d4039bb09384d30dce2a308439"
+  }
+}

@@ -1,0 +1,390 @@
+{
+  "repository": "d01526896d009e67ae51d67a96720bac99d216bc",
+  "byDomain": {
+    "domain-harness": [
+      ".codex/**",
+      ".claude/agents/**",
+      ".claude/hooks/**",
+      ".claude/rtk-shims/**",
+      ".claude/scripts/**",
+      ".claude/skill-compass/**",
+      ".claude/settings*.json",
+      "scripts/memory/**",
+      "scripts/harness-report/**",
+      "scripts/lib/install-*.mjs",
+      "scripts/lib/harness-config.mjs",
+      "scripts/test-harness-*.mjs",
+      "scripts/check-knowledge-*.mjs",
+      "scripts/rtk-*.mjs",
+      "scripts/test-rtk-*.mjs",
+      "scripts/check-commit-safety.mjs",
+      "scripts/check-push-safety.mjs",
+      "scripts/gen-domain-routing.mjs",
+      "scripts/check-domain-routing.mjs",
+      "scripts/check-hook-topology.mjs",
+      "scripts/check-mcp-delivery.mjs",
+      "ops/bootstrap/**",
+      "ops/orchestrator/**",
+      "ops/memory-nas/**",
+      "ops/harness-kit/**",
+      "ops/routines/**",
+      "ops/claude-mods/**",
+      "scripts/routines.mjs",
+      "scripts/lib/routines.mjs",
+      "scripts/lib/family-logins.mjs",
+      "ops/*.mjs",
+      "scripts/*orch*.mjs",
+      "scripts/ste-check.mjs",
+      ".agents/skills/**",
+      ".agents/domains/**",
+      "RTK.md",
+      "docs/agent/**",
+      "scripts/check-installed-line-endings.mjs",
+      "scripts/test-lead-worktree-hook.mjs",
+      "CLAUDE.md",
+      "AGENTS.md",
+      "scripts/check-skills-drift.mjs",
+      "scripts/git-env.mjs",
+      "scripts/home-read-lib.mjs",
+      "scripts/harness-bench/**",
+      "scripts/corpus/**",
+      "ops/update-tools.mjs",
+      "ops/usage-snapshot.mjs",
+      "ops/usage-cache.mjs",
+      "scripts/test-orch-*.mjs",
+      "ops/setup-machine.sh",
+      "scripts/test-install-*.mjs",
+      "scripts/test-doctor.mjs",
+      "scripts/test-seat-*.mjs",
+      "scripts/test-jev-*.mjs",
+      "scripts/check-skill-map.mjs",
+      "scripts/test-mcp-*.mjs",
+      ".githooks/**",
+      "scripts/test-memory*.mjs",
+      "scripts/probe-memory-service.mjs",
+      "ops/ab-stand/**",
+      "ops/pi-runtime/**"
+    ],
+    "domain-platform-shell": [
+      "**"
+    ]
+  },
+  "order": [
+    {
+      "glob": "scripts/check-installed-line-endings.mjs",
+      "domain": "domain-harness",
+      "spec": 1040
+    },
+    {
+      "glob": "scripts/test-lead-worktree-hook.mjs",
+      "domain": "domain-harness",
+      "spec": 1035
+    },
+    {
+      "glob": "scripts/check-domain-routing.mjs",
+      "domain": "domain-harness",
+      "spec": 1032
+    },
+    {
+      "glob": "scripts/probe-memory-service.mjs",
+      "domain": "domain-harness",
+      "spec": 1032
+    },
+    {
+      "glob": "scripts/check-commit-safety.mjs",
+      "domain": "domain-harness",
+      "spec": 1031
+    },
+    {
+      "glob": "scripts/check-hook-topology.mjs",
+      "domain": "domain-harness",
+      "spec": 1031
+    },
+    {
+      "glob": "scripts/check-mcp-delivery.mjs",
+      "domain": "domain-harness",
+      "spec": 1030
+    },
+    {
+      "glob": "scripts/check-skills-drift.mjs",
+      "domain": "domain-harness",
+      "spec": 1030
+    },
+    {
+      "glob": "scripts/gen-domain-routing.mjs",
+      "domain": "domain-harness",
+      "spec": 1030
+    },
+    {
+      "glob": "scripts/lib/harness-config.mjs",
+      "domain": "domain-harness",
+      "spec": 1030
+    },
+    {
+      "glob": "scripts/check-push-safety.mjs",
+      "domain": "domain-harness",
+      "spec": 1029
+    },
+    {
+      "glob": "scripts/lib/family-logins.mjs",
+      "domain": "domain-harness",
+      "spec": 1029
+    },
+    {
+      "glob": "scripts/check-skill-map.mjs",
+      "domain": "domain-harness",
+      "spec": 1027
+    },
+    {
+      "glob": "scripts/home-read-lib.mjs",
+      "domain": "domain-harness",
+      "spec": 1025
+    },
+    {
+      "glob": "scripts/lib/routines.mjs",
+      "domain": "domain-harness",
+      "spec": 1024
+    },
+    {
+      "glob": "scripts/test-doctor.mjs",
+      "domain": "domain-harness",
+      "spec": 1023
+    },
+    {
+      "glob": "ops/usage-snapshot.mjs",
+      "domain": "domain-harness",
+      "spec": 1022
+    },
+    {
+      "glob": "scripts/ste-check.mjs",
+      "domain": "domain-harness",
+      "spec": 1021
+    },
+    {
+      "glob": "ops/setup-machine.sh",
+      "domain": "domain-harness",
+      "spec": 1020
+    },
+    {
+      "glob": "ops/update-tools.mjs",
+      "domain": "domain-harness",
+      "spec": 1020
+    },
+    {
+      "glob": "scripts/routines.mjs",
+      "domain": "domain-harness",
+      "spec": 1020
+    },
+    {
+      "glob": "ops/usage-cache.mjs",
+      "domain": "domain-harness",
+      "spec": 1019
+    },
+    {
+      "glob": "scripts/git-env.mjs",
+      "domain": "domain-harness",
+      "spec": 1019
+    },
+    {
+      "glob": "AGENTS.md",
+      "domain": "domain-harness",
+      "spec": 1009
+    },
+    {
+      "glob": "CLAUDE.md",
+      "domain": "domain-harness",
+      "spec": 1009
+    },
+    {
+      "glob": "RTK.md",
+      "domain": "domain-harness",
+      "spec": 1006
+    },
+    {
+      "glob": "scripts/check-knowledge-*.mjs",
+      "domain": "domain-harness",
+      "spec": 24
+    },
+    {
+      "glob": "scripts/harness-report/**",
+      "domain": "domain-harness",
+      "spec": 23
+    },
+    {
+      "glob": ".claude/skill-compass/**",
+      "domain": "domain-harness",
+      "spec": 22
+    },
+    {
+      "glob": "scripts/harness-bench/**",
+      "domain": "domain-harness",
+      "spec": 22
+    },
+    {
+      "glob": "scripts/test-harness-*.mjs",
+      "domain": "domain-harness",
+      "spec": 21
+    },
+    {
+      "glob": "scripts/test-install-*.mjs",
+      "domain": "domain-harness",
+      "spec": 21
+    },
+    {
+      "glob": "scripts/lib/install-*.mjs",
+      "domain": "domain-harness",
+      "spec": 20
+    },
+    {
+      "glob": "scripts/test-memory*.mjs",
+      "domain": "domain-harness",
+      "spec": 19
+    },
+    {
+      "glob": ".claude/rtk-shims/**",
+      "domain": "domain-harness",
+      "spec": 18
+    },
+    {
+      "glob": "scripts/test-orch-*.mjs",
+      "domain": "domain-harness",
+      "spec": 18
+    },
+    {
+      "glob": "scripts/test-seat-*.mjs",
+      "domain": "domain-harness",
+      "spec": 18
+    },
+    {
+      "glob": "ops/orchestrator/**",
+      "domain": "domain-harness",
+      "spec": 17
+    },
+    {
+      "glob": "scripts/test-jev-*.mjs",
+      "domain": "domain-harness",
+      "spec": 17
+    },
+    {
+      "glob": "scripts/test-mcp-*.mjs",
+      "domain": "domain-harness",
+      "spec": 17
+    },
+    {
+      "glob": "scripts/test-rtk-*.mjs",
+      "domain": "domain-harness",
+      "spec": 17
+    },
+    {
+      "glob": ".agents/domains/**",
+      "domain": "domain-harness",
+      "spec": 16
+    },
+    {
+      "glob": ".claude/scripts/**",
+      "domain": "domain-harness",
+      "spec": 16
+    },
+    {
+      "glob": ".claude/settings*.json",
+      "domain": "domain-harness",
+      "spec": 16
+    },
+    {
+      "glob": "ops/claude-mods/**",
+      "domain": "domain-harness",
+      "spec": 16
+    },
+    {
+      "glob": "ops/harness-kit/**",
+      "domain": "domain-harness",
+      "spec": 16
+    },
+    {
+      "glob": ".agents/skills/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": ".claude/agents/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": "ops/memory-nas/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": "ops/pi-runtime/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": "scripts/corpus/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": "scripts/memory/**",
+      "domain": "domain-harness",
+      "spec": 15
+    },
+    {
+      "glob": ".claude/hooks/**",
+      "domain": "domain-harness",
+      "spec": 14
+    },
+    {
+      "glob": "ops/bootstrap/**",
+      "domain": "domain-harness",
+      "spec": 14
+    },
+    {
+      "glob": "ops/ab-stand/**",
+      "domain": "domain-harness",
+      "spec": 13
+    },
+    {
+      "glob": "ops/routines/**",
+      "domain": "domain-harness",
+      "spec": 13
+    },
+    {
+      "glob": "scripts/rtk-*.mjs",
+      "domain": "domain-harness",
+      "spec": 12
+    },
+    {
+      "glob": "docs/agent/**",
+      "domain": "domain-harness",
+      "spec": 11
+    },
+    {
+      "glob": ".githooks/**",
+      "domain": "domain-harness",
+      "spec": 10
+    },
+    {
+      "glob": "scripts/*orch*.mjs",
+      "domain": "domain-harness",
+      "spec": 8
+    },
+    {
+      "glob": ".codex/**",
+      "domain": "domain-harness",
+      "spec": 7
+    },
+    {
+      "glob": "ops/*.mjs",
+      "domain": "domain-harness",
+      "spec": 4
+    },
+    {
+      "glob": "**",
+      "domain": "domain-platform-shell",
+      "spec": 0
+    }
+  ],
+  "retiredDomains": {}
+}

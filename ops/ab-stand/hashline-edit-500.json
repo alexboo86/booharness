@@ -1,0 +1,13 @@
+{
+  "package": "pi-hashline-edit-pro",
+  "version": "5.0.0",
+  "registry": "https://registry.npmjs.org/",
+  "integrity": "sha512-uDFXXzITMNbIjPhiqId6BqLf5VAH6WepEMhfXIrOKsUyY6tumIeZOv9LhXwoLKQJ9RLqmzUiSzpeim42Xp6KQQ==",
+  "extension": "index.ts",
+  "peer": "typebox@1.3.34",
+  "config": {
+    "copyMoveEnabled": false,
+    "anchorGrepEnabled": false,
+    "replaceWithinEnabled": true
+  }
+}

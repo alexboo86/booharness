@@ -1,0 +1,65 @@
+# Knowledge: the agent harness
+
+fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
+amended: 2026-10-26 — glm working coder cap 10 (decision 20271) (NOT fact-checked)
+body-sha256: 8f45dab8a7df
+
+Patterns:
+- Commit gates: `scripts/check-commit.mjs`
+- Orch MCP tools: `ops/orchestrator/src/http.ts`
+- Session hooks: `ops/bootstrap/session-start.mjs`
+- Installer steps: `ops/bootstrap/install-harness.mjs`
+
+<!-- knowledge:toc -->
+- [Purpose and authority](knowledge/purpose-and-authority.md): Harness ownership and authority: contracts, domain routing, installed tools, memory clients, orchestration and commands that prove live status.
+- [Contract, ownership and installer](knowledge/contract-ownership-and-installer.md): Installer ownership and safe writes: install-harness, the home lock, managed entries, MCP configs, hooks, permissions, Codex trust blocks and the no-Claude-plugin policy.
+- [Runtime installation, provisioning and updates](knowledge/runtime-installation-provisioning-and-updates.md): Runtime installation and updates: AGENTS.md/CLAUDE.md contract mirroring, domain routing, seat provisioning, installer checks, tool pins and updater commands.
+- [Portable kit build and verification](knowledge/portable-kit-build-and-verification.md): Portable kit assembly and verification: build-kit, the include list, overlay files, KIT-MANIFEST, donor-name leak checks and kit tests.
+- [Kit adoption, routines and login credentials](knowledge/kit-adoption-routines-and-login-credentials.md): Project adoption and credentials: adopt-project, lead skill links, routine definitions, family-logins and the secret writer.
+- [Optional config keys and the config writer](knowledge/optional-config-keys-and-the-config-writer.md): Harness config keys and writes: mcp.off, skills.off, lead options, harness-config validation, the config writer and focused tests.
+- [Setup wizard, doctor and guided setup](knowledge/setup-wizard-doctor-and-guided-setup.md): The setup wizard was removed (decision 17731); the page keeps the doctor: checks, provider login, host probes and guided safe fixes.
+- [Wizard dependencies and apply phase](knowledge/wizard-dependencies-and-apply-phase.md): The wizard is removed (decision 17731); the page keeps the orch dependency mechanism the installer still uses: shared orch dependency sets, runtime checks, home config and host configuration.
+- [Seat context: knowledge, lessons and skills](knowledge/seat-context-knowledge-lessons-and-skills.md): Seat prompt assembly: context.ts combines role duties, task files, knowledge passages, lessons, routed skills and the code map; page routing and rendering set the delivery budgets.
+- [Lesson capture and delivery](knowledge/lesson-capture-and-delivery.md): Lesson capture and delivery: drain-inbox, the capture gate, cross-domain reanchor refiling, proposal ledger, lesson router, domain-lessons hook and Jev client.
+- [Skill routing and vendored skills](knowledge/skill-routing-and-vendored-skills.md): Skill selection and provenance: _skill-map.json, role/domain/trigger routing, skill-router, the harness allowlist, vendored skill receipts and run-script pins.
+- [Memory service and durable records](knowledge/memory-service-and-durable-records.md): Durable memory service: memoryd is the single writer; service-client, NAS backup, vector state, the embedding model and domain routing connect clients to stored records.
+- [Harness prefix configuration](knowledge/harness-prefix-configuration.md): Harness naming and paths: names.prefix validation, harnessPaths, state/cache/secrets directories, service labels and prefix config tests.
+- [Embedding models and vector search](knowledge/embedding-models-and-vector-search.md): Embedding recipes and vector search: embed-recipe MODELS, query/document prefixes, memoryd model validation and backlog, vector imports and search benchmarks.
+- [Memory lessons and task records](knowledge/memory-lessons-and-task-records.md): Memory record workflows: lesson capture and gate, dedupe ledger, task helpers, handoff_draft and the boundary between session context and durable records.
+- [Orch daemon, storage and installation](knowledge/orch-daemon-storage-and-installation.md): Orch daemon deployment and storage: the SQLite store, daemon lock, HTTP/MCP endpoints, chat routes and OS service installers.
+- [Task board and wake responses](knowledge/task-board-and-wake-responses.md): Task-board reads and writes: loopback /tasks pages and routes, memoryd task operations, chat assignment notices, wake responses and drag-and-drop.
+- [Lead chat rules and handover](knowledge/lead-chat-rules-and-handover.md): Lead coordination and handover: orch-team rules, successor prompt, relay behavior, chat wake, restart consent and account-lease coordination.
+- [Shared-account lease](knowledge/shared-account-lease.md): Shared-account ownership: app-lease and account-slots, SQLite lease renewal/release, chat binding and the macOS launch plan.
+- [Providers, roles and worktrees](knowledge/providers-roles-and-worktrees.md): Seat providers and worktrees: provider selection, Pi runtime routes, role duties, instrument settings, the seat contract and checkout setup.
+- [Provider session contracts and adapters](knowledge/provider-session-contracts-and-adapters.md): Provider session interfaces and adapters: Claude, Codex, ACP and Pi routes, credential isolation, session guards and provider lifecycle contracts.
+- [Family role models and budget ranking](knowledge/family-role-models-and-budget-ranking.md): Role/model selection and budget ranking: profiles, the family matrix, limits, quota windows, reservations and review-plan selection.
+- [Pick statistics and reviewer yield](knowledge/pick-statistics-and-reviewer-yield.md): Read-only pick and review metrics: pick-stats, retained-line counts, reviewer yield, RTK log mining and statistical reports over the orch store.
+- [Seat checkout lifecycle and worktree safety](knowledge/seat-checkout-lifecycle-and-worktree-safety.md): Local checkout safety: worktrees.ts, repo resolution, keyed queues, codegraph daemon cleanup, coder mirrors and worktree pruning.
+- [Coder-retained survival](knowledge/coder-retained-survival.md): Landed coder-line survival: retained.ts compares countable patch lines with HEAD blobs, using landed refs or base..tip and reporting retained shares.
+- [Debater rebuttals and model separation](knowledge/debater-rebuttals-and-model-separation.md): Debater turn policy: answer and rebuttal prompts, turn limits, sibling-model separation and the tests that enforce independent sides.
+- [Runtime role-matrix configuration and team presets](knowledge/runtime-role-matrix-configuration-and-team-presets.md): Runtime role configuration: roleMatrix reads roles.json at call time; the role writer, profiles, team presets and pickFamily share the validated matrix.
+- [Image-input eligibility and skill enforcement](knowledge/image-input-eligibility-and-skill-enforcement.md): Image eligibility and skill enforcement: model-input capabilities, the seat images flag, skill requires and context checks reject incompatible seat models.
+- [Remote seats and placement](knowledge/remote-seats-and-placement.md): Remote seat placement: needs and host selection, instrument probes, scout inheritance, the coder verification loop and Pi tool preflight.
+- [Host placement and build infrastructure](knowledge/host-placement-and-build-infrastructure.md): Host eligibility and build capacity: hosts.json, placement and SSH probes, required instruments, MSVC setup, build-gate slots and runtime shims.
+- [Remote checkout lifecycle and provisioning](knowledge/remote-checkout-lifecycle-and-provisioning.md): Remote checkout ownership and provisioning: remote-repo and remote-provision, detached read-only seats, coder mirrors, verification and cleanup.
+- [Remote sync, landing, and host operations](knowledge/remote-sync-landing-and-host-operations.md): Remote synchronization and landing: snapshotBack, syncMirror, landing proofs and host-side check reruns; jobwrap and the machine-load panel expose host operations.
+- [Turns, reports, monitoring and lead view](knowledge/turns-reports-monitoring-and-lead-view.md): Turn reporting and lead visibility: seats_list paging, report grading and verification, seat digests, rechecks, scoped scouts and claimed-check reruns.
+- [Lead usage, capture, and screenshot seats](knowledge/lead-usage-capture-and-screenshot-seats.md): Lead usage and capture: limits and usage-snapshot readings, lead/dashboard views, capture hook and screenshotter role removed on 2026-10-21 (#19248), and Windows UI capture.
+- [Wait, daemon state, and schema repair](knowledge/wait-daemon-state-and-schema-repair.md): Waiting and daemon recovery: waitOne/waitMany, daemon locks, outage grace, the read-only LAN board and turn-report schema repair.
+- [Safety gates and proof boundaries](knowledge/safety-gates-and-proof-boundaries.md): Commit and publication proof: check-commit composes safety, knowledge page/anchor/history and module gates; explicit paths, review and operator approval govern commits and publication.
+- [Module registry and contracts](knowledge/module-registry-and-contracts.md): Module registry: contract headers in three places, module-registry.mjs --check and its commit gate, module-coverage.json exclude/closed/layers, the module index.
+- [ASD-STE100 and language-mode behavior](knowledge/asd-ste100-and-language-mode-behavior.md): ASD-STE100 language checks: ste-check and its dictionary, language.json modes, session rule delivery, brief enforcement and report/prompt checks.
+- [Isolation of orch tests from host and state](knowledge/isolation-of-orch-tests-from-host-and-state.md): Orch test isolation: refuseHostSsh, the SSH sentinel and orch-test-state keep tests off real hosts and give each run a temporary state directory.
+- [Isolated A/B stand (task 1452)](knowledge/isolated-a-b-stand-task-1452.md): Isolated A/B stand workflow: install, smoke, matrix and rollback; pinned extension and MCP arms, package integrity, arm-local state, readiness checks and pilot limits.
+- [Edit-tool arms and stock rollout](knowledge/edit-tool-arms-and-stock-rollout.md): Edit-tool arm installation and rollout: codex-edit and hashline installers, package integrity pins, readiness checks, stock profiles and pilot measurements.
+- [Pilots, isolation and stand measurements](knowledge/pilots-isolation-and-stand-measurements.md): Stand pilot isolation and measurements: arm profiles, no-lessons suppression, lesson-usefulness metrics, cell proofs, quota guards and comparative results.
+- [Role statistics by family](knowledge/role-statistics-by-family.md): Role quality by family: role-stats and role-quality reports, qualification thresholds, WEAK tiers and their relationship to pace-based pick ranking.
+- [Known limits and open-work lookup](knowledge/known-limits-and-open-work-lookup.md): Open-work lookup and harness limits: memoryctl task list, MCP versus shell boundaries, and the scope of knowledge-page and anchor checks.
+- [Knowledge page size rules](knowledge/knowledge-page-size-rules.md): Knowledge size policy: check-knowledge-size, commit-tree prose budgets, parent replacement credit, stamp limits, new-part workflow and Patterns head validation.
+- [Board polling and the cached board](knowledge/board-polling-and-cached-board.md): Board polling and cache delivery: dashboard/tasks-page loops serialize requests; board() serves a cached board, rebuilds in the background and exposes its age.
+- [Knowledge render: passages around a hit](knowledge/knowledge-render-passages-around-a-hit.md): Knowledge passage rendering: renderKnowledgePage ranks parts, keeps openings and hit windows within byte budgets, and uses a routing eval to measure delivery.
+- [Knowledge page cut tool](knowledge/knowledge-page-cut-tool.md): Knowledge splitting and cutting: split-knowledge-page and partSections preserve section bytes, insert table lines, ignore fenced headings and refuse raw upward links before a first split.
+- [Memory deep-search: the re-rank routes](knowledge/memory-deep-search-re-rank-routes.md): Memory deep-search routes: deep-search.mjs re-ranks the top 30 with Jev by default, terra and grok by --via, no route after a Jev failure, the jev-test-state pin.
+- [The duplicate-constants step of the commit gate](knowledge/duplicate-constants-gate-step.md): Duplicate-constants step: check:commit runs check-duplicate-constants.mjs in each run on the working tree, no path trigger, no override flag, the remedy in the summary.
+- [The AI MCP removal: what the harness keeps](knowledge/ai-mcp-removal-what-the-harness-keeps.md): AI MCP removal: domain-ai-mcp is retired with its memory kept, the bridge mcp-booharness-servers stays without three tools, one deletion-reference waiver.
+- [Claude Code mods: the orch-board pane](knowledge/claude-mods-orch-board-pane.md): Claude Code mods: ops/claude-mods, engine-written types, CLAUDE_CODE_PLUGIN_DIRS loading, the orch-board Pult pane, its 4-post chat tail, the handover mod.

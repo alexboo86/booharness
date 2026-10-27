@@ -1,0 +1,26 @@
+{
+  "note": "The ONE statement of what rtk covers, read by the JS rewrite layer (ops/bootstrap/rtk-rewrite-lib.mjs) and by whatever launches a member (Paseo; formerly this repo's own Rust adapter, svod/src/adapter/mod.rs). Two lists because they answer two different questions, and conflating them breaks a member outright: `subcommands` is what the rtk BINARY can dispatch, `managedShellCommands` is which bare shell command a member must be REFUSED so that it routes through rtk instead. Every managed command must be RUNNABLE through rtk - denying one rtk cannot filter would leave a member unable to run it by any route at all, which is why `cat`, `sed` and `awk` are absent from both. Runnable is not the same as listed here: `ssh` is managed and is deliberately NOT in `subcommands`, because rtk dispatches it from `.rtk/filters.toml` (see projectFiltersNote). The earlier wording said every managed command must also be a subcommand, which this file's own `ssh` entry contradicted from the day the filters route was added - named by a review seat 2026-08-08. An invariant asserted next to the counter-example is worse than none, because a reader trusts it.",
+  "subcommands": [
+    "ast-grep", "aws", "bun", "bunx", "bypass", "cargo", "cc-economics", "config", "ctest", "curl", "deno", "deps",
+    "diff", "discover", "docker", "dotnet", "ecs", "env", "err", "find",
+    "format", "gain", "gh", "git", "glab", "go", "golangci-lint", "gradlew",
+    "grep", "gt", "help", "hook", "hook-audit", "init", "jest", "json",
+    "kubectl", "learn", "llm-proxy", "lint", "log", "methods", "mvn", "mvnd", "mypy", "next", "npm", "npx",
+    "oc", "paratest", "pest", "php", "phpstan", "phpunit", "phpt", "pint", "pipeline", "pip",
+    "pipe", "playwright", "plugins", "pnpm", "prettier", "prisma", "proxy", "psql",
+    "pytest", "rake", "read", "recall", "rewrite", "rg", "rspec", "rubocop", "ruff",
+    "run", "sbt", "session", "smart", "sqlfluff", "summary", "tasks", "tsc", "telemetry", "test",
+    "tree", "trust", "untrust", "uv", "verify", "vitest", "wc", "wget", "ls"
+  ],
+  "projectFiltersNote": "Some managed commands are dispatched from .rtk/filters.toml rather than from rtk's built-in set, so `rtk --help` does not list them: `rtk ssh` filters real server-log output here, which is why ssh is managed. That list is NOT copied here, because a name list beside the thing it describes is the drift this file exists to end - but WHO reads it live differs, and the earlier wording ('both gates read the live filters file') overpromised, named by a review seat 2026-08-08. The JS rewrite layer reads it at RUNTIME, because it has to emit `rtk ssh` for a command rtk --help never mentions. The Rust side reads it in a TEST only: the deny list a member launches with is compiled in, deliberately, so that what a member is refused cannot change with the contents of whatever directory it happens to run in. The test is what keeps the two honest - it fails if a managed command is neither a subcommand nor a live filter, which is the state that would leave a member unable to run it by any route.",
+  "managedShellCommandsNote": "An entry belongs here when all three hold: it is a real program a member types, rtk can filter it, and it is not a shell builtin. rtk's own verbs (`gain`, `discover`, `session`, `telemetry`, `learn`, `config`, `init`, `help`, `hook`, `rewrite`, `smart`, `summary`, `proxy`, `bypass`, `pipe`, `trust`, `untrust`, `verify`, `run`, `err`, `json`, `deps`, `log`, `lint`, `format`) are NOT here: there is no bare `gain` to deny. Neither are `read`, `test` and `env`, which are shell builtins a script uses in its own right - denying `Bash(read *)` would refuse `while read line`. `bypass` is 1.0.1's canonical name for `proxy` (a silent alias with identical behaviour, absent from `rtk --help`); the parity test's hidden-alias note carries that.",
+  "managedShellCommands": [
+    "aws", "bun", "bunx", "cargo", "ctest", "curl", "deno", "diff", "docker", "dotnet", "find", "gh", "git",
+    "glab", "go", "golangci-lint", "gradlew", "grep", "jest", "kubectl", "ls",
+    "mvn", "mvnd", "mypy", "npm", "npx", "oc", "paratest", "pest", "php", "phpstan",
+    "phpunit", "pint", "pip", "playwright", "pnpm", "prettier", "prisma",
+    "psql", "pytest", "rake", "rg", "rspec", "rubocop", "ruff", "sbt", "sqlfluff", "ssh",
+    "tree",
+    "tsc", "uv", "vitest", "wc", "wget"
+  ]
+}

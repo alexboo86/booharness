@@ -1,0 +1,159 @@
+{
+  "note": "The ONE statement of the glob dialect that routes a repository path to a domain. It had TWO matchers until 2026-08-10 - matchGlob in scripts/memory/store.mjs, which routes a lesson, and a Rust one on the Svod side, which decided which domain skills a member was given - and two matchers over one file agree only by being made to. The Rust matcher is GONE: a member's discretionary skills are now named per seat by the lead (svod/src/lead_skills.rs) instead of derived from the subject, so the routing file has ONE matcher again and scripts/memory/test-store-entries.mjs is its only suite. This file stays, and stays authoritative: the dialect outlived one of its readers and will outlive the next, and the measurement below is why. Measured 2026-08-08, while both existed: the two dialects disagreed on four of the six shapes below, because each side implemented what its author assumed - one a POSIX glob, the other a regex passthrough. Nothing shipped in docs/agent/domain-routing.generated.json used any of the four, so no route was wrong yet; the divergence was waiting for the first skill author to write a class.",
+  "dialect": [
+    "`**` crosses directory separators; `**/` also matches zero components.",
+    "`*` matches within one component and never crosses `/`.",
+    "`?` is exactly one character and never `/`.",
+    "`[abc]` and `[a-z]` are one character from the set, and never `/`.",
+    "`[!abc]` and `[^abc]` are one character outside the set, and never `/`.",
+    "A `]` in first position is a literal `]`.",
+    "An unterminated `[` is a literal `[` rather than swallowing the rest.",
+    "Everything else is literal."
+  ],
+  "cases": [
+    {
+      "glob": "src/**/*[Bb]illing*",
+      "path": "src/widgets/hooks/useCustomBilling.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/**/*[Bb]illing*",
+      "path": "src/widgets/renderers/BillingRenderer.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/**/*[Bb]illing*",
+      "path": "src/widgets/Panel.ts",
+      "matches": false
+    },
+    {
+      "glob": "app/**/*.rs",
+      "path": "app/src/live/mod.rs",
+      "matches": true
+    },
+    {
+      "glob": "src/**/x.ts",
+      "path": "src/x.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/*.ts",
+      "path": "src/deep/x.ts",
+      "matches": false
+    },
+    {
+      "glob": "svod/**",
+      "path": "svod/src/adapter/mod.rs",
+      "matches": true
+    },
+    {
+      "glob": "svod/**",
+      "path": "svod",
+      "matches": false
+    },
+    {
+      "glob": "app/src/scheduled_job_*.rs",
+      "path": "app/src/scheduled_job_poll.rs",
+      "matches": true
+    },
+    {
+      "glob": "app/src/scheduled_job_*.rs",
+      "path": "app/src/scheduled_job/poll.rs",
+      "matches": false
+    },
+    {
+      "glob": "src/?illing.ts",
+      "path": "src/Billing.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/?illing.ts",
+      "path": "src//illing.ts",
+      "matches": false
+    },
+    {
+      "glob": "x[!0-9].ts",
+      "path": "xa.ts",
+      "matches": true
+    },
+    {
+      "glob": "x[!0-9].ts",
+      "path": "x7.ts",
+      "matches": false
+    },
+    {
+      "glob": "x[!a]/y.ts",
+      "path": "x//y.ts",
+      "matches": false
+    },
+    {
+      "glob": "x[]a].ts",
+      "path": "x].ts",
+      "matches": true
+    },
+    {
+      "glob": "x[]a].ts",
+      "path": "xa.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/[a-z]hart/x.ts",
+      "path": "src/chart/x.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/[a-z]hart/x.ts",
+      "path": "src//hart/x.ts",
+      "matches": false
+    },
+    {
+      "glob": "src/[abc/x.ts",
+      "path": "src/[abc/x.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/?.ts",
+      "path": "src/é.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/*.ts",
+      "path": "src/bílling.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/[а-я]/x.ts",
+      "path": "src/д/x.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/[а-я]/x.ts",
+      "path": "src/d/x.ts",
+      "matches": false
+    },
+    {
+      "glob": "x[z-a].ts",
+      "path": "xa.ts",
+      "matches": false
+    },
+    {
+      "glob": "x[!z-a].ts",
+      "path": "xa.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/?.ts",
+      "path": "src/😀.ts",
+      "matches": true
+    },
+    {
+      "glob": "src/??.ts",
+      "path": "src/😀.ts",
+      "matches": false
+    }
+  ],
+  "dialectAddendum": [
+    "A pattern and a path are walked as CHARACTERS, not bytes, and one character means one CODE POINT on both sides. The Rust matcher walked UTF-8 bytes until 2026-08-08; the JS regex is built with the `u` flag for the same reason, because without it `[^/]` is one UTF-16 unit and the two disagreed in OPPOSITE directions on an astral character.",
+    "A class whose range runs backwards matches nothing, and its negation matches anything but `/`. A JS regex cannot be BUILT from `[z-a]`, so the JS side detects the inversion instead of throwing - a throw would kill lesson routing where the other side merely ignored the rule."
+  ]
+}

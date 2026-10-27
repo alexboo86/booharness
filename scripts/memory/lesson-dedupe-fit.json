@@ -1,0 +1,35 @@
+{
+  "models": {
+    "qwen3-embedding:0.6b": {
+      "threshold": 0.75,
+      "date": "2026-10-19T19:57:52.002Z",
+      "counts": {
+        "ledgerPairs": 480,
+        "scored": 465,
+        "missingVectors": 0,
+        "otherModel": 15,
+        "duplicate": 22,
+        "distinct": 443
+      },
+      "table": [
+        {
+          "threshold": 0.697,
+          "duplicatesKept": 22,
+          "distinctPassing": 316
+        },
+        {
+          "threshold": 0.75,
+          "duplicatesKept": 19,
+          "distinctPassing": 97
+        },
+        {
+          "threshold": 0.8,
+          "duplicatesKept": 16,
+          "distinctPassing": 29
+        }
+      ],
+      "ledgerSha256": "4c1d41149e27977a4e66d7b88aa8e0ccc3cd77778e4b01b00dd2c80c34f3844a",
+      "selection": "task 2666 operating point; in-sample ledger measurement"
+    }
+  }
+}

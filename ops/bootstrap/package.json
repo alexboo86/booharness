@@ -1,0 +1,12 @@
+{
+  "name": "@booharness/jev-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./jev-client.mjs",
+  "files": [
+    "jev-client.mjs",
+    "jev-gate.mjs",
+    "jev-ledger.mjs"
+  ]
+}

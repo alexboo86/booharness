@@ -1,0 +1,63 @@
+{
+  "lead": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
+  "advisor": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "researcher": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
+  "scout": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "critic": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "debater": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "coder": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "reviewer": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "bughunter": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "tester": [
+    "codegraph",
+    "memoryctl"
+  ],
+  "designer": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
+  "copywriter": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
+  "legal": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
+  "security": [
+    "codegraph",
+    "memoryctl"
+  ]
+}

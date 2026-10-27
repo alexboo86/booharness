@@ -1,0 +1,21 @@
+{
+  "install": {
+    "userEntries": "keep"
+  },
+  "names": {
+    "prefix": "booharness"
+  },
+  "memory": {
+    "embed": {
+      "model": "qwen3-embedding:0.6b"
+    }
+  },
+  "orch": {
+    "lanPort": "off"
+  },
+  "project": {
+    "targetDirs": [
+      "target"
+    ]
+  }
+}

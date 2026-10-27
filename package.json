@@ -1,0 +1,27 @@
+{
+  "name": "harness-home",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Agent harness home: orch, memoryctl, hooks, skills. Installed from the harness kit; see INSTALL.md.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "doctor": "node ops/bootstrap/doctor.mjs",
+    "install:harness": "node ops/bootstrap/install-harness.mjs --no-require-providers",
+    "install:memory": "node ops/bootstrap/install-memory.mjs",
+    "check:memory-install": "node ops/bootstrap/install-memory.mjs --check",
+    "check:memory-routing": "node scripts/gen-domain-routing.mjs && node scripts/check-domain-routing.mjs",
+    "check:skill-map": "node scripts/check-skill-map.mjs",
+    "check:commit": "node scripts/check-commit-safety.mjs",
+    "check:push": "node scripts/check-push-safety.mjs",
+    "orch:status": "node ops/orchestrator/src/main.ts status",
+    "orch:smoke": "node ops/orchestrator/src/main.ts smoke"
+  },
+  "dependencies": {
+    "minimatch": "10.2.5",
+    "typescript": "5.9.3",
+    "yaml": "2.9.0"
+  }
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "name": "Windows shims compile past a conflicting link.exe and run through CreateProcess",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "name": "Windows concurrent shim installs serialize on a fresh state and on fingerprint changes",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "name": "Windows replaces shims while an old launcher is running, then sweeps its retired image",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "name": "Windows replacement failure surfaces its cause and restores the previous launcher",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "name": "Node-distributed npm.cmd selects the installed CLI and prefix override",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "name": "Node-distributed npx.cmd selects the installed CLI and prefix override",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-remote-worktree.mjs",
+    "name": "snapshot retries deletion of a Windows held index",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "name": "Windows remote Pi receives vcvars environment and host tool paths at the child boundary",
+    "reason": ""
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "name": "code map: dashed remote brief path never becomes a Node or codegraph option",
+    "reason": "win32 SSH relay fixture"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "name": "seat context: role, knowledge and lessons for files, no memory hot, the orch closing",
+    "reason": "needs memoryctl and Jev; ORCH_LIVE_CONTEXT=1 runs it"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "name": "seat context drops an off instrument from the Pi lines and retracts the stock mentions",
+    "reason": "needs memoryctl and Jev; ORCH_LIVE_CONTEXT=1 runs it"
+  }
+]

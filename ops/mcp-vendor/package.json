@@ -1,0 +1,15 @@
+{
+  "name": "booharness-mcp-vendor",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned MCP servers every runtime and every Paseo member launches by absolute path. NOT npx: a member's CLI puts a project-scope server whose command is `npx` into `pending approval` and never exposes its tools - measured 2026-08-03 on claude 2.1.220, four servers in one generated .mcp.json, only the npx one pending. A local file is also one fewer network fetch on the member's critical path.",
+  "type": "module",
+  "scripts": {
+    "install:vendor": "npm ci --omit=dev"
+  },
+  "dependencies": {
+    "@brightdata/mcp": "2.11.1",
+    "@sinco-lab/mcp-youtube-transcript": "0.0.12",
+    "@upstash/context7-mcp": "3.2.5"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "orch-board",
+  "version": "0.1.0",
+  "description": "The orch board in a desktop pane",
+  "types": "./types/index.d.ts"
+}

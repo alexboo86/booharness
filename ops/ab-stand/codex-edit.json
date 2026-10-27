@@ -1,0 +1,16 @@
+{
+  "//": "The pins for the codex-edit extension of @maxiaochao/pi-toolkit. One source for the A/B stand arm (arms.mjs), the verified installer (codex-edit-install.mjs) and stock codex Pi seats (ops/orchestrator/src/codex-edit.ts). integrity is the sha512 of the registry tarball, checked before npm sees the bytes. config is written next to index.ts because upstream ships gpt-5.6-* while the operator pinned gpt-6.1-sol (decision #13098). files are the extension files that decide behaviour; the installer records their sha256 and every stock seat start re-checks them. The order of files is the arm profileHash order: changing it invalidates recorded pilot hashes.",
+  "package": "@maxiaochao/pi-toolkit",
+  "version": "0.9.3",
+  "integrity": "sha512-zGrqFeaDRCgtBg8WH7nUxSMrp9lUryqlWMkjaAvqf+aEaUvFtoSWlByUtKMc2tLil0cuMoCBlpz1tt4Rc5lljg==",
+  "registry": "https://registry.npmjs.org/",
+  "extension": "extensions/codex-edit/index.ts",
+  "config": { "enabled": true, "models": ["gpt-6.1-sol"] },
+  "files": ["config.json", "index.ts", "parser.ts", "model-routing.ts"],
+  "hashes": {
+    "index.ts": "f82ad84474e38cf10a33fb8688f138fcf05f3e880538ea88c83208fdddd782dc",
+    "parser.ts": "e070927918ad094150dd1fbc7552a1a81016e846b58f5a119cf2036431457b2e",
+    "model-routing.ts": "1ae94228b547b4e7dc1e7dd0a7b53ed205916159946e1edeabe1c3d85a235b9f"
+  },
+  "hashesNote": "sha256 of the files as they sit in the tarball whose sha512 is the integrity pin (recomputed from those exact bytes). config.json is deliberately absent: orch overwrites it with `config`, and every check compares its parsed content with that pin."
+}

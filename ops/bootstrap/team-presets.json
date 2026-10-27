@@ -1,0 +1,314 @@
+{
+  "economy": {
+    "scout": {
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "opencode": { "model": "glm-5.3-flash", "effort": null },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "researcher": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "debater": {
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "coder": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "tester": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "designer": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "copywriter": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "reviewer": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "high" },
+      "codex": { "model": "gpt-6-luna", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "high" }
+    },
+    "critic": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "high" },
+      "codex": { "model": "gpt-6-luna", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "high" }
+    },
+    "legal": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3-flash", "effort": "high" },
+      "codex": { "model": "gpt-6-luna", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "high" }
+    },
+    "bughunter": {
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "security": {
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "medium" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    }
+  },
+  "balanced": {
+    "scout": {
+      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "codex": { "model": "gpt-6-luna", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "low" },
+      "opencode": { "model": "glm-5.3-flash", "effort": null },
+      "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+      "mimo": { "model": "mimo-v2.6-flash", "effort": "low" }
+    },
+    "researcher": {
+      "claude": { "model": "claude-sonnet-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "low" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "medium" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "medium" }
+    },
+    "debater": {
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "medium" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "coder": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "tester": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "designer": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "copywriter": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "reviewer": {
+      "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "critic": {
+      "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "legal": {
+      "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "bughunter": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "security": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    }
+  },
+  "strong": {
+    "scout": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "opencode": { "model": "glm-5.3-flash", "effort": null },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "researcher": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "debater": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "coder": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "tester": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "designer": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "copywriter": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "reviewer": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "critic": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "legal": {
+      "claude": { "model": "claude-opus-5-5", "effort": "high" },
+      "glm": { "model": "glm-5.3", "effort": "high" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+      "grok": { "model": "grok-4.7", "effort": "high" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "high" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "bughunter": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    },
+    "security": {
+      "glm": { "model": "glm-5.3", "effort": "max" },
+      "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+      "kimi": { "model": "k3.1-pro", "effort": "high" },
+      "qwen": { "model": "qwen3.8-max", "effort": "max" },
+      "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+    }
+  }
+}

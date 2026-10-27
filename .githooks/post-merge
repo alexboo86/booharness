@@ -1,0 +1,9 @@
+#!/bin/sh
+# Install only the routing map committed by a landing on master.
+[ "$SKIP_GIT_GUARD" = "1" ] && exit 0
+if [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" = "master" ]; then
+  if ! node ops/bootstrap/install-memory.mjs --landed-map; then
+    echo "post-merge: domain routing map install failed; run npm run install:memory" >&2
+  fi
+fi
+exit 0

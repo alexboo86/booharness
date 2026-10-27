@@ -1,0 +1,124 @@
+{
+  "note": "Canonical permission lists for the LEAD runtime, installed by ops/bootstrap/install-harness.mjs into ~/.claude/settings.json. Edit here, re-run the installer; edits to the installed copy are overwritten, exactly like the instruction block. `platforms` narrows an entry to the platforms where it means anything — a PowerShell rule on a Mac is noise that hides the real list, and a Git-Bash home path does not exist there. `machine` is a value computed on the target machine at install time, the same scheme as `{repo}` in codex-trust.json: `ssh-host` installs the rule only when this HOME's ~/.ssh/config defines that Host alias. platforms answers which OS, not whose machine — an ssh alias, a checkout path or a disk name is a machine value and must not appear as a bare rule. An entry with neither applies everywhere. The deny list carries no Bash rule on purpose: the desktop app shows its terminal approval card while any shell rule sits in deny or ask, so recursive forced deletion is refused by the PreToolUse hook ops/bootstrap/shell-delete-hook.mjs instead (decisions #14075/#14077).",
+  "allow": [
+    {
+      "rule": "Read"
+    },
+    {
+      "rule": "Grep"
+    },
+    {
+      "rule": "Glob"
+    },
+    {
+      "rule": "Bash(rtk *)"
+    },
+    {
+      "rule": "Bash(memoryctl *)"
+    },
+    {
+      "rule": "Bash(rg *)"
+    },
+    {
+      "rule": "Bash(ls *)"
+    },
+    {
+      "rule": "Bash(git status*)"
+    },
+    {
+      "rule": "Bash(git diff*)"
+    },
+    {
+      "rule": "Bash(git log*)"
+    },
+    {
+      "rule": "Bash(git show*)"
+    },
+    {
+      "rule": "Bash(git branch*)"
+    },
+    {
+      "rule": "Bash(git ls-files*)"
+    },
+    {
+      "rule": "Bash(git worktree list*)"
+    },
+    {
+      "rule": "Bash(cargo check*)"
+    },
+    {
+      "rule": "Bash(cargo build*)"
+    },
+    {
+      "rule": "Bash(cargo test*)"
+    },
+    {
+      "rule": "Bash(cargo fmt*)"
+    },
+    {
+      "rule": "Bash(cargo clippy*)"
+    },
+    {
+      "rule": "Bash(npm run *)"
+    },
+    {
+      "rule": "Bash(npx tsc*)"
+    },
+    {
+      "rule": "Bash(node scripts/*)"
+    },
+    {
+      "rule": "Bash(node ops/*)"
+    },
+    {
+      "rule": "PowerShell(Get-*)",
+      "platforms": [
+        "win32"
+      ]
+    },
+    {
+      "rule": "PowerShell(Test-Path*)",
+      "platforms": [
+        "win32"
+      ]
+    },
+    {
+      "rule": "PowerShell(Select-*)",
+      "platforms": [
+        "win32"
+      ]
+    }
+  ],
+  "deny": [
+    {
+      "rule": "PowerShell(Remove-Item*-Recurse*)",
+      "platforms": [
+        "win32"
+      ]
+    },
+    {
+      "rule": "Artifact"
+    },
+    {
+      "rule": "ListAgents"
+    },
+    {
+      "rule": "ReportFindings"
+    },
+    {
+      "rule": "ScheduleWakeup"
+    },
+    {
+      "rule": "SearchPlugins"
+    },
+    {
+      "rule": "SuggestPluginInstall"
+    },
+    {
+      "rule": "SuggestSkills"
+    },
+    {
+      "rule": "Workflow"
+    }
+  ]
+}

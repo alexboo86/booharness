@@ -1,0 +1,147 @@
+# Project-local RTK filters for harness-project.
+# Applied when a command runs through rtk (e.g. `rtk ssh ...`).
+# After editing: `rtk verify` (runs inline tests), then `rtk trust`.
+schema_version = 1
+
+# Remote ops on <configured-host>/<configured-host>/app servers: docker logs, journalctl, greps over
+# server logs. Raw output is the biggest unfiltered token sink (rtk discover:
+# ~210 ssh commands / 30d). Strips ANSI + blank lines, caps line length and
+# total lines; long log dumps should be pre-filtered server-side anyway.
+[filters.ssh]
+description = "Compact remote ssh output (server logs, docker, journalctl)"
+match_command = "^ssh\\b"
+strip_ansi = true
+strip_lines_matching = ["^\\s*$"]
+truncate_lines_at = 240
+max_lines = 200
+
+[[tests.ssh]]
+name = "strips blank lines, keeps content"
+input = "line one\n\n\nline two"
+expected = "line one\nline two"
+
+[[tests.ssh]]
+name = "single line passthrough"
+input = "<project-specific> healthy"
+expected = "<project-specific> healthy"
+
+# memoryctl search / memoryctl task list: one compact line per entry
+# (id, kind or priority, date, title), every entry visible up to a 40-entry
+# cap. The service answers with single-line JSON, so one bare
+# `memoryctl task list` fed a seat 1.8 MB (memory #10142, 2026-09-21: 418
+# memoryctl calls, 1.0 MB unfiltered). ALL capping lives in [[replace]]:
+# rtk 0.49 runs every line op (strip/keep/truncate/head/tail/max_lines)
+# BEFORE replace, so truncate_lines_at cut the one-line JSON mid-entry and
+# 12 tasks arrived as 2 (lead reproduction 2026-09-21). match_command is
+# $-anchored on a class that excludes < > |, so a redirect or pipeline runs
+# bare and stays byte-exact, like `rtk proxy`; scripts spawning memoryctl
+# never pass a hook at all. `rtk recall <hash>` returns the RAW output when
+# the compact lines are not enough. Regexes are TOML literal strings ('')
+# so every backslash in them is literal.
+[filters.memoryctl]
+description = "One compact line per memoryctl search / task list entry"
+match_command = '^memoryctl (?:search|task list)\b[^<>|]*$'
+strip_ansi = true
+
+[[filters.memoryctl.replace]]
+pattern = '^\{"tasks":\['
+replacement = "# task list — id priority status title (full: memoryctl task show --id N)\n"
+
+[[filters.memoryctl.replace]]
+pattern = '^\['
+replacement = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n"
+
+# Long titles are cut WITH a visible marker: this replace runs on the raw
+# JSON before the entries are split and rewrites any title of 120 or more
+# units to its first 119 units plus … (120 units kept, so the {1,120} entry
+# capture keeps the marker), so a truncated title can never read as complete
+# ("A"x120 + " DO NOT DEPLOY" and "A"x120 + " DEPLOY" used to render
+# identically and silently). The full title stays one rtk recall away.
+[[filters.memoryctl.replace]]
+pattern = '"title":"((?:[^"\\]|\\.){119})(?:[^"\\]|\\.)+","'
+replacement = '"title":"$1…","'
+
+[[filters.memoryctl.replace]]
+pattern = '\{"id":(\d+),"uuid":"[0-9a-fA-F-]+","kind":"([a-z]+)","title":"((?:[^"\\]|\\.){1,120})(?:[^"\\]|\\.)*?","snippet":"(?:[^"\\]|\\.)*?","ts":\d+,"date":"([0-9-]+)","age_days":\d+,"pinned":(?:true|false)\}(?:,|\])'
+replacement = "#$1 $2 $4 $3\n"
+
+[[filters.memoryctl.replace]]
+pattern = '\{"id":(\d+),"uuid":"[0-9a-fA-F-]+","created_ts":\d+,"updated_ts":\d+,"closed_ts":(?:\d+|null),"title":"((?:[^"\\]|\\.){1,120})(?:[^"\\]|\\.)*?","body":"(?:[^"\\]|\\.)*?","priority":"(P\d)","status":"([a-z]+)"(?:[^{}]|\{[^{}]*\})*\}(?:,|\]\}?)'
+replacement = "#$1 $3 $4 $2\n"
+
+[[filters.memoryctl.replace]]
+pattern = '(?m)^\]\}?\n?$'
+replacement = ''
+
+# Unescape what a title carries, with a SENTINEL so \\ and \n cannot
+# interfere: JSON forbids raw control bytes inside strings, so U+0001 cannot
+# occur in the stream. Every escaped backslash becomes the sentinel FIRST;
+# then \" and \n are decoded against text that no longer contains a lone
+# backslash pair; the sentinel becomes one real backslash LAST. Before this,
+# \\n (an escaped backslash + the letter n) decoded to a space, because
+# the backslash pair ran before \n and manufactured a \n sequence.
+[[filters.memoryctl.replace]]
+pattern = '\\\\'
+replacement = "\u0001"
+
+[[filters.memoryctl.replace]]
+pattern = '\\"'
+replacement = '"'
+
+[[filters.memoryctl.replace]]
+pattern = '\\n'
+replacement = ' '
+
+[[filters.memoryctl.replace]]
+pattern = "\u0001"
+replacement = '\'
+
+
+# The entry cap: fires only when MORE than 40 entry lines exist (the
+# pattern demands one uncaptured line past the 40 kept, header included),
+# and swaps the tail for a cut notice naming the way to see the rest. A
+# static replacement cannot count what it cut — arithmetic is not a regex
+# feature — so the notice states the routes: rtk recall for the full
+# filtered list, a jq pipe for the raw one.
+[[filters.memoryctl.replace]]
+pattern = '(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)(#[^\n]*\n)#[^\n]*(?s:.*)'
+replacement = '${1}${2}${3}${4}${5}${6}${7}${8}${9}${10}${11}${12}${13}${14}${15}${16}${17}${18}${19}${20}${21}${22}${23}${24}${25}${26}${27}${28}${29}${30}${31}${32}${33}${34}${35}${36}${37}${38}${39}${40}${41}# … cut at 40 entries (more exist) — full filtered list: rtk recall <hash above>, raw: pipe the same command to jq'
+[[tests.memoryctl]]
+name = "search entries become one line each: id kind date title"
+input = '[{"id":1842,"uuid":"836af5c9-bbd3-44ab-87e5-8e0dd04ea01f","kind":"lesson","title":"Legacy pipeline is the canon","snippet":"## Legacy <mark>pipeline</mark>…","ts":1786363015086,"date":"2026-08-10","age_days":42,"pinned":false},{"id":5546,"uuid":"0c245dd3-fe6e-4ab2-af23-8830f268b515","kind":"decision","title":"Quote \"deeply\" and \\ path","snippet":"body\nline2","ts":1788089076613,"date":"2026-08-30","age_days":22,"pinned":true}]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n#1842 lesson 2026-08-10 Legacy pipeline is the canon\n#5546 decision 2026-08-30 Quote \"deeply\" and \\ path"
+
+[[tests.memoryctl]]
+name = "task entries become one line each: id priority status title, body dropped"
+input = '{"tasks":[{"id":1113,"uuid":"4ec8dcaf-59b0-42ef-8e8b-03567af49a2c","created_ts":1789027003519,"updated_ts":1789387732302,"closed_ts":null,"title":"Ротировать TELEGRAM_API_HASH","body":"Мой редактор дампа…","priority":"P0","status":"open","track":null,"next_action":"Оператору: перевыпустить","blocked_reason":null,"claimed_by":null,"claimed_at":null,"session_id":"cli","depends_on":[],"links":{},"handoffs":[7539]},{"id":1,"uuid":"5cc988a4-e016-4619-8faf-ee822b677030","created_ts":1785319078287,"updated_ts":1785829117547,"closed_ts":1785829117547,"title":"exa-search MCP отдаёт 401","body":"Найдено прогоном","priority":"P1","status":"done","track":"harness","next_action":"x","blocked_reason":null,"claimed_by":null,"claimed_at":null,"session_id":"cli","depends_on":[],"links":{},"handoffs":[]}]}'
+expected = "# task list — id priority status title (full: memoryctl task show --id N)\n#1113 P0 open Ротировать TELEGRAM_API_HASH\n#1 P1 done exa-search MCP отдаёт 401"
+
+[[tests.memoryctl]]
+name = "empty result keeps only the pointer line"
+input = '[]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)"
+
+[[tests.memoryctl]]
+name = "empty task list keeps only the pointer line"
+input = '{"tasks":[]}'
+expected = "# task list — id priority status title (full: memoryctl task show --id N)"
+
+[[tests.memoryctl]]
+name = "12 entries on one 1600+ char line each get their own line, escapes unescape"
+input = '[{"id":1,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 1 with a plain title","snippet":"s1","ts":11,"date":"2026-09-21","age_days":0,"pinned":false},{"id":2,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 2 with a plain title","snippet":"s2","ts":12,"date":"2026-09-21","age_days":0,"pinned":false},{"id":3,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Search entry number 3 with a plain title","snippet":"s3","ts":13,"date":"2026-09-21","age_days":0,"pinned":false},{"id":4,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 4 with a plain title","snippet":"s4","ts":14,"date":"2026-09-21","age_days":0,"pinned":false},{"id":5,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Quote \"q\" and \\ path","snippet":"s5","ts":15,"date":"2026-09-21","age_days":0,"pinned":false},{"id":6,"uuid":"aaaa0000-0000-0000-0000-000000000006","kind":"lesson","title":"Search entry number 6 with a plain title","snippet":"s6","ts":16,"date":"2026-09-21","age_days":0,"pinned":false},{"id":7,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"Search entry number 7 with a plain title","snippet":"s7","ts":17,"date":"2026-09-21","age_days":0,"pinned":false},{"id":8,"uuid":"aaaa0000-0000-0000-0000-000000000008","kind":"lesson","title":"Search entry number 8 with a plain title","snippet":"s8","ts":18,"date":"2026-09-21","age_days":0,"pinned":false},{"id":9,"uuid":"aaaa0000-0000-0000-0000-000000000009","kind":"lesson","title":"Search entry number 9 with a plain title","snippet":"s9","ts":19,"date":"2026-09-21","age_days":0,"pinned":false},{"id":10,"uuid":"aaaa0000-0000-0000-0000-000000000000","kind":"lesson","title":"Search entry number 10 with a plain title","snippet":"s10","ts":110,"date":"2026-09-21","age_days":0,"pinned":false},{"id":11,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 11 with a plain title","snippet":"s11","ts":111,"date":"2026-09-21","age_days":0,"pinned":false},{"id":12,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 12 with a plain title","snippet":"s12","ts":112,"date":"2026-09-21","age_days":0,"pinned":false}]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n#1 lesson 2026-09-21 Search entry number 1 with a plain title\n#2 lesson 2026-09-21 Search entry number 2 with a plain title\n#3 lesson 2026-09-21 Search entry number 3 with a plain title\n#4 lesson 2026-09-21 Search entry number 4 with a plain title\n#5 lesson 2026-09-21 Quote \"q\" and \\ path\n#6 lesson 2026-09-21 Search entry number 6 with a plain title\n#7 lesson 2026-09-21 Search entry number 7 with a plain title\n#8 lesson 2026-09-21 Search entry number 8 with a plain title\n#9 lesson 2026-09-21 Search entry number 9 with a plain title\n#10 lesson 2026-09-21 Search entry number 10 with a plain title\n#11 lesson 2026-09-21 Search entry number 11 with a plain title\n#12 lesson 2026-09-21 Search entry number 12 with a plain title"
+
+[[tests.memoryctl]]
+name = "over the cap: header plus 40 entries then a cut notice, the 41st is not shown"
+input = '[{"id":1,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 1 with a plain title","snippet":"s1","ts":11,"date":"2026-09-21","age_days":0,"pinned":false},{"id":2,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 2 with a plain title","snippet":"s2","ts":12,"date":"2026-09-21","age_days":0,"pinned":false},{"id":3,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Quote \"q\" and \\ path","snippet":"s3","ts":13,"date":"2026-09-21","age_days":0,"pinned":false},{"id":4,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 4 with a plain title","snippet":"s4","ts":14,"date":"2026-09-21","age_days":0,"pinned":false},{"id":5,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Search entry number 5 with a plain title","snippet":"s5","ts":15,"date":"2026-09-21","age_days":0,"pinned":false},{"id":6,"uuid":"aaaa0000-0000-0000-0000-000000000006","kind":"lesson","title":"Search entry number 6 with a plain title","snippet":"s6","ts":16,"date":"2026-09-21","age_days":0,"pinned":false},{"id":7,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"Search entry number 7 with a plain title","snippet":"s7","ts":17,"date":"2026-09-21","age_days":0,"pinned":false},{"id":8,"uuid":"aaaa0000-0000-0000-0000-000000000008","kind":"lesson","title":"Search entry number 8 with a plain title","snippet":"s8","ts":18,"date":"2026-09-21","age_days":0,"pinned":false},{"id":9,"uuid":"aaaa0000-0000-0000-0000-000000000009","kind":"lesson","title":"Search entry number 9 with a plain title","snippet":"s9","ts":19,"date":"2026-09-21","age_days":0,"pinned":false},{"id":10,"uuid":"aaaa0000-0000-0000-0000-000000000000","kind":"lesson","title":"Search entry number 10 with a plain title","snippet":"s10","ts":110,"date":"2026-09-21","age_days":0,"pinned":false},{"id":11,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 11 with a plain title","snippet":"s11","ts":111,"date":"2026-09-21","age_days":0,"pinned":false},{"id":12,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 12 with a plain title","snippet":"s12","ts":112,"date":"2026-09-21","age_days":0,"pinned":false},{"id":13,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Search entry number 13 with a plain title","snippet":"s13","ts":113,"date":"2026-09-21","age_days":0,"pinned":false},{"id":14,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 14 with a plain title","snippet":"s14","ts":114,"date":"2026-09-21","age_days":0,"pinned":false},{"id":15,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Search entry number 15 with a plain title","snippet":"s15","ts":115,"date":"2026-09-21","age_days":0,"pinned":false},{"id":16,"uuid":"aaaa0000-0000-0000-0000-000000000006","kind":"lesson","title":"Search entry number 16 with a plain title","snippet":"s16","ts":116,"date":"2026-09-21","age_days":0,"pinned":false},{"id":17,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"Search entry number 17 with a plain title","snippet":"s17","ts":117,"date":"2026-09-21","age_days":0,"pinned":false},{"id":18,"uuid":"aaaa0000-0000-0000-0000-000000000008","kind":"lesson","title":"Search entry number 18 with a plain title","snippet":"s18","ts":118,"date":"2026-09-21","age_days":0,"pinned":false},{"id":19,"uuid":"aaaa0000-0000-0000-0000-000000000009","kind":"lesson","title":"Search entry number 19 with a plain title","snippet":"s19","ts":119,"date":"2026-09-21","age_days":0,"pinned":false},{"id":20,"uuid":"aaaa0000-0000-0000-0000-000000000000","kind":"lesson","title":"Search entry number 20 with a plain title","snippet":"s20","ts":120,"date":"2026-09-21","age_days":0,"pinned":false},{"id":21,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 21 with a plain title","snippet":"s21","ts":121,"date":"2026-09-21","age_days":0,"pinned":false},{"id":22,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 22 with a plain title","snippet":"s22","ts":122,"date":"2026-09-21","age_days":0,"pinned":false},{"id":23,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Search entry number 23 with a plain title","snippet":"s23","ts":123,"date":"2026-09-21","age_days":0,"pinned":false},{"id":24,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 24 with a plain title","snippet":"s24","ts":124,"date":"2026-09-21","age_days":0,"pinned":false},{"id":25,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Search entry number 25 with a plain title","snippet":"s25","ts":125,"date":"2026-09-21","age_days":0,"pinned":false},{"id":26,"uuid":"aaaa0000-0000-0000-0000-000000000006","kind":"lesson","title":"Search entry number 26 with a plain title","snippet":"s26","ts":126,"date":"2026-09-21","age_days":0,"pinned":false},{"id":27,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"Search entry number 27 with a plain title","snippet":"s27","ts":127,"date":"2026-09-21","age_days":0,"pinned":false},{"id":28,"uuid":"aaaa0000-0000-0000-0000-000000000008","kind":"lesson","title":"Search entry number 28 with a plain title","snippet":"s28","ts":128,"date":"2026-09-21","age_days":0,"pinned":false},{"id":29,"uuid":"aaaa0000-0000-0000-0000-000000000009","kind":"lesson","title":"Search entry number 29 with a plain title","snippet":"s29","ts":129,"date":"2026-09-21","age_days":0,"pinned":false},{"id":30,"uuid":"aaaa0000-0000-0000-0000-000000000000","kind":"lesson","title":"Search entry number 30 with a plain title","snippet":"s30","ts":130,"date":"2026-09-21","age_days":0,"pinned":false},{"id":31,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 31 with a plain title","snippet":"s31","ts":131,"date":"2026-09-21","age_days":0,"pinned":false},{"id":32,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 32 with a plain title","snippet":"s32","ts":132,"date":"2026-09-21","age_days":0,"pinned":false},{"id":33,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Search entry number 33 with a plain title","snippet":"s33","ts":133,"date":"2026-09-21","age_days":0,"pinned":false},{"id":34,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 34 with a plain title","snippet":"s34","ts":134,"date":"2026-09-21","age_days":0,"pinned":false},{"id":35,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Search entry number 35 with a plain title","snippet":"s35","ts":135,"date":"2026-09-21","age_days":0,"pinned":false},{"id":36,"uuid":"aaaa0000-0000-0000-0000-000000000006","kind":"lesson","title":"Search entry number 36 with a plain title","snippet":"s36","ts":136,"date":"2026-09-21","age_days":0,"pinned":false},{"id":37,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"Search entry number 37 with a plain title","snippet":"s37","ts":137,"date":"2026-09-21","age_days":0,"pinned":false},{"id":38,"uuid":"aaaa0000-0000-0000-0000-000000000008","kind":"lesson","title":"Search entry number 38 with a plain title","snippet":"s38","ts":138,"date":"2026-09-21","age_days":0,"pinned":false},{"id":39,"uuid":"aaaa0000-0000-0000-0000-000000000009","kind":"lesson","title":"Search entry number 39 with a plain title","snippet":"s39","ts":139,"date":"2026-09-21","age_days":0,"pinned":false},{"id":40,"uuid":"aaaa0000-0000-0000-0000-000000000000","kind":"lesson","title":"Search entry number 40 with a plain title","snippet":"s40","ts":140,"date":"2026-09-21","age_days":0,"pinned":false},{"id":41,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"Search entry number 41 with a plain title","snippet":"s41","ts":141,"date":"2026-09-21","age_days":0,"pinned":false},{"id":42,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"Search entry number 42 with a plain title","snippet":"s42","ts":142,"date":"2026-09-21","age_days":0,"pinned":false},{"id":43,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"Search entry number 43 with a plain title","snippet":"s43","ts":143,"date":"2026-09-21","age_days":0,"pinned":false},{"id":44,"uuid":"aaaa0000-0000-0000-0000-000000000004","kind":"lesson","title":"Search entry number 44 with a plain title","snippet":"s44","ts":144,"date":"2026-09-21","age_days":0,"pinned":false},{"id":45,"uuid":"aaaa0000-0000-0000-0000-000000000005","kind":"lesson","title":"Search entry number 45 with a plain title","snippet":"s45","ts":145,"date":"2026-09-21","age_days":0,"pinned":false}]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n#1 lesson 2026-09-21 Search entry number 1 with a plain title\n#2 lesson 2026-09-21 Search entry number 2 with a plain title\n#3 lesson 2026-09-21 Quote \"q\" and \\ path\n#4 lesson 2026-09-21 Search entry number 4 with a plain title\n#5 lesson 2026-09-21 Search entry number 5 with a plain title\n#6 lesson 2026-09-21 Search entry number 6 with a plain title\n#7 lesson 2026-09-21 Search entry number 7 with a plain title\n#8 lesson 2026-09-21 Search entry number 8 with a plain title\n#9 lesson 2026-09-21 Search entry number 9 with a plain title\n#10 lesson 2026-09-21 Search entry number 10 with a plain title\n#11 lesson 2026-09-21 Search entry number 11 with a plain title\n#12 lesson 2026-09-21 Search entry number 12 with a plain title\n#13 lesson 2026-09-21 Search entry number 13 with a plain title\n#14 lesson 2026-09-21 Search entry number 14 with a plain title\n#15 lesson 2026-09-21 Search entry number 15 with a plain title\n#16 lesson 2026-09-21 Search entry number 16 with a plain title\n#17 lesson 2026-09-21 Search entry number 17 with a plain title\n#18 lesson 2026-09-21 Search entry number 18 with a plain title\n#19 lesson 2026-09-21 Search entry number 19 with a plain title\n#20 lesson 2026-09-21 Search entry number 20 with a plain title\n#21 lesson 2026-09-21 Search entry number 21 with a plain title\n#22 lesson 2026-09-21 Search entry number 22 with a plain title\n#23 lesson 2026-09-21 Search entry number 23 with a plain title\n#24 lesson 2026-09-21 Search entry number 24 with a plain title\n#25 lesson 2026-09-21 Search entry number 25 with a plain title\n#26 lesson 2026-09-21 Search entry number 26 with a plain title\n#27 lesson 2026-09-21 Search entry number 27 with a plain title\n#28 lesson 2026-09-21 Search entry number 28 with a plain title\n#29 lesson 2026-09-21 Search entry number 29 with a plain title\n#30 lesson 2026-09-21 Search entry number 30 with a plain title\n#31 lesson 2026-09-21 Search entry number 31 with a plain title\n#32 lesson 2026-09-21 Search entry number 32 with a plain title\n#33 lesson 2026-09-21 Search entry number 33 with a plain title\n#34 lesson 2026-09-21 Search entry number 34 with a plain title\n#35 lesson 2026-09-21 Search entry number 35 with a plain title\n#36 lesson 2026-09-21 Search entry number 36 with a plain title\n#37 lesson 2026-09-21 Search entry number 37 with a plain title\n#38 lesson 2026-09-21 Search entry number 38 with a plain title\n#39 lesson 2026-09-21 Search entry number 39 with a plain title\n#40 lesson 2026-09-21 Search entry number 40 with a plain title\n# … cut at 40 entries (more exist) — full filtered list: rtk recall <hash above>, raw: pipe the same command to jq"
+
+[[tests.memoryctl]]
+name = "a title of 120 or more units carries a visible ellipsis marker"
+input = '[{"id":1,"uuid":"aaaa0000-0000-0000-0000-000000000001","kind":"lesson","title":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA DO NOT DEPLOY","snippet":"s1","ts":11,"date":"2026-09-21","age_days":0,"pinned":false},{"id":2,"uuid":"aaaa0000-0000-0000-0000-000000000002","kind":"lesson","title":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA DEPLOY","snippet":"s2","ts":12,"date":"2026-09-21","age_days":0,"pinned":false},{"id":3,"uuid":"aaaa0000-0000-0000-0000-000000000003","kind":"lesson","title":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","snippet":"s3","ts":13,"date":"2026-09-21","age_days":0,"pinned":false}]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n#1 lesson 2026-09-21 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…\n#2 lesson 2026-09-21 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…\n#3 lesson 2026-09-21 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB…"
+
+[[tests.memoryctl]]
+name = "escaped backslash + n stays backslash and n; a real \n escape becomes a space"
+input = '[{"id":7,"uuid":"aaaa0000-0000-0000-0000-000000000007","kind":"lesson","title":"mix \\n and \n here","snippet":"s7","ts":17,"date":"2026-09-21","age_days":0,"pinned":false}]'
+expected = "# search — id kind date title (full: memoryctl get <id> --follow latest)\n#7 lesson 2026-09-21 mix \\n and   here"

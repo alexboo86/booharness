@@ -1,0 +1,29 @@
+---
+id: weekly-cumulative-code-review
+title: Weekly cumulative code review
+cron: 0 8 * * 5
+summary: One reviewer per theme over the week's accumulated master diff; reproduced findings become memoryctl tasks.
+---
+
+You are the weekly cumulative code review run for this project's main checkout. Reply to the user plainly, under 350 words.
+
+Why: per-task reviews see one diff at a time and miss cross-change interactions. Code where a silent regression costs money or data gets one extra review per week over everything that landed. One reviewer set per theme; unrelated themes never share a reviewer.
+
+Authorized writes, and only these: a temporary detached git worktree under your scratchpad (removed at the end); orch reviewer seats (create, prompt, wait, close); memoryctl tasks for reproduced findings; one memoryctl reference. Forbidden: editing tracked files, commits, push, deploy, anything touching production, restarting or pausing orch, any other seat role.
+
+Unattended run (task 2669): nobody answers a permission prompt, and one prompt stopped this run for five hours on 2026-10-19. Run each shell command as ONE plain command that the allow list holds: every git verb as `rtk git <verb> ...` (fetch, rev-parse, rev-list, merge-base, worktree add and remove), `node ops/...`, `memoryctl ...`, `rg`, `ls`. No shell variable assignment (`S=...`), no `;`, `&&` or `|` chain, no `tee`, no `$(...)`. Carry a sha from one command to the next in your own text; to keep an output, write it with the Write tool into your scratch directory.
+
+Steps:
+1. `rtk git fetch origin`. END = `rtk git rev-parse origin/master`. START = the END sha of the previous run: `memoryctl search "weekly cumulative code review" --kind reference --limit 3`, open the newest with `memoryctl get <id>`, take its `range: <start>..<end>` end. If none, START = `rtk git rev-list -1 --before="7 days ago" origin/master`.
+2. Scope: `rtk git diff --stat START..END`. If empty: append the reference (step 6) with "no changes", report one line, do "Report and delivery" b and c, stop.
+3. `rtk git worktree add --detach <scratchpad>/weekly-review END` (the main checkout holds other sessions' untracked files, so never plan from it). Call the orch MCP tool review_plan {repo: that worktree, base: START}. Its answer has `themes` when the diff spans several domains (else treat the whole diff as one theme). For each theme with count > 0: seat_create role reviewer, repo = the worktree, base END, title "Weekly review <theme> START8..END8", files = the theme's paths (at most 200); leave family, needs, model and effort out; create `count` reviewers with the same title. seat_create ignores a prompt: then seat_prompt each with timeout_minutes 150 and the brief below. If the orch MCP tools are missing, POST JSON-RPC tools/call to the orch HTTP endpoint (the default port is in `node ops/orchestrator/src/main.ts status`). If orch is unreachable, report that and stop.
+4. Brief (English, at most 300 words; fill in shas, theme, its paths and stat): review the accumulated diff `git diff START..END -- <theme paths>` as one change for correctness, data loss and duplication, including interactions between commits. Verdict with evidence for each invariant of this project's own contract (its CLAUDE.md or AGENTS.md) that applies to the theme, and in any case for these four: nothing acknowledged or durable is lost on any path including restart, retry and cancellation; nothing is written or applied twice on replay or retry; no partial write, checkpoint, migration or import progress is recorded as complete; errors on write paths are surfaced, never swallowed. A blocker needs a reproduction (command, build or typecheck output, a log, or a precise code path with inputs); anything else is a note. Stay read-only: do not edit, fix or commit anything. If the diff is too large for one turn, cover the paths the project's contract names as money- or data-critical first and list what was not checked. Format: claim · evidence(file:line|command) · confidence · checked · not-checked.
+5. Run each returned wait command as a background Bash task (`node ops/orchestrator/src/main.ts wait <turn> --timeout-minutes 160`); no polling. Then seat_close every reviewer and `rtk git worktree remove <scratchpad>/weekly-review`. For each blocker or major finding with reproduced evidence: `memoryctl search` its key words first and skip duplicates; otherwise `memoryctl task create --title "[routine:weekly-cumulative-code-review] <finding>" --priority P0 (data loss or money) or P1 --track weekly-code-review --next "<fix step>" --body "<claim, evidence, reviewer turn id>"`. Notes go in the report only.
+6. `memoryctl append --kind reference --title "routine weekly-cumulative-code-review <YYYY-MM-DD>: <n> findings" --body` with lines `range: START..END`, per theme: reviewer seat/turn ids and verdicts, created task ids, not-checked areas.
+7. Report: range and size, themes, per-invariant verdicts, tasks created (id, priority, one line), notes worth the user's attention, not-checked areas. Decisions stay with the user. If memory is unreachable, say so and do not improvise.
+
+## Report and delivery
+
+a. Each finding this run reproduced AND that needs work: `memoryctl search` for an open task on its key words first; only when none is open, `memoryctl task create --title "[routine:weekly-cumulative-code-review] <finding>" --priority P1 --next "<first step>"`. Hypotheses stay in the report only. (Step 5 already tasks blocker/major findings under this same `[routine:weekly-cumulative-code-review]` title; the search above finds those, so nothing is created twice.)
+b. Run `node scripts/routine-ledger.mjs value --routine weekly-cumulative-code-review` and put its line into the report.
+c. Last action of the run: the PushNotification tool, one line under 200 characters, in Russian — first what needs the operator, then the counts.

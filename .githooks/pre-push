@@ -1,0 +1,72 @@
+#!/bin/sh
+# `git push` sends the BRANCH, not your work. In a shared worktree another session's
+# unpublished commit rides along, and operator approval to push your change is not
+# approval to publish theirs. See scripts/check-push-safety.mjs for the incident.
+#
+# Passing requires naming every unpushed commit, which a hook cannot take as an argument,
+# so it reads the acknowledgement from the environment:
+#
+#   PUSH_ACK=<sha>,<sha> git push origin master
+#
+# This is also where the deletion check has to live. pre-commit fires on `git commit` and
+# `--amend` only: cherry-pick, merge --no-ff and rebase land a commit without it, and all
+# three were shown to carry a dangling deletion through. Every one of them still has to
+# pass here before the work leaves the machine.
+#
+# Run `npm run check:push` first to see the list. Escape: SKIP_GIT_GUARD=1 git push ...
+
+# Read Git's ref tuples once, including bypass pushes; keep them for both checks.
+refs=$(cat)
+repo=$(git rev-parse --show-toplevel) || exit 0
+# The checks come from beside this file - the main checkout's copy, which the
+# common-dir shim runs for every worktree - never from the pushed tree: an old
+# branch carries an old check-push-safety.mjs that passes what today's refuses.
+# The pushed work tree stays the one judged (cwd, stdin refs, GUARD_REPO).
+here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)
+
+# git feeds "<local ref> <local sha> <remote ref> <remote sha>" per ref on stdin, and the
+# destination remote name/URL as $1/$2. Both checks read the same stdin, so read it once.
+# Checking origin/<current branch> alone let a tag or another branch through unexamined,
+# and comparing against ALL remotes let a commit published only to nas ride to origin
+# unnamed — hence --remote. The NAME is passed, not the URL, because a name can carry
+# several push URLs (this repo's origin pushes to github AND to the NAS) and the guard
+# has to ask each of them what it already has.
+# Main-checkout reporter, pushed-checkout Git range. A hint must never block.
+if [ "$1" = "origin" ] && [ -f "$here/scripts/report-docs-note.mjs" ]; then
+    printf '%s\n' "$refs" | while read -r local_ref local_sha remote_ref remote_sha; do
+        if [ "$remote_ref" = "refs/heads/master" ]; then
+            node "$here/scripts/report-docs-note.mjs" "$remote_sha" "$local_sha" || :
+        fi
+    done
+fi
+
+[ "$SKIP_GIT_GUARD" = "1" ] && exit 0
+fail=0
+
+# Every configured destination requires publication acknowledgement.
+lan_sync=0
+
+if [ "$lan_sync" = "0" ]; then
+    # Fail closed: a publication gate that cannot be found is not a pass.
+    safety="$here/scripts/check-push-safety.mjs"
+    if [ ! -f "$safety" ]; then
+        echo "pre-push: blocked. $safety is missing: the publication gate cannot run."
+        fail=1
+    elif ! printf '%s\n' "$refs" | node "$safety" --stdin-refs --remote "$1"; then
+        echo ""
+        echo "pre-push: blocked. Read the commits above; any that are not yours need the operator's"
+        echo "word BEFORE publishing. Then: PUSH_ACK=<sha>,<sha> git push"
+        fail=1
+    fi
+fi
+
+if [ -f "$here/scripts/check-deletion-refs.mjs" ]; then
+    if ! printf '%s\n' "$refs" | GUARD_REPO="$repo" node "$here/scripts/check-deletion-refs.mjs" --stdin-refs --remote "$1"; then
+        echo ""
+        echo "pre-push: blocked. A commit being published deletes a path something still reads."
+        echo "pre-commit never runs for cherry-pick, merge or rebase, so this is where it is caught."
+        fail=1
+    fi
+fi
+
+exit $fail

@@ -1,0 +1,1961 @@
+#!/usr/bin/env bash
+# memoryctl — universal PATH client for the standalone memory service (HTTP :7717).
+#
+# Thin bash+curl wrapper over /api/memory/* routes. Every agent (Claude, Codex,
+# Grok, GLM, Kimi) and their native children uses this for memory R/W — MCP is
+# optional and only for Claude lead tools.
+#
+# Auth: mutations send X-Memory-Token from MEMORYCTL_TOKEN_FILE
+#       (default: $HOME/.local/state/memoryctl/memory.token). GETs need no token.
+# Server: MEMORYCTL_URL, else the per-machine file MEMORYCTL_STATE_DIR/service.url
+#         (written by ops/bootstrap/install-memory.mjs --remote <url>), else http://127.0.0.1:7717.
+#
+# Exit codes: 0 ok · 1 client/server error · 2 usage · 9 CAS conflict (registry
+# update HTTP 409 only). Other 409s (duplicate/already-superseded/key-conflict)
+# are exit 1.
+#
+# JSON build/parse: node. jq optional for pretty-print only.
+# Bodies are NEVER put in shell variables/argv/env — node reads the body tempfile
+# directly. NUL / invalid UTF-8 are rejected loudly.
+#
+# bash 3.2+ (macOS). Deps: curl + node. No python3.
+set -euo pipefail
+
+_MCTL_STATE_DIR="${MEMORYCTL_STATE_DIR:-${HOME}/.local/state/memoryctl}"
+if [[ -z "${MEMORYCTL_URL:-}" && -s "${_MCTL_STATE_DIR}/service.url" ]]; then
+  MEMORYCTL_URL="$(tr -d "[:space:]" < "${_MCTL_STATE_DIR}/service.url")"
+fi
+MEMORYCTL_URL="${MEMORYCTL_URL:-http://127.0.0.1:7717}"
+MEMORYCTL_TOKEN_FILE="${MEMORYCTL_TOKEN_FILE:-${HOME}/.local/state/memoryctl/memory.token}"
+DEFAULT_AGENT="${MEMORYCTL_AGENT_ID:-${USER:-unknown}}"
+DEFAULT_SESSION="${MEMORYCTL_SESSION_ID:-${CLAUDE_SESSION_ID:-cli}}"
+
+# kind enum from board contract. THE THIRD of three independent gates: this
+# client-side list, the `KINDS` set in scripts/memory/store.mjs, and the SQL
+# `CHECK(kind IN ...)` on mem_entries. Adding a kind to fewer than all three
+# fails at whichever one was missed - measured 2026-08-07, when `report` passed
+# the service and died here, one command short of a live Svod round.
+VALID_KINDS='handoff|registry|chip|lesson|reference|feedback|project|decision|archive|report'
+
+die() { echo "memoryctl: $*" >&2; exit 1; }
+usage_die() { echo "memoryctl: $*" >&2; usage >&2; exit 2; }
+
+usage() {
+  cat <<'EOF'
+memoryctl — standalone durable memory client (HTTP)
+
+Usage:
+  memoryctl append --kind <k> (--title <t>|--title-file <f>) [--body <b>|--body-file <f>|-]
+                   [--long "<reason>"]  # lessons only
+                   [--links <json>] [--sha-refs <json>] [--pinned]
+                   [--overturns <id> ...]   # live rules this entry replaces, any rule kind
+                   [--key <key>] [--session <id>] [--agent <name>]
+  memoryctl supersede --id <old> (--title <t>|--title-file <f>) [--body <b>|--body-file <f>|-] [--long "<reason>"]
+                      [--links <json>] [--sha-refs <json>] [--pinned]
+                      [--session <id>] [--agent <name>]
+                      (--task <id> ... | --no-open-work)   # handoffs only
+                      [--closes <id> ...]                  # finished this session
+  memoryctl search <query> [--kind <k>] [--limit N]
+  memoryctl get <id|uuid> [--follow latest|full_history] [--json]   (alias: show)
+  memoryctl hot [--budget-kb N] [--scope <kind>]
+  memoryctl registry-read [--key session-registry]
+  memoryctl registry-update --expected-version N [--key ...] --body-file <f>|-
+  memoryctl handoff --title <t> [--body <b>|--body-file <f>|-]
+                    (--task <id> [--task <id> ...] | --no-open-work)
+                    [--closes <id> [--closes <id> ...]]
+  memoryctl task create --title <t> --priority P0|P1 [--next <step>] [--again]
+                    [--track <slug>] [--status <s>] [--blocked-reason <why>]
+                    [--depends-on <id> ...] [--body <b>|--body-file <f>|-]
+                    [--evidence <proof>]     # required when created done|cancelled
+                    [--domain <id|none>]     # a routing id (domain-<name>); none clears
+  memoryctl task ready                    # unblocked, unclaimed, P0 first
+  memoryctl task list [--status <s>] [--priority <p>] [--track <slug>]
+                    [--domain <id|none>] [--closed-since <ms>] [--compact]
+                    # --compact: one line per task (#id status priority domain track title)
+  memoryctl task show --id <id>
+  memoryctl task update --id <id> [--status <s>] [--priority <p>] [--next <step>]
+                    [--blocked-reason <why>] [--track <slug>] [--title <t>]
+                    [--evidence <proof>]     # required when it closes: done|cancelled
+                    [--domain <id|none>]     # a routing id; none clears
+  memoryctl task done --id <id> --evidence <sha | memory#id | what proves it>
+  memoryctl task claim --id <id> [--agent <name>]   # atomic; loser gets 409
+  memoryctl task release --id <id>
+  memoryctl lessons --path <repo-relative-file> [--json]
+  memoryctl status
+  memoryctl --selftest
+  memoryctl --help
+
+Kinds: handoff registry chip lesson reference feedback project decision archive
+       report  (a Svod member's delivered report; body must be JSON)
+Task statuses: open in_progress blocked deferred done cancelled
+              (blocked requires --blocked-reason; done/cancelled release the claim)
+
+The session-end gate: a handoff must declare what it leaves open — one or more
+--task <id>, or --no-open-work when nothing is. It is refused otherwise. This
+holds on every route that yields a live handoff: `handoff`, `append --kind
+handoff`, and `supersede` of one. Other kinds are not gated.
+
+Work that FINISHED this session is named with --closes <id>, and is closed in the
+same transaction that writes the handoff — closing is part of ending a session,
+not a second command after it. A task cannot be both a tail and a closure.
+
+Env:
+  MEMORYCTL_URL          default http://127.0.0.1:7717
+  MEMORYCTL_TOKEN_FILE   default $HOME/.local/state/memoryctl/memory.token
+  MEMORYCTL_AGENT_ID     default agent name ($USER)
+  MEMORYCTL_SESSION_ID   default session id (falls back to CLAUDE_SESSION_ID, then cli)
+  CLAUDE_SESSION_ID      fallback session id
+  MEMORYCTL_AUTOSTART    1 (default) revives a dead local service once; 0 disables
+  MEMORYCTL_TASK_NAME    Windows task name override (else MEMORYCTL_STATE_DIR/task.name)
+  MEMORYCTL_LAUNCHD_LABEL macOS label override (else MEMORYCTL_STATE_DIR/launchd.label)
+
+Exit codes: 0 ok · 1 error · 2 usage · 9 registry CAS conflict
+
+Examples:
+  node scripts/memory/capture-lesson.mjs <domain> "gotcha" --anchor <file> --trigger .. --rule .. --why .. --evidence ..
+  memoryctl append --kind handoff --title "s1" --body-file ./note.md --no-open-work
+  echo "body" | memoryctl append --kind chip --title "note" -
+  memoryctl search "gotcha" --kind lesson --limit 5
+  memoryctl get 90                      # whole handoff, body included
+  memoryctl get 90 --json | node -e '...'
+  memoryctl hot --budget-kb 12
+  memoryctl lessons --path src/app/Panel.tsx
+  memoryctl lessons --path src/app/main.rs --json
+  memoryctl registry-read
+  memoryctl registry-update --expected-version 3 --body-file reg.md
+  # on registry 409: scripts should re-read + retry (exit 9)
+  memoryctl task create --title "rate-limit the pending-cap warn" \
+      --priority P1 --next "wire the throttle into the writer" --track large-prints
+  memoryctl task ready
+  memoryctl task claim --id 7
+  memoryctl task done --id 7 --evidence "a1b2c3d4e"
+  memoryctl handoff --title "end-of-day" --body-file handoff.md --task 7
+  memoryctl handoff --title "end-of-day" --body-file handoff.md --no-open-work
+  memoryctl handoff --title "end-of-day" --body-file handoff.md --closes 7 --closes 9 --no-open-work
+  memoryctl status
+EOF
+}
+
+# ---- JSON / URL helpers (node only — no python3) ----
+
+have_jq() { command -v jq >/dev/null 2>&1; }
+have_node() { command -v node >/dev/null 2>&1; }
+
+require_node() {
+  have_node || die "node is required; not found on PATH"
+}
+
+emit_json() {
+  if have_jq; then
+    jq . 2>/dev/null || cat
+  else
+    cat
+  fi
+}
+
+# URL-encode a single argument via node (no python3).
+urlencode() {
+  require_node
+  node -e 'process.stdout.write(encodeURIComponent(process.argv[1] ?? ""))' "$1"
+}
+
+# Build a JSON payload file. Body is ALWAYS read from a tempfile path — never
+# from a shell variable, argv body content, or env. Rejects NUL + invalid UTF-8.
+#
+# Usage:
+#   build_json_payload OUT_FILE --body-file PATH [--string k=v ...] [--string-file k=PATH ...] [--json k=v ...]
+#                       [--bool k=0|1 ...] [--int k=N ...] [--omit-empty-string k=v]
+#
+# Field args after OUT and flags are passed as JSON array to node via a meta tempfile
+# (not argv) so large option sets stay small; body content is only in body-file.
+build_json_payload() {
+  require_node
+  local out="$1"
+  shift
+  local body_file=""
+  local meta
+  meta="$(mktemp "$_MCTL_TMP/mctl-meta.XXXXXX")"
+
+  # Collect field descriptors into meta JSON via node (small strings only).
+  # shellcheck disable=SC2016
+  node -e '
+const fs = require("fs");
+const metaPath = process.argv[1];
+const args = process.argv.slice(2);
+let bodyFile = null;
+const fields = [];
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "--body-file") {
+    bodyFile = args[++i];
+    continue;
+  }
+  if (a === "--string" || a === "--string-file" || a === "--json" || a === "--bool" || a === "--int" || a === "--omit-empty-string") {
+    const kv = args[++i];
+    if (kv == null) {
+      console.error("memoryctl: " + a + " requires key=value");
+      process.exit(2);
+    }
+    const eq = kv.indexOf("=");
+    if (eq < 0) {
+      console.error("memoryctl: " + a + " expects key=value, got: " + kv);
+      process.exit(2);
+    }
+    fields.push({ kind: a.slice(2), key: kv.slice(0, eq), value: kv.slice(eq + 1) });
+    continue;
+  }
+  console.error("memoryctl: internal build_json_payload unknown arg: " + a);
+  process.exit(2);
+}
+if (!bodyFile) {
+  console.error("memoryctl: internal: --body-file required for payload build");
+  process.exit(2);
+}
+fs.writeFileSync(metaPath, JSON.stringify({ bodyFile, fields }));
+' "$meta" "$@" || { rm -f "$meta"; return 1; }
+
+  node -e '
+const fs = require("fs");
+const meta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const outPath = process.argv[2];
+const bodyPath = meta.bodyFile;
+
+let buf;
+try {
+  buf = fs.readFileSync(bodyPath);
+} catch (e) {
+  console.error("memoryctl: cannot read body file: " + bodyPath + ": " + e.message);
+  process.exit(1);
+}
+if (buf.includes(0)) {
+  console.error("memoryctl: body contains NUL bytes (rejected)");
+  process.exit(1);
+}
+let body;
+try {
+  body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buf);
+} catch (e) {
+  console.error("memoryctl: body is not valid UTF-8 (rejected)");
+  process.exit(1);
+}
+const bodyPlaceholder = body.trim();
+if (bodyPlaceholder === "-" || bodyPlaceholder === "@-") {
+  console.error("memoryctl: body placeholder " + JSON.stringify(bodyPlaceholder) + " (rejected); supply text via a pipe or heredoc with --body -, or --body-file <path>");
+  process.exit(1);
+}
+
+const obj = { body };
+for (const f of meta.fields) {
+  if (f.kind === "string-file") {
+    let buf;
+    try { buf = fs.readFileSync(f.value); }
+    catch (e) { console.error("memoryctl: cannot read " + f.key + " file: " + e.message); process.exit(1); }
+    if (buf.includes(0)) { console.error("memoryctl: " + f.key + " contains NUL bytes (rejected)"); process.exit(1); }
+    try { obj[f.key] = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buf); }
+    catch { console.error("memoryctl: " + f.key + " is not valid UTF-8 (rejected)"); process.exit(1); }
+  } else if (f.kind === "string" || f.kind === "omit-empty-string") {
+    if (f.kind === "omit-empty-string" && f.value === "") continue;
+    obj[f.key] = f.value;
+  } else if (f.kind === "bool") {
+    obj[f.key] = f.value === "1" || f.value === "true";
+  } else if (f.kind === "int") {
+    const n = Number(f.value);
+    if (!Number.isFinite(n)) {
+      console.error("memoryctl: invalid integer for " + f.key + ": " + f.value);
+      process.exit(1);
+    }
+    obj[f.key] = n;
+  } else if (f.kind === "json") {
+    if (f.value === "") continue;
+    try {
+      obj[f.key] = JSON.parse(f.value);
+    } catch (e) {
+      console.error("memoryctl: invalid JSON for " + f.key + ": " + e.message);
+      process.exit(1);
+    }
+  }
+}
+fs.writeFileSync(outPath, JSON.stringify(obj));
+' "$meta" "$out" || { rm -f "$meta"; return 1; }
+  rm -f "$meta"
+}
+
+# Extract a string field from a JSON response body (stdout). Empty if missing.
+json_field() {
+  require_node
+  local field="$1"
+  node -e '
+let raw = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { raw += c; });
+process.stdin.on("end", () => {
+  const field = process.argv[1];
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    if (start < 0) { process.exit(0); }
+    try { obj = JSON.parse(raw.slice(start)); } catch { process.exit(0); }
+  }
+  const v = obj && obj[field];
+  if (v === undefined || v === null) process.exit(0);
+  if (typeof v === "string") process.stdout.write(v);
+  else process.stdout.write(String(v));
+});
+' "$field"
+}
+
+# ---- token / HTTP ----
+
+# NOTE: never call die() inside $(...) — subshell exit is swallowed by assignment.
+# Return non-zero; callers die at top-level shell.
+read_token() {
+  local f="$MEMORYCTL_TOKEN_FILE"
+  if [[ ! -f "$f" ]]; then
+    echo "memoryctl: token file missing: $f (memory service creates it; or set MEMORYCTL_TOKEN_FILE)" >&2
+    return 1
+  fi
+  # strip trailing newline only
+  tr -d '\r\n' <"$f" || return 1
+}
+
+# The first directory this process can actually WRITE to.
+#
+# `$_MCTL_TMP` was the whole rule, and a sandbox is exactly where it stops
+# being true. Measured 2026-08-16 in a Svod codex member: every call died on
+# `mktemp: mkstemp failed on /var/folders/.../T//mctl-body.XXXXXX: Operation not
+# permitted`, and the seat recorded ZERO memory calls for a whole review round
+# while reporting nothing a reader could act on. Prove each candidate by writing
+# to it rather than by assuming it works.
+_MCTL_TMPDIR=""
+_mctl_tmpdir() {
+  if [ -n "$_MCTL_TMPDIR" ]; then printf '%s' "$_MCTL_TMPDIR"; return 0; fi
+  # `:-` on every one: this script runs under `set -u`, where an unset variable
+  # aborts the client instead of skipping a candidate.
+  for _mctl_candidate in "${MEMORYCTL_TMPDIR:-}" "${TMPDIR:-}" /tmp; do
+    [ -n "$_mctl_candidate" ] || continue
+    [ -d "$_mctl_candidate" ] || continue
+    _mctl_probe="$_mctl_candidate/.mctl-writable.$$"
+    if : >"$_mctl_probe" 2>/dev/null; then
+      rm -f "$_mctl_probe"
+      _MCTL_TMPDIR="$_mctl_candidate"
+      printf '%s' "$_MCTL_TMPDIR"
+      return 0
+    fi
+  done
+  # Nothing writable: name the places tried, because "mkstemp failed" inside a
+  # sandbox reads as a memoryctl defect and is not one.
+  echo "memoryctl: no writable temp directory (tried MEMORYCTL_TMPDIR, TMPDIR, /tmp)" >&2
+  return 1
+}
+_MCTL_TMP="$(_mctl_tmpdir)" || exit 1
+
+# http_request METHOD PATH [body_file_or_empty] [need_token 0|1]
+# Writes body to stdout; writes HTTP status code to $_MCTL_CODE_FILE (avoids
+# pipe/subshell loss of globals under bash 3.2).
+_MCTL_CODE_FILE="$_MCTL_TMP/mctl-http-code.$$"
+_HTTP_CODE=0
+
+# Revive the per-user background job once and retry. Use a file because
+# http_request runs inside $(...); remove it on exit because PIDs are reused.
+_MCTL_REVIVE_MARKER="$_MCTL_TMP/mctl-revive.$"
+trap 'rm -f "$_MCTL_REVIVE_MARKER" "$_MCTL_CODE_FILE"' EXIT
+
+# The job owns ONE port: the MEMORYCTL_PORT install-memory wrote into its definition (default 7717). A client on any other local port (a test server, a store copy) never revives it: that restarted the LIVE service under every session (task 1149).
+local_service_url() {
+  local port="${MEMORYCTL_PORT:-7717}"
+  case "${MEMORYCTL_URL%/}" in
+    "http://127.0.0.1:${port}"|"http://localhost:${port}") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_for_health() {
+  local budget="${1:-10}" deadline
+  deadline=$(( SECONDS + budget ))
+  while (( SECONDS < deadline )); do
+    if curl -sS --max-time 2 -o /dev/null "${MEMORYCTL_URL}/health" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.3
+  done
+  return 1
+}
+
+installed_name() {
+  local value="$1" file="$2" what="$3"
+  if [[ -z "$value" ]]; then
+    [[ -f "$file" && -r "$file" ]] || { echo "memoryctl: missing or unreadable $file — run npm run install:memory" >&2; return 1; }
+    value="$(< "$file")"
+  fi
+  [[ "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || { echo "memoryctl: invalid $what — run npm run install:memory" >&2; return 1; }
+  printf '%s' "$value"
+}
+revive_service() {
+  [[ "${MEMORYCTL_AUTOSTART:-1}" != "0" ]] || return 1
+  local_service_url || return 1
+  [[ ! -f "$_MCTL_REVIVE_MARKER" ]] || return 1
+  : >"$_MCTL_REVIVE_MARKER"
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*)
+      local task
+      task="$(installed_name "${MEMORYCTL_TASK_NAME:-}" "${_MCTL_STATE_DIR}/task.name" "Windows task name")" || return 1
+      powershell.exe -NoProfile -NonInteractive -Command "Start-ScheduledTask -TaskName '${task}'" >/dev/null 2>&1 || return 1
+      ;;
+    Darwin)
+      local label
+      label="$(installed_name "${MEMORYCTL_LAUNCHD_LABEL:-}" "${_MCTL_STATE_DIR}/launchd.label" "macOS launchd label")" || return 1
+      launchctl kickstart -k "gui/$(id -u)/${label}" >/dev/null 2>&1 || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  echo "memoryctl: memory service was down — restarted it" >&2
+  wait_for_health 10
+}
+
+# The transport sits next to the real file: a host links the client onto its
+# non-interactive PATH (for example /usr/local/bin/memoryctl), so follow every link first.
+_mctl_self="${BASH_SOURCE[0]}"
+while [[ -L "$_mctl_self" ]]; do
+  _mctl_link="$(readlink "$_mctl_self")"
+  case "$_mctl_link" in
+    /*) _mctl_self="$_mctl_link" ;;
+    *) _mctl_self="$(dirname "$_mctl_self")/$_mctl_link" ;;
+  esac
+done
+source "$(dirname "$_mctl_self")/memoryctl-http.sh"
+
+read_http_code() {
+  if [[ -f "$_MCTL_CODE_FILE" ]]; then
+    _HTTP_CODE="$(tr -d '[:space:]' <"$_MCTL_CODE_FILE")"
+  else
+    _HTTP_CODE=0
+  fi
+  [[ -n "$_HTTP_CODE" ]] || _HTTP_CODE=0
+}
+
+# handle_response BODY [cas_mode]
+# cas_mode=registry → HTTP 409 → exit 9 (CAS). Any other 409 → exit 1.
+handle_response() {
+  local body="${1-}" cas_mode="${2-}"
+  read_http_code
+  case "$_HTTP_CODE" in
+    200|201|204)
+      if [[ -n "$body" ]]; then
+        printf '%s\n' "$body" | emit_json
+      fi
+      return 0
+      ;;
+    409)
+      printf '%s\n' "$body" >&2
+      if [[ "$cas_mode" == "registry" ]]; then
+        local cv
+        cv="$(printf '%s' "$body" | json_field current_version || true)"
+        [[ -z "$cv" ]] && cv="$(printf '%s' "$body" | json_field version || true)"
+        [[ -n "$cv" ]] && echo "memoryctl: CAS conflict current_version=${cv}" >&2
+        exit 9
+      fi
+      echo "memoryctl: HTTP 409 conflict from ${MEMORYCTL_URL}" >&2
+      exit 1
+      ;;
+    *)
+      printf '%s\n' "$body" >&2
+      echo "memoryctl: HTTP ${_HTTP_CODE:-?} from ${MEMORYCTL_URL}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# call_api METHOD PATH [body_file] [need_token] [cas_mode]
+call_api() {
+  local method="$1" path="$2" body_file="${3:-}" need_token="${4:-0}" cas_mode="${5-}"
+  local body rc
+  set +e
+  body="$(http_request "$method" "$path" "$body_file" "$need_token")"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    exit "$rc"
+  fi
+  handle_response "$body" "$cas_mode"
+}
+
+# ---- body ingestion ----
+
+read_body_to() {
+  # $1 = outfile; $2 = mode: literal|file|stdin|empty; $3 = value for literal/file
+  local out="$1" mode="$2" val="${3-}"
+  if [[ "$val" == "-" && ( "$mode" == "literal" || "$mode" == "file" ) ]]; then
+    mode="stdin"
+  fi
+  case "$mode" in
+    literal) printf '%s' "$val" >"$out" ;;
+    file)
+      [[ -n "$val" ]] || die "--body-file requires a path"
+      [[ -f "$val" ]] || die "body file not found: $val"
+      # byte-exact copy (preserves trailing newlines; no shell var)
+      cat "$val" >"$out"
+      ;;
+    stdin)
+      [[ ! -t 0 ]] || die "body stdin is a terminal; use a pipe/heredoc with --body - or --body-file <path>"
+      cat >"$out"
+      [[ -s "$out" ]] || die "body stdin is empty; supply text via a pipe/heredoc with --body - or --body-file <path>"
+      ;;
+    empty) : >"$out" ;;
+    *) die "internal: bad body mode $mode" ;;
+  esac
+}
+
+# Accumulate a repeatable --task/--closes <id> into a JSON array literal.
+# Validated here so a typo dies at the CLI instead of arriving as a 400 from the
+# service.
+append_task_id() {
+  local acc="$1" id="$2" flag="${3:---task}"
+  case "$id" in
+    ''|*[!0-9]*) usage_die "$flag expects a positive integer task id, got: $id" ;;
+  esac
+  [[ "$id" -gt 0 ]] || usage_die "$flag expects a positive integer task id, got: $id"
+  if [[ -z "$acc" ]]; then printf '[%s]' "$id"; else printf '%s,%s]' "${acc%]}" "$id"; fi
+}
+
+# ---- subcommands ----
+
+# One line per task: '#id status priority domain track title', the compact
+# listing a board reads. An absent domain or track prints as 'none'.
+print_task_rows() {
+  require_node
+  node -e "
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (c) => { raw += c; });
+process.stdin.on('end', () => {
+  const answer = JSON.parse(raw);
+  const nl = String.fromCharCode(10);
+  for (const task of answer.tasks || []) {
+    process.stdout.write('#' + task.id + ' ' + task.status + ' ' + task.priority
+      + ' ' + (task.domain == null ? 'none' : task.domain)
+      + ' ' + (task.track == null ? 'none' : task.track)
+      + ' ' + task.title + nl);
+  }
+});
+"
+}
+
+# Fold --domain into a built task payload: absent keeps what the row has,
+# 'none' clears it, a routing id sets it.
+apply_domain_flag() {
+  local payload="$1"
+  [[ -n "$domain" ]] || return 0
+  require_node
+  DOMAIN_VALUE="$domain" node -e "
+const fs = require('fs');
+const body = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+body.domain = process.env.DOMAIN_VALUE === 'none' ? null : process.env.DOMAIN_VALUE;
+fs.writeFileSync(process.argv[1], JSON.stringify(body));
+" "$payload"
+}
+
+cmd_task() {
+  [[ $# -ge 1 ]] || usage_die "task: subcommand required (create|list|ready|show|update|claim|release|done)"
+  local sub="$1"; shift
+
+  local id="" title="" priority="" status="" track="" next_action="" blocked_reason=""
+  local again=0 evidence=""
+  local depends="" links="" body_mode="empty" body_val="" agent="$DEFAULT_AGENT"
+  local session="$DEFAULT_SESSION" filter_status="" filter_priority="" filter_track=""
+  local domain="" compact=0 filter_closed_since=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --id requires a value"
+        id="$1"; shift ;;
+      --title)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --title requires a value"
+        title="$1"; shift ;;
+      --priority|-p)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --priority requires P0|P1"
+        priority="$1"; shift ;;
+      --status)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --status requires a value"
+        status="$1"; shift ;;
+      --track)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --track requires a value"
+        track="$1"; shift ;;
+      --next)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --next requires a value"
+        next_action="$1"; shift ;;
+      --again)
+        # The one word that overrides the duplicate refusal. Said out loud
+        # rather than silently: a second row for one job is a decision.
+        again=1; shift ;;
+      --blocked-reason)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --blocked-reason requires a value"
+        blocked_reason="$1"; shift ;;
+      --evidence)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --evidence requires a value"
+        evidence="$1"; shift ;;
+      --depends-on)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --depends-on requires a task id"
+        depends="$(append_task_id "$depends" "$1")"; shift ;;
+      --links)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --links requires a value"
+        links="$1"; shift ;;
+      --body)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --body requires a value"
+        body_mode="literal"; body_val="$1"; shift ;;
+      --body-file)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --body-file requires a value"
+        body_mode="file"; body_val="$1"; shift ;;
+      -) body_mode="stdin"; shift ;;
+      --agent)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --agent requires a value"
+        agent="$1"; shift ;;
+      --session)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --session requires a value"
+        session="$1"; shift ;;
+      --domain)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --domain requires a value"
+        domain="$1"; shift ;;
+      --compact)
+        compact=1; shift ;;
+      --closed-since)
+        shift; [[ $# -ge 1 ]] || usage_die "task: --closed-since requires a value"
+        filter_closed_since="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "task $sub: unknown arg: $1" ;;
+    esac
+  done
+
+  # Read-only paths first: no payload, no token.
+  case "$sub" in
+    list)
+      filter_status="$status"; filter_priority="$priority"; filter_track="$track"
+      local query=""
+      [[ -n "$filter_status" ]] && query="${query}&status=$(urlencode "$filter_status")"
+      [[ -n "$filter_priority" ]] && query="${query}&priority=$(urlencode "$filter_priority")"
+      [[ -n "$filter_track" ]] && query="${query}&track=$(urlencode "$filter_track")"
+      if [[ -n "$filter_closed_since" ]]; then
+        case "$filter_closed_since" in
+          ''|*[!0-9]*) usage_die "task list: --closed-since expects milliseconds, got: $filter_closed_since" ;;
+        esac
+        query="${query}&closed_since=${filter_closed_since}"
+      fi
+      [[ -n "$domain" ]] && query="${query}&domain=$(urlencode "$domain")"
+      if [[ "$compact" == "1" ]]; then
+        query="${query}&fields=compact"
+        local response
+        response="$(call_api GET "/api/memory/tasks?${query#&}" "" 0)" || exit $?
+        printf '%s\n' "$response" | print_task_rows
+      else
+        call_api GET "/api/memory/tasks?${query#&}" "" 0
+      fi
+      return ;;
+    ready)
+      call_api GET /api/memory/tasks/ready "" 0
+      return ;;
+    show)
+      [[ -n "$id" ]] || usage_die "task show: --id required"
+      call_api GET "/api/memory/task?id=$(urlencode "$id")" "" 0
+      return ;;
+  esac
+
+  local body_tmp payload path
+  body_tmp="$(mktemp "$_MCTL_TMP/mctl-b.XXXXXX")"
+  payload="$(mktemp "$_MCTL_TMP/mctl-p.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_tmp' '$payload'" RETURN
+  read_body_to "$body_tmp" "$body_mode" "$body_val"
+
+  case "$sub" in
+    create)
+      [[ -n "$title" ]] || usage_die "task create: --title required"
+      [[ -n "$priority" ]] || usage_die "task create: --priority required (P0|P1)"
+      path="/api/memory/task"
+      build_json_payload "$payload" \
+        --body-file "$body_tmp" \
+        --string "title=${title}" \
+        --string "priority=${priority}" \
+        --string "session_id=${session}" \
+        --omit-empty-string "status=${status}" \
+        --omit-empty-string "track=${track}" \
+        --omit-empty-string "next_action=${next_action}" \
+        --omit-empty-string "blocked_reason=${blocked_reason}" \
+        --omit-empty-string "evidence=${evidence}" \
+        --bool "again=${again}" \
+        --json "depends_on=${depends}" \
+        --json "links=${links}"
+      ;;
+    update|done)
+      [[ -n "$id" ]] || usage_die "task $sub: --id required"
+      # `done` is the same update with the status spelled for the operator:
+      # closing a tail is the command typed most often and least carefully.
+      [[ "$sub" == "done" ]] && status="done"
+      path="/api/memory/task/update"
+      build_json_payload "$payload" \
+        --body-file "$body_tmp" \
+        --int "id=${id}" \
+        --omit-empty-string "title=${title}" \
+        --omit-empty-string "priority=${priority}" \
+        --omit-empty-string "status=${status}" \
+        --omit-empty-string "track=${track}" \
+        --omit-empty-string "next_action=${next_action}" \
+        --omit-empty-string "blocked_reason=${blocked_reason}" \
+        --omit-empty-string "evidence=${evidence}" \
+        --json "depends_on=${depends}" \
+        --json "links=${links}"
+      ;;
+    claim)
+      [[ -n "$id" ]] || usage_die "task claim: --id required"
+      path="/api/memory/task/claim"
+      build_json_payload "$payload" \
+        --body-file "$body_tmp" \
+        --int "id=${id}" \
+        --string "agent=${agent}" \
+        --string "session_id=${session}"
+      ;;
+    release)
+      [[ -n "$id" ]] || usage_die "task release: --id required"
+      path="/api/memory/task/release"
+      build_json_payload "$payload" --body-file "$body_tmp" --int "id=${id}"
+      ;;
+    *) usage_die "task: unknown subcommand: $sub" ;;
+  esac
+
+      # The domain flag folds into whichever task payload was built: absent
+      # keeps what the row has, 'none' clears it, a routing id sets it.
+      if [[ "$sub" == "create" || "$sub" == "update" || "$sub" == "done" ]]; then
+        apply_domain_flag "$payload"
+      fi
+  call_api POST "$path" "$payload" 1
+}
+
+# Locate the checkout that owns the gate. An unlocatable gate refuses the lesson write.
+check_lesson_payload() {
+  local title="$1" body_file="$2" long="$3" old_file="${4:-}" links="${5:-}" title_file="${6:-}" root
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "lesson gate unavailable outside a project checkout"
+  [[ -f "$root/scripts/memory/lesson-quality.mjs" ]] || die "lesson gate missing in $root"
+  if [[ -n "$title_file" ]]; then
+    node "$root/scripts/memory/lesson-quality.mjs" --title-file "$title_file" "$body_file" "$long" "$old_file" "$links" || die "lesson write refused"
+  else
+    node "$root/scripts/memory/lesson-quality.mjs" "$title" "$body_file" "$long" "$old_file" "$links" || die "lesson write refused"
+  fi
+}
+
+cmd_append() {
+  local kind="" title="" title_file="" body_mode="empty" body_val="" links="" sha_refs="" long=""
+  local pinned=0 key="" session="$DEFAULT_SESSION" agent="$DEFAULT_AGENT"
+  local tasks="" closes="" no_open_work=0 overturns=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --task requires a task id"
+        tasks="$(append_task_id "$tasks" "$1")"; shift ;;
+      --overturns)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --overturns requires an entry id"
+        overturns="$(append_task_id "$overturns" "$1" --overturns)"; shift ;;
+      --closes)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --closes requires a task id"
+        closes="$(append_task_id "$closes" "$1" --closes)"; shift ;;
+      --no-open-work) no_open_work=1; shift ;;
+      --long) shift; [[ $# -ge 1 && -n "$1" ]] || usage_die "append: --long requires a reason"; long="$1"; shift ;;
+      --kind)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --kind requires a value"
+        kind="$1"; shift ;;
+      --title)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --title requires a value"
+        [[ -z "$title_file" ]] || usage_die "append: choose --title or --title-file"
+        title="$1"; shift ;;
+      --title-file)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --title-file requires a path"
+        [[ -z "$title" && -z "$title_file" ]] || usage_die "append: choose --title or --title-file"
+        title_file="$1"; shift ;;
+      --body)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --body requires a value"
+        body_mode="literal"; body_val="$1"; shift ;;
+      --body-file)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --body-file requires a value"
+        body_mode="file"; body_val="$1"; shift ;;
+      -) body_mode="stdin"; shift ;;
+      --links)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --links requires a value"
+        links="$1"; shift ;;
+      --sha-refs)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --sha-refs requires a value"
+        sha_refs="$1"; shift ;;
+      --pinned) pinned=1; shift ;;
+      --key)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --key requires a value"
+        key="$1"; shift ;;
+      --session)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --session requires a value"
+        session="$1"; shift ;;
+      --agent)
+        shift; [[ $# -ge 1 ]] || usage_die "append: --agent requires a value"
+        agent="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "append: unknown arg: $1" ;;
+    esac
+  done
+
+  [[ -n "$kind" ]] || usage_die "append: --kind required"
+  if [[ -n "$title_file" ]]; then
+    [[ -f "$title_file" ]] || die "append: title file not found: $title_file"
+    if IFS= read -r -d '' title < "$title_file"; then die "append: title contains NUL bytes"; fi
+  fi
+  [[ -n "$title" ]] || usage_die "append: --title or --title-file required"
+  if ! echo "$kind" | grep -Eq "^(${VALID_KINDS})$"; then
+    die "invalid kind '$kind' (want: ${VALID_KINDS//|/, })"
+  fi
+
+  local body_tmp payload
+  body_tmp="$(mktemp "$_MCTL_TMP/mctl-b.XXXXXX")"
+  payload="$(mktemp "$_MCTL_TMP/mctl-p.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_tmp' '$payload'" RETURN
+  read_body_to "$body_tmp" "$body_mode" "$body_val"
+  if [[ "$kind" == lesson ]]; then
+    check_lesson_payload "$title" "$body_tmp" "$long" "" "" "$title_file"
+    # The gate needs git refs and Jev, which memoryd lacks; it stamps links.gate, and
+    # memoryd refuses a new lesson without that marker (store.mjs lessonGateProblem).
+    local root gate_title="$title_file" gate_title_tmp=""
+    root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "lesson capture gate unavailable outside a project checkout"
+    [[ -f "$root/scripts/memory/capture-gate.mjs" ]] || die "lesson capture gate missing; use capture-lesson.mjs from an updated checkout"
+    if [[ -z "$gate_title" ]]; then
+      gate_title_tmp="$(mktemp "$_MCTL_TMP/mctl-title.XXXXXX")"
+      printf '%s' "$title" > "$gate_title_tmp"
+      gate_title="$gate_title_tmp"
+    fi
+    local gated_links
+    gated_links="$(node "$root/scripts/memory/capture-gate.mjs" "$gate_title" "$body_tmp" "$links")" || {
+      [[ -z "$gate_title_tmp" ]] || rm -f "$gate_title_tmp"
+      die "lesson append refused; fix the gate objection or use capture-lesson.mjs"
+    }
+    [[ -z "$gate_title_tmp" ]] || rm -f "$gate_title_tmp"
+    links="$gated_links"
+  elif [[ -n "$long" ]]; then
+    usage_die "append: --long is for lessons only"
+  fi
+
+  local title_arg=(--string "title=${title}")
+  [[ -z "$title_file" ]] || title_arg=(--string-file "title=${title_file}")
+  build_json_payload "$payload" \
+    --body-file "$body_tmp" \
+    --string "kind=${kind}" \
+    "${title_arg[@]}" \
+    --string "session_id=${session}" \
+    --string "agent=${agent}" \
+    --bool "pinned=${pinned}" \
+    --omit-empty-string "key=${key}" \
+    --json "links=${links}" \
+    --json "sha_refs=${sha_refs}" \
+    --bool "no_open_work=${no_open_work}" \
+    --json "tasks=${tasks}" \
+    --json "closes=${closes}" \
+    --json "overturns=${overturns}"
+
+  call_api POST /api/memory/append "$payload" 1
+}
+
+cmd_supersede() {
+  local old_id="" title="" title_file="" body_mode="empty" body_val="" links="" sha_refs="" long=""
+  local pinned=0 session="$DEFAULT_SESSION" agent="$DEFAULT_AGENT"
+  # Rewriting a handoff is still a handoff: the service gates this route too, so
+  # the client must be able to carry the declaration or the route is unusable.
+  local tasks="" closes="" no_open_work=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --task requires a task id"
+        tasks="$(append_task_id "$tasks" "$1")"; shift ;;
+      --closes)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --closes requires a task id"
+        closes="$(append_task_id "$closes" "$1" --closes)"; shift ;;
+      --no-open-work) no_open_work=1; shift ;;
+      --long) shift; [[ $# -ge 1 && -n "$1" ]] || usage_die "supersede: --long requires a reason"; long="$1"; shift ;;
+      --id)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --id requires a value"
+        old_id="$1"; shift ;;
+      --title)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --title requires a value"
+        [[ -z "$title_file" ]] || usage_die "supersede: choose --title or --title-file"
+        title="$1"; shift ;;
+      --title-file)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --title-file requires a path"
+        [[ -z "$title" && -z "$title_file" ]] || usage_die "supersede: choose --title or --title-file"
+        title_file="$1"; shift ;;
+      --body)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --body requires a value"
+        body_mode="literal"; body_val="$1"; shift ;;
+      --body-file)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --body-file requires a value"
+        body_mode="file"; body_val="$1"; shift ;;
+      -) body_mode="stdin"; shift ;;
+      --links)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --links requires a value"
+        links="$1"; shift ;;
+      --sha-refs)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --sha-refs requires a value"
+        sha_refs="$1"; shift ;;
+      --pinned) pinned=1; shift ;;
+      --key)
+        usage_die "supersede: --key is not supported (server supersede is id-only)" ;;
+      --session)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --session requires a value"
+        session="$1"; shift ;;
+      --agent)
+        shift; [[ $# -ge 1 ]] || usage_die "supersede: --agent requires a value"
+        agent="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "supersede: unknown arg: $1" ;;
+    esac
+  done
+
+  [[ -n "$old_id" ]] || usage_die "supersede: --id required"
+  if [[ -n "$title_file" ]]; then
+    [[ -f "$title_file" ]] || die "supersede: title file not found: $title_file"
+    if IFS= read -r -d '' title < "$title_file"; then die "supersede: title contains NUL bytes"; fi
+  fi
+  [[ -n "$title" ]] || usage_die "supersede: --title or --title-file required"
+
+  local body_tmp payload old_file old_kind
+  body_tmp="$(mktemp "$_MCTL_TMP/mctl-b.XXXXXX")"
+  payload="$(mktemp "$_MCTL_TMP/mctl-p.XXXXXX")"
+  old_file="$(mktemp "$_MCTL_TMP/mctl-old.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_tmp' '$payload' '$old_file'" RETURN
+  read_body_to "$body_tmp" "$body_mode" "$body_val"
+  http_request GET "/api/memory/entry?id=$(urlencode "$old_id")" "" 0 > "$old_file" || die "cannot read entry before supersede"
+  read_http_code
+  [[ "$_HTTP_CODE" == 200 ]] || die "cannot read entry before supersede (HTTP $_HTTP_CODE)"
+  old_kind="$(node -e 'let x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(x.kind)' "$old_file")" || die "invalid entry response"
+  if [[ "$old_kind" == lesson ]]; then
+    check_lesson_payload "$title" "$body_tmp" "$long" "$old_file" "$links" "$title_file"
+  elif [[ -n "$long" ]]; then
+    usage_die "supersede: --long is for lessons only"
+  fi
+
+  local title_arg=(--string "title=${title}")
+  [[ -z "$title_file" ]] || title_arg=(--string-file "title=${title_file}")
+  build_json_payload "$payload" \
+    --body-file "$body_tmp" \
+    --string "id=${old_id}" \
+    "${title_arg[@]}" \
+    --string "session_id=${session}" \
+    --string "agent=${agent}" \
+    --bool "pinned=${pinned}" \
+    --json "links=${links}" \
+    --json "sha_refs=${sha_refs}" \
+    --bool "no_open_work=${no_open_work}" \
+    --json "tasks=${tasks}" \
+    --json "closes=${closes}"
+
+  call_api POST /api/memory/supersede "$payload" 1
+}
+
+cmd_search() {
+  local query="" kind="" limit=""
+  if [[ $# -lt 1 ]]; then usage_die "search: query required"; fi
+  query="$1"; shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --kind)
+        shift; [[ $# -ge 1 ]] || usage_die "search: --kind requires a value"
+        kind="$1"; shift ;;
+      --limit)
+        shift; [[ $# -ge 1 ]] || usage_die "search: --limit requires a value"
+        limit="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "search: unknown arg: $1" ;;
+    esac
+  done
+  local qs
+  qs="q=$(urlencode "$query")"
+  [[ -n "$kind" ]] && qs="${qs}&kind=$(urlencode "$kind")"
+  [[ -n "$limit" ]] && qs="${qs}&limit=$(urlencode "$limit")"
+  call_api GET "/api/memory/search?${qs}" "" 0
+}
+
+# GET /api/memory/entry?id=|uuid= — the WHOLE record, body included.
+# search gives a snippet and hot gives one line per entry, so this is the only
+# way to read a named handoff/lesson without touching memory.db by hand.
+#
+# --follow latest|full_history: an id written down anywhere names the row that
+# was live when it was written, and every rewrite since made it a dead end.
+# `latest` reads the live head instead; `full_history` prints the lineage.
+cmd_get() {
+  # An EXPLICIT selector is obeyed; only a bare argument is classified by shape.
+  # Both flags used to write into one variable and the shape decided afterwards,
+  # so `--uuid 123` was sent as id=123 and `--id abc` as uuid=abc — the flag the
+  # caller typed was the one thing that did not decide anything (codex, review
+  # round 019fe627).
+  local ref="" json=0 follow="" selector=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --id|--uuid)
+        selector="${1#--}"
+        shift; [[ $# -ge 1 ]] || usage_die "get: --${selector} requires a value"
+        ref="$1"; shift ;;
+      --follow)
+        shift; [[ $# -ge 1 ]] || usage_die "get: --follow requires a value"
+        follow="$1"; shift ;;
+      --json) json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        if [[ -z "$ref" && "$1" != -* ]]; then
+          ref="$1"; shift
+        else
+          usage_die "get: unknown arg: $1"
+        fi ;;
+    esac
+  done
+  [[ -n "$ref" ]] || usage_die "get: id or uuid required"
+  case "$follow" in
+    ""|latest|full_history) ;;
+    *) usage_die "get: --follow takes latest or full_history (omit it for the raw row)" ;;
+  esac
+
+  local qs
+  if [[ -z "$selector" ]]; then
+    if [[ "$ref" =~ ^[0-9]+$ ]]; then selector="id"; else selector="uuid"; fi
+  fi
+  qs="${selector}=$(urlencode "$ref")"
+  [[ -n "$follow" ]] && qs="${qs}&follow=$(urlencode "$follow")"
+  if [[ "$json" == "1" ]]; then
+    call_api GET "/api/memory/entry?${qs}" "" 0
+    return
+  fi
+
+  local body
+  body="$(http_request GET "/api/memory/entry?${qs}" "" 0)"
+  read_http_code
+  case "$_HTTP_CODE" in
+    200)
+      require_node
+      printf '%s' "$body" | node -e '
+const raw = require("node:fs").readFileSync(0, "utf8");
+const e = JSON.parse(raw);
+const iso = Number.isFinite(e.ts) ? new Date(e.ts).toISOString() : String(e.ts);
+const meta = [`kind=${e.kind}`, `uuid=${e.uuid}`, `ts=${iso}`, `v${e.version}`];
+if (e.key) meta.push(`key=${e.key}`);
+if (e.agent) meta.push(`agent=${e.agent}`);
+if (e.pinned) meta.push("pinned");
+if (!e.live) meta.push(`superseded_by=${e.superseded_by}`);
+if (e.supersedes !== null) meta.push(`supersedes=${e.supersedes}`);
+process.stdout.write(`#${e.id} ${e.title}\n${meta.join(" · ")}\n`);
+// A silent redirect is the one thing this must not do: say out loud that the
+// id that was typed is not the id being read.
+if (e.followed_from) process.stdout.write(`followed: #${e.followed_from} -> #${e.id}\n`);
+const links = e.links === null ? "" : (typeof e.links === "string" ? e.links : JSON.stringify(e.links));
+if (links && links !== "[]" && links !== "{}") process.stdout.write(`links: ${links}\n`);
+if (Array.isArray(e.history)) {
+  process.stdout.write("history:\n");
+  for (const v of e.history) {
+    const vts = Number.isFinite(v.ts) ? new Date(v.ts).toISOString() : String(v.ts);
+    const mark = v.id === e.id ? ">" : " ";
+    process.stdout.write(`${mark} v${v.version} #${v.id} ${vts}${v.live ? " live" : ""} ${v.title}\n`);
+  }
+}
+const body = e.body ?? "";
+process.stdout.write(`\n${body}${body.endsWith("\n") ? "" : "\n"}`);
+'
+      ;;
+    *)
+      printf '%s\n' "$body" >&2
+      echo "memoryctl: HTTP ${_HTTP_CODE:-?} from ${MEMORYCTL_URL}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_hot() {
+  local budget="" scope=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --budget-kb)
+        shift; [[ $# -ge 1 ]] || usage_die "hot: --budget-kb requires a value"
+        budget="$1"; shift ;;
+      --scope)
+        shift; [[ $# -ge 1 ]] || usage_die "hot: --scope requires a value"
+        scope="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "hot: unknown arg: $1" ;;
+    esac
+  done
+  local qs=""
+  [[ -n "$budget" ]] && qs="budget_kb=${budget}"
+  if [[ -n "$scope" ]]; then
+    qs="${qs:+${qs}&}scope=$(urlencode "$scope")"
+  fi
+  local path="/api/memory/hot"
+  [[ -n "$qs" ]] && path="${path}?${qs}"
+  # hot returns markdown text, not necessarily JSON — print raw
+  local body
+  body="$(http_request GET "$path" "" 0)"
+  read_http_code
+  case "$_HTTP_CODE" in
+    200|201)
+      printf '%s' "$body"
+      [[ -z "$body" || "$body" == *$'\n' ]] || printf '\n'
+      ;;
+    *)
+      printf '%s\n' "$body" >&2
+      echo "memoryctl: HTTP ${_HTTP_CODE:-?} from ${MEMORYCTL_URL}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_registry_read() {
+  local key="session-registry"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --key)
+        shift; [[ $# -ge 1 ]] || usage_die "registry-read: --key requires a value"
+        key="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "registry-read: unknown arg: $1" ;;
+    esac
+  done
+  call_api GET "/api/memory/registry?key=$(urlencode "$key")" "" 0
+}
+
+cmd_registry_update() {
+  local expected="" key="session-registry" body_mode="" body_val=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --expected-version)
+        shift; [[ $# -ge 1 ]] || usage_die "registry-update: --expected-version requires a value"
+        expected="$1"; shift ;;
+      --key)
+        shift; [[ $# -ge 1 ]] || usage_die "registry-update: --key requires a value"
+        key="$1"; shift ;;
+      --body-file)
+        shift; [[ $# -ge 1 ]] || usage_die "registry-update: --body-file requires a value"
+        body_mode="file"; body_val="$1"; shift ;;
+      --body)
+        shift; [[ $# -ge 1 ]] || usage_die "registry-update: --body requires a value"
+        body_mode="literal"; body_val="$1"; shift ;;
+      -) body_mode="stdin"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "registry-update: unknown arg: $1" ;;
+    esac
+  done
+  [[ -n "$expected" ]] || usage_die "registry-update: --expected-version required"
+  [[ -n "$body_mode" ]] || usage_die "registry-update: --body-file, --body, or - required"
+
+  local body_tmp payload
+  body_tmp="$(mktemp "$_MCTL_TMP/mctl-b.XXXXXX")"
+  payload="$(mktemp "$_MCTL_TMP/mctl-p.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_tmp' '$payload'" RETURN
+  read_body_to "$body_tmp" "$body_mode" "$body_val"
+
+  build_json_payload "$payload" \
+    --body-file "$body_tmp" \
+    --string "key=${key}" \
+    --int "expected_version=${expected}"
+
+  call_api POST /api/memory/registry "$payload" 1 registry
+}
+
+cmd_handoff() {
+  local title="" body_mode="empty" body_val="" session="$DEFAULT_SESSION" agent="$DEFAULT_AGENT"
+  local tasks="" closes="" no_open_work=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --task)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --task requires a task id"
+        tasks="$(append_task_id "$tasks" "$1")"; shift ;;
+      --closes)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --closes requires a task id"
+        closes="$(append_task_id "$closes" "$1" --closes)"; shift ;;
+      --no-open-work) no_open_work=1; shift ;;
+      --title)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --title requires a value"
+        title="$1"; shift ;;
+      --body)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --body requires a value"
+        body_mode="literal"; body_val="$1"; shift ;;
+      --body-file)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --body-file requires a value"
+        body_mode="file"; body_val="$1"; shift ;;
+      -) body_mode="stdin"; shift ;;
+      --session)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --session requires a value"
+        session="$1"; shift ;;
+      --agent)
+        shift; [[ $# -ge 1 ]] || usage_die "handoff: --agent requires a value"
+        agent="$1"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage_die "handoff: unknown arg: $1" ;;
+    esac
+  done
+  [[ -n "$title" ]] || usage_die "handoff: --title required"
+  [[ "$body_mode" != "empty" ]] || usage_die "handoff: --body, --body-file, or - required"
+
+  local body_tmp payload
+  body_tmp="$(mktemp "$_MCTL_TMP/mctl-b.XXXXXX")"
+  payload="$(mktemp "$_MCTL_TMP/mctl-p.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_tmp' '$payload'" RETURN
+  read_body_to "$body_tmp" "$body_mode" "$body_val"
+
+  build_json_payload "$payload" \
+    --body-file "$body_tmp" \
+    --string "title=${title}" \
+    --string "session_id=${session}" \
+    --string "agent=${agent}" \
+    --bool "no_open_work=${no_open_work}" \
+    --json "tasks=${tasks}" \
+    --json "closes=${closes}"
+
+  call_api POST /api/memory/handoff "$payload" 1
+}
+
+cmd_status() {
+  call_api GET /api/memory/export_status "" 0
+}
+
+# GET /api/memory/lessons?path= — domain lessons for a repo-relative path (Phase 3).
+# Human output = compact blocks (title/anchor/trigger/rule/why); --json = raw body.
+# Empty items → exit 0 with a "no lessons" note (not an error).
+cmd_lessons() {
+  local path="" json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --path)
+        shift; [[ $# -ge 1 ]] || usage_die "lessons: --path requires a value"
+        path="$1"; shift ;;
+      --json) json=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *)
+        # allow bare path as first positional
+        if [[ -z "$path" && "$1" != -* ]]; then
+          path="$1"; shift
+        else
+          usage_die "lessons: unknown arg: $1"
+        fi
+        ;;
+    esac
+  done
+  [[ -n "$path" ]] || usage_die "lessons: --path <repo-relative-file> required"
+
+  local body
+  body="$(http_request GET "/api/memory/lessons?path=$(urlencode "$path")" "" 0)" || true
+  read_http_code
+  case "$_HTTP_CODE" in
+    200|201) ;;
+    *)
+      printf '%s\n' "$body" >&2
+      echo "memoryctl: HTTP ${_HTTP_CODE:-?} from ${MEMORYCTL_URL}/api/memory/lessons" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$json" == "1" ]]; then
+    printf '%s\n' "$body" | emit_json
+    return 0
+  fi
+
+  require_node
+  # Human compact blocks (same fields skill-gate injects). Body via tempfile — no shell var loss.
+  local body_file out_file
+  body_file="$(mktemp "$_MCTL_TMP/mctl-lessons-b.XXXXXX")"
+  out_file="$(mktemp "$_MCTL_TMP/mctl-lessons-o.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$body_file' '$out_file'" RETURN
+  printf '%s' "$body" >"$body_file"
+  node -e '
+const fs = require("fs");
+const raw = fs.readFileSync(process.argv[1], "utf8");
+let o;
+try { o = JSON.parse(raw || "{}"); }
+catch (e) { console.error("memoryctl: invalid lessons JSON: " + e.message); process.exit(1); }
+const items = Array.isArray(o.items) ? o.items : [];
+const domain = o.domain || "";
+const hash = o.inputs_hash || "";
+const omitted = o.omitted != null ? o.omitted : 0;
+const lines = [];
+if (items.length === 0) {
+  // WHICH emptiness, not just emptiness. "no lessons" read identically whether
+  // nothing was ever written about this code or plenty was and none of it is
+  // anchored here - and a lead reading it concluded the first while the domain
+  // held 145.
+  const held = Number(o.domain_active || 0);
+  // THE THIRD emptiness, and the one that used to be silent: rules matched this
+  // path and every one of them was too big to send. The JSON carried
+  // `omitted > 0` the whole time, but the marker that states it was pushed only
+  // inside the non-empty branch below - so the reader was told "nothing is
+  // known" when the truth was "known, did not fit". Found by the glm seat of
+  // round harness-memory-r2 in BOTH renderers.
+  if (Number(omitted) > 0) {
+    lines.push(omitted + " lesson(s) match this path and NONE of them fit the delivery ceiling, "
+      + "so none are shown - this is \"known but did not fit\", not \"nothing is known\". "
+      + "Reach them with memoryctl search and memoryctl get <id>, or split the file so its "
+      + "rules travel apart.");
+    lines.push("<!-- omitted: " + omitted + " -->");
+  } else if (domain && held > 0) {
+    lines.push("no lesson is anchored to this path, and none is near enough to offer; domain "
+      + domain + " holds " + held + " active lesson(s) - ask for a nearer path, or anchor what "
+      + "you learn here (path query ok)");
+  } else {
+    lines.push("no lessons" + (domain ? " for domain " + domain : "") + " (path query ok)");
+  }
+} else {
+  if (domain) lines.push("# domain: " + domain + (hash ? "  revision=" + hash : ""));
+  // Said ONCE, above the blocks: every one of them carries `match: nearby`, and
+  // a reader should know before the first line what it is looking at.
+  const nearby = Number(o.nearby || 0);
+  if (nearby > 0 && nearby === items.length) {
+    lines.push("# NOTHING is anchored to this path. The " + items.length + " lesson(s) below are the");
+    lines.push("# NEAREST by directory, not about this file - weigh them accordingly.");
+  } else if (nearby > 0) {
+    // Mixed: a glob matched this path, so something IS delivered about it - but
+    // it is a rule about a CLASS, and it does not make the neighbours below any
+    // more about this file. Claiming "nothing is anchored" here would be false,
+    // and counting every item as nearby would be false too.
+    lines.push("# No lesson NAMES this path - what matched it is a rule about a CLASS of files.");
+    lines.push("# The last " + nearby + " lesson(s), marked `match: nearby`, are the NEAREST by");
+    lines.push("# directory - not about this file.");
+  }
+  for (const it of items) {
+    lines.push("## " + (it.title || "untitled"));
+    // The id rides with the lesson because DELIVERY has to be countable: a
+    // reader that cannot name what it received cannot be joined against what
+    // the round later confirmed, and the argument about whether memory helps
+    // stays unmeasurable. It is one short line per lesson.
+    if (it.id != null) lines.push("- id: " + it.id);
+    if (it.anchor) lines.push("- anchor: " + it.anchor);
+    if (it.trigger) lines.push("- trigger: " + it.trigger);
+    if (it.rule) lines.push("- rule: " + it.rule);
+    if (it.why) lines.push("- why: " + it.why);
+    if (it.evidence) lines.push("- evidence: " + it.evidence);
+    if (it.date) lines.push("- date: " + it.date);
+    if (it.match) lines.push("- match: " + it.match);
+    lines.push("");
+  }
+  if (omitted && Number(omitted) > 0) lines.push("<!-- omitted: " + omitted + " -->");
+}
+fs.writeFileSync(process.argv[2], lines.join("\n").replace(/\n+$/, "") + "\n");
+' "$body_file" "$out_file"
+  cat "$out_file"
+}
+
+# ---- selftest (mock server in node — no python3, no live service) ----
+
+cmd_selftest() {
+  require_node
+  local mock_port mock_pid token_dir token_file fail=0
+  local port_file mock_js
+  token_dir="$(mktemp -d "$_MCTL_TMP/mctl-selftest.XXXXXX")"
+  token_file="${token_dir}/memory.token"
+  port_file="${token_dir}/port"
+  mock_js="${token_dir}/mock-server.mjs"
+  printf 'test-token-selftest-deadbeef' >"$token_file"
+  chmod 600 "$token_file"
+
+  # Mock server: binds port 0, writes port to file after listen (no bind-close-bind race).
+  cat >"$mock_js" <<'MOCKJS'
+import http from 'node:http';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { URL } from 'node:url';
+
+const portFile = process.argv[2];
+const tokenFile = process.argv[3];
+const TOKEN = fs.readFileSync(tokenFile, 'utf8').replace(/[\r\n]+$/g, '');
+const STORE = [];
+
+function sendJson(res, code, obj) {
+  const b = Buffer.from(JSON.stringify(obj), 'utf8');
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': b.length,
+  });
+  res.end(b);
+}
+
+function sendText(res, code, text) {
+  const b = Buffer.from(text, 'utf8');
+  res.writeHead(code, {
+    'Content-Type': 'text/markdown; charset=utf-8',
+    'Content-Length': b.length,
+  });
+  res.end(b);
+}
+
+function auth(req, res) {
+  const tok = req.headers['x-memory-token'] || '';
+  if (tok !== TOKEN) {
+    sendJson(res, 401, { error: 'invalid or missing X-Memory-Token' });
+    return false;
+  }
+  return true;
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const u = new URL(req.url || '/', 'http://127.0.0.1');
+  try {
+    if (req.method === 'GET') {
+      if (u.pathname === '/api/memory/search') {
+        const q = u.searchParams.get('q') || '';
+        const hits = STORE.filter((e) => (e.title || '').includes(q) || (e.body || '').includes(q));
+        return sendJson(res, 200, { results: hits, q });
+      }
+      if (u.pathname === '/api/memory/hot') {
+        const header = '<!-- hot-digest algo=v1 inputs=selftest -->\n';
+        let body = header + STORE.map((e) => `## ${e.title}\n${e.body}`).join('\n');
+        body += '\nomitted 0\n';
+        return sendText(res, 200, body);
+      }
+      if (u.pathname === '/api/memory/registry') {
+        return sendJson(res, 200, {
+          key: u.searchParams.get('key') || 'session-registry',
+          version: 1,
+          body: '# registry\nok\n',
+        });
+      }
+      if (u.pathname === '/api/memory/export_status') {
+        return sendJson(res, 200, { last_export_ts: null, pending: false, last_error: null });
+      }
+      if (u.pathname === '/api/memory/tasks/ready') {
+        return sendJson(res, 200, { tasks: [{ id: 11, priority: 'P0', title: 'selftest-ready-tail' }] });
+      }
+      if (u.pathname === '/api/memory/tasks') {
+        return sendJson(res, 200, {
+          tasks: [{ id: 7, status: 'open', priority: 'P0', domain: 'domain-harness', track: 'svod-hardening',
+            title: (u.searchParams.get('fields') || '') === 'compact' ? 'selftest compact row' : 'selftest full row' }],
+          echo_query: `${u.searchParams.get('status') || ''}|${u.searchParams.get('track') || ''}|${u.searchParams.get('domain') || ''}|${u.searchParams.get('closed_since') || ''}|${u.searchParams.get('fields') || ''}`,
+        });
+      }
+      if (u.pathname === '/api/memory/task') {
+        return sendJson(res, 200, { id: Number(u.searchParams.get('id')), title: 'selftest-task' });
+      }
+      if (u.pathname === '/api/memory/entry') {
+        const id = Number(u.searchParams.get('id'));
+        return sendJson(res, 200, { id, kind: id === 99 ? 'lesson' : id === 5 ? 'handoff' : 'chip',
+          title: id === 99 ? 'Old' : 'selftest', body: id === 99 ? '## Old\n- rule: old\n- why: old\n- evidence: old' : '' });
+      }
+      if (u.pathname === '/api/memory/lessons') {
+        const p = u.searchParams.get('path') || '';
+        if (p.includes('empty-domain')) {
+          return sendJson(res, 200, {
+            domain: 'domain-platform-shell',
+            algo: 'lessons-v1',
+            inputs_hash: 'emptyhash',
+            bytes: 0,
+            omitted: 0,
+            items: [],
+          });
+        }
+        // THE THIRD emptiness: rules matched and none of them fit. The mock
+        // carried only `items:[] omitted:0` and `items:[1] omitted:1`, so the
+        // one branch that says "known, did not fit" had no case at all - named
+        // by the kimi seat of round `harness-tails-r1`.
+        if (p.includes('too-big-domain')) {
+          return sendJson(res, 200, {
+            domain: 'domain-harness',
+            algo: 'lessons-v1',
+            inputs_hash: 'toobighash',
+            bytes: 0,
+            omitted: 3,
+            domain_active: 145,
+            items: [],
+          });
+        }
+        return sendJson(res, 200, {
+          domain: 'domain-example',
+          algo: 'lessons-v1',
+          inputs_hash: 'selftest-hash',
+          bytes: 120,
+          omitted: 1,
+          items: [
+            {
+              uuid: 'lesson-uuid-selftest',
+              id: 42,
+              title: 'selftest-lesson-gotcha',
+              anchor: 'src/app/Foo.ts:bar',
+              trigger: 'edit chart',
+              rule: 'use refs not state',
+              why: 'flicker',
+              evidence: 'selftest',
+              date: '2026-07-18',
+              rank: 1,
+              match: 'anchor',
+            },
+          ],
+        });
+      }
+      return sendJson(res, 404, { error: `no route ${u.pathname}` });
+    }
+
+    if (req.method === 'POST') {
+      if (!auth(req, res)) return;
+      const raw = await readBody(req);
+      let data;
+      try {
+        data = JSON.parse(raw.length ? raw.toString('utf8') : '{}');
+      } catch (e) {
+        return sendJson(res, 400, { error: `bad json: ${e.message}` });
+      }
+      if (u.pathname === '/api/memory/append') {
+        // Simulate server 409 on intentional conflict title
+        if (data.title === 'dup-conflict') {
+          return sendJson(res, 409, {
+            error: 'duplicate',
+            message: 'entry already exists',
+          });
+        }
+        const eid = STORE.length + 1;
+        const uuid = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
+        const entry = {
+          id: eid,
+          uuid,
+          dedup: false,
+          kind: data.kind,
+          title: data.title,
+          body: data.body ?? '',
+          agent: data.agent,
+        };
+        STORE.push(entry);
+        return sendJson(res, 200, {
+          id: eid,
+          uuid,
+          dedup: false,
+          echo_body: data.body ?? '',
+          echo_title: data.title ?? '',
+        });
+      }
+      if (u.pathname === '/api/memory/supersede') {
+        // id-only: ignore any key if present (should not be sent)
+        return sendJson(res, 200, {
+          id: 99,
+          uuid: 'super-1',
+          supersedes: data.id,
+          had_key: Object.prototype.hasOwnProperty.call(data, 'key'),
+          echo_tasks: JSON.stringify(data.tasks ?? null),
+          echo_no_open_work: data.no_open_work === true,
+        });
+      }
+      if (u.pathname === '/api/memory/registry') {
+        const exp = data.expected_version;
+        if (exp !== 1) {
+          return sendJson(res, 409, {
+            error: 'cas_conflict',
+            current_version: 1,
+            current_body: '# registry\nok\n',
+            version: 1,
+            body: '# registry\nok\n',
+          });
+        }
+        return sendJson(res, 200, { key: data.key, version: 2, ok: true });
+      }
+      if (u.pathname === '/api/memory/handoff') {
+        return sendJson(res, 200, {
+          id: 7,
+          uuid: 'ho-1',
+          title: data.title,
+          // echoed so the selftest can prove the CLI actually put the session-end
+          // declaration on the wire, not merely accepted the flag
+          echo_tasks: JSON.stringify(data.tasks ?? null),
+          echo_no_open_work: data.no_open_work === true,
+        });
+      }
+      if (u.pathname.startsWith('/api/memory/task')) {
+        return sendJson(res, 200, {
+          id: data.id ?? 11,
+          title: data.title ?? null,
+          priority: data.priority ?? null,
+          status: data.status ?? 'open',
+          next_action: data.next_action ?? null,
+          echo_depends_on: JSON.stringify(data.depends_on ?? null),
+          echo_agent: data.agent ?? null,
+          echo_domain: data.domain === undefined ? null : data.domain,
+          echo_has_domain: Object.prototype.hasOwnProperty.call(data, 'domain'),
+        });
+      }
+      return sendJson(res, 404, { error: `no route ${u.pathname}` });
+    }
+
+    sendJson(res, 405, { error: 'method not allowed' });
+  } catch (e) {
+    sendJson(res, 500, { error: String(e && e.message ? e.message : e) });
+  }
+});
+
+// Retry-bind loop: listen(0) once; if EADDRINUSE (shouldn't for 0), retry.
+function listenWithRetry(attemptsLeft) {
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE' && attemptsLeft > 0) {
+      setTimeout(() => listenWithRetry(attemptsLeft - 1), 20);
+      return;
+    }
+    console.error('mock listen failed:', err);
+    process.exit(1);
+  });
+  server.listen(0, '127.0.0.1', () => {
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    fs.writeFileSync(portFile, String(port));
+  });
+}
+listenWithRetry(20);
+MOCKJS
+
+  node "$mock_js" "$port_file" "$token_file" &
+  mock_pid=$!
+
+  _MCTL_ST_PID=$mock_pid
+  _MCTL_ST_DIR=$token_dir
+  cleanup_selftest() {
+    kill "${_MCTL_ST_PID:-}" 2>/dev/null || true
+    wait "${_MCTL_ST_PID:-}" 2>/dev/null || true
+    rm -rf "${_MCTL_ST_DIR:-}"
+    rm -f "${_MCTL_CODE_FILE:-}"
+    unset _MCTL_ST_PID _MCTL_ST_DIR
+  }
+  trap cleanup_selftest EXIT
+
+  # wait for port file + HTTP ready
+  local i ready=0
+  for i in $(seq 1 50); do
+    if [[ -s "$port_file" ]]; then
+      mock_port="$(tr -d '[:space:]' <"$port_file")"
+      if curl -sS -o /dev/null --max-time 1 "http://127.0.0.1:${mock_port}/api/memory/export_status" 2>/dev/null; then
+        ready=1
+        break
+      fi
+    fi
+    sleep 0.05
+  done
+  if [[ "$ready" != "1" ]]; then
+    echo "SELFTEST FAIL: mock server did not start (port_file=$(cat "$port_file" 2>/dev/null || echo missing))" >&2
+    exit 1
+  fi
+
+  export MEMORYCTL_URL="http://127.0.0.1:${mock_port}"
+  export MEMORYCTL_TOKEN_FILE="$token_file"
+
+  pass() { echo "  PASS: $*"; }
+  fail() { echo "  FAIL: $*" >&2; fail=1; }
+
+  echo "memoryctl --selftest (mock :${mock_port})"
+
+  # 1) status
+  local out rc
+  out="$(bash "$0" status 2>&1)" || { fail "status rc=$? out=$out"; out=""; }
+  echo "$out" | grep -q pending && pass "status" || fail "status body: $out"
+
+  # 2) append + search round-trip
+  out="$(bash "$0" append --kind chip --title "selftest-lesson" --body "hello world" --agent selftest 2>&1)" \
+    || { fail "append rc out=$out"; out=""; }
+  echo "$out" | grep -q '"id"' && pass "append" || fail "append: $out"
+
+  out="$(bash "$0" search "selftest-lesson" 2>&1)" || fail "search"
+  echo "$out" | grep -q "selftest-lesson" && pass "search" || fail "search: $out"
+
+  # 3) hot
+  out="$(bash "$0" hot --budget-kb 12 2>&1)" || fail "hot"
+  echo "$out" | grep -q "hot-digest" && pass "hot" || fail "hot: $out"
+
+  # 4) registry-read
+  out="$(bash "$0" registry-read 2>&1)" || fail "registry-read"
+  echo "$out" | grep -q '"version"' && pass "registry-read" || fail "registry-read: $out"
+
+  # 5) registry-update CAS ok
+  out="$(bash "$0" registry-update --expected-version 1 --body "# registry
+v2
+" 2>&1)" || fail "registry-update ok"
+  echo "$out" | grep -q '"version"' && pass "registry-update ok" || fail "registry-update: $out"
+
+  # 6) registry-update CAS 409 → exit 9
+  set +e
+  out="$(bash "$0" registry-update --expected-version 99 --body "x" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" == "9" ]]; then
+    pass "registry-update 409 → exit 9"
+  else
+    fail "registry-update 409 expected exit 9 got $rc out=$out"
+  fi
+
+  # 7) non-registry 409 (duplicate) → exit 1, NOT 9
+  set +e
+  out="$(bash "$0" append --kind chip --title "dup-conflict" --body "x" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" == "1" ]]; then
+    pass "non-registry 409 → exit 1"
+  else
+    fail "non-registry 409 expected exit 1 got $rc out=$out"
+  fi
+
+  # 8) handoff
+  out="$(bash "$0" handoff --title "selftest-ho" --body "done" 2>&1)" || fail "handoff"
+  echo "$out" | grep -q "selftest-ho\|ho-1\|\"id\"" && pass "handoff" || fail "handoff: $out"
+
+  # 9) escaping torture — body must survive byte-exact
+  # shellcheck disable=SC2016
+  local torture
+  torture='"quotes" '\''single'\'' $(subshell) \backslash newline
+ backtick ` unicode ёж'
+  out="$(bash "$0" append --kind chip --title "torture" --body "$torture" 2>&1)" || fail "torture append"
+  local echo_body
+  echo_body="$(printf '%s' "$out" | json_field echo_body)"
+  if [[ "$echo_body" == "$torture" ]]; then
+    pass "escape torture byte-exact"
+  else
+    fail "escape torture mismatch"
+    echo "  expected bytes: $(printf '%s' "$torture" | wc -c | tr -d ' ')" >&2
+    echo "  got bytes:      $(printf '%s' "$echo_body" | wc -c | tr -d ' ')" >&2
+    printf '  expected: %q\n' "$torture" >&2
+    printf '  got:      %q\n' "$echo_body" >&2
+  fi
+
+  # 10) trailing newlines in body-file survive byte-exact (not stripped by $(cat))
+  local trail_file trail_body
+  trail_file="${token_dir}/trail.txt"
+  # two trailing newlines after text
+  printf 'line1\nline2\n\n' >"$trail_file"
+  out="$(bash "$0" append --kind chip --title "trail-nl" --body-file "$trail_file" 2>&1)" || fail "trail-nl append"
+  echo_body="$(printf '%s' "$out" | json_field echo_body)"
+  # write echo to file for cmp (avoid shell var trailing-nl issues in [[ ]])
+  local echo_file
+  echo_file="${token_dir}/echo_trail.txt"
+  printf '%s' "$out" | node -e '
+let raw=""; process.stdin.setEncoding("utf8");
+process.stdin.on("data",c=>raw+=c);
+process.stdin.on("end",()=>{
+  const o=JSON.parse(raw);
+  process.stdout.write(o.echo_body ?? "");
+});
+' >"$echo_file"
+  if cmp -s "$trail_file" "$echo_file"; then
+    pass "trailing newlines byte-exact"
+  else
+    fail "trailing newlines mismatch"
+    echo "  expected hex: $(od -An -tx1 "$trail_file" | tr -s ' ')" >&2
+    echo "  got hex:      $(od -An -tx1 "$echo_file" | tr -s ' ')" >&2
+  fi
+
+  # 11) NUL in body → loud reject (exit != 0, message mentions NUL)
+  local nul_file
+  nul_file="${token_dir}/nul.bin"
+  printf 'ok\0bad' >"$nul_file"
+  set +e
+  out="$(bash "$0" append --kind chip --title "nul-test" --body-file "$nul_file" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" != "0" ]] && echo "$out" | grep -qi 'NUL'; then
+    pass "NUL body rejected loudly"
+  else
+    fail "NUL body expected loud reject, rc=$rc out=$out"
+  fi
+
+  # 12) supersede (id-only; --key must be rejected)
+  out="$(bash "$0" supersede --id 1 --title "new" --body "repl" 2>&1)" || fail "supersede"
+  echo "$out" | grep -q "super\|\"id\"" && pass "supersede" || fail "supersede: $out"
+  set +e
+  out="$(bash "$0" supersede --id 1 --title "new" --body "repl" --key should-fail 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" == "2" ]]; then
+    pass "supersede --key rejected"
+  else
+    fail "supersede --key expected usage exit 2 got $rc out=$out"
+  fi
+
+  # 13) missing value after flag → usage (exit 2)
+  set +e
+  out="$(bash "$0" append --kind 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" == "2" ]]; then
+    pass "missing flag value → exit 2"
+  else
+    fail "missing flag value expected exit 2 got $rc out=$out"
+  fi
+
+  # 14) missing token → fail-loud
+  set +e
+  out="$(MEMORYCTL_TOKEN_FILE="${token_dir}/nope" bash "$0" append --kind chip --title t --body b 2>&1)"
+  rc=$?
+  set -e
+  [[ "$rc" != "0" ]] && pass "missing token fails" || fail "missing token should fail"
+
+  # 15) no-python3 PATH still works (node + curl only)
+  local bin_dir stripped_path
+  bin_dir="${token_dir}/bin"
+  mkdir -p "$bin_dir"
+  # Expose only node, curl, bash, and core utils we need — no python3.
+  # Git Bash must use tiny wrappers rather than symlinked Windows executables:
+  # the Windows loader resolves adjacent DLLs from the invoked symlink path,
+  # which breaks curl.exe with a missing zlib1.dll.
+  for c in node curl bash sh cat cmp grep mktemp tr chmod rm mkdir printf sleep kill wait od seq; do
+    if command -v "$c" >/dev/null 2>&1; then
+      local resolved
+      resolved="$(command -v "$c")"
+      case "$(uname -s 2>/dev/null || true)" in
+        MINGW*|MSYS*|CYGWIN*)
+          printf '#!/bin/sh\nexec "%s" "$@"\n' "$resolved" >"$bin_dir/$c"
+          chmod +x "$bin_dir/$c"
+          ;;
+        *)
+          ln -sf "$resolved" "$bin_dir/$c" 2>/dev/null || true
+          ;;
+      esac
+    fi
+  done
+  # Also need common shells deps: env from shebang path is absolute /usr/bin/env
+  stripped_path="$bin_dir:/bin:/usr/bin"
+  set +e
+  out="$(PATH="$stripped_path" bash "$0" append --kind chip --title "nopy" --body "no python" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" == "0" ]] && echo "$out" | grep -q '"id"'; then
+    pass "no-python3 PATH works"
+  else
+    # prove python3 is absent on that PATH
+    if PATH="$stripped_path" command -v python3 >/dev/null 2>&1; then
+      fail "no-python3 test: python3 still on stripped PATH"
+    else
+      fail "no-python3 PATH append failed rc=$rc out=$out"
+    fi
+  fi
+
+  # 16) prove script has no CPython helper invocations (pattern built at runtime
+  # so this check line cannot match itself).
+  _pybin=python3
+  _pypat="${_pybin}[[:space:]]+-c|${_pybin}[[:space:]]*<<|/usr/bin/${_pybin}|exec[[:space:]]+${_pybin}"
+  if grep -nE "$_pypat" "$0" >/dev/null 2>&1; then
+    fail "script still invokes ${_pybin} as a runtime helper"
+    grep -nE "$_pypat" "$0" | head -20 >&2 || true
+  else
+    pass "no ${_pybin} runtime dependency"
+  fi
+  unset _pybin _pypat
+
+  # 17) lessons --path human + --json + empty
+  out="$(bash "$0" lessons --path src/app/Foo.ts 2>&1)" || { fail "lessons rc out=$out"; out=""; }
+  echo "$out" | grep -q "selftest-lesson-gotcha" && pass "lessons human title" || fail "lessons human: $out"
+  echo "$out" | grep -q "use refs not state" && pass "lessons human rule" || fail "lessons rule: $out"
+  echo "$out" | grep -q "omitted: 1" && pass "lessons omitted footer" || fail "lessons omitted: $out"
+
+  out="$(bash "$0" lessons --path src/app/Foo.ts --json 2>&1)" || fail "lessons --json"
+  echo "$out" | grep -q '"inputs_hash"' && pass "lessons --json raw" || fail "lessons json: $out"
+  echo "$out" | grep -q 'lesson-uuid-selftest' && pass "lessons --json uuid" || fail "lessons json uuid: $out"
+
+  out="$(bash "$0" lessons --path empty-domain/file.ts 2>&1)" || fail "lessons empty"
+  echo "$out" | grep -qi 'no lessons' && pass "lessons empty note" || fail "lessons empty: $out"
+
+  out="$(bash "$0" lessons --path too-big-domain/file.ts 2>&1)" || fail "lessons too big"
+  echo "$out" | grep -q 'NONE of them fit' && pass "lessons known-but-too-big" || fail "lessons too big: $out"
+  echo "$out" | grep -q 'omitted: 3' && pass "lessons too-big marker" || fail "lessons too big marker: $out"
+  echo "$out" | grep -qi 'no lessons' && fail "known-but-too-big printed 'no lessons': $out" || pass "lessons too-big is not silence"
+
+  # 18) tasks + the session-end declaration reach the wire in the right shape
+  out="$(bash "$0" task create --title "selftest tail" --priority P1 --next "do the thing" 2>&1)" || fail "task create rc"
+  echo "$out" | grep -Eq '"priority"[[:space:]]*:[[:space:]]*"P1"' && pass "task create priority" || fail "task create: $out"
+  echo "$out" | grep -Eq '"next_action"[[:space:]]*:[[:space:]]*"do the thing"' && pass "task create next" || fail "task next: $out"
+
+  bash "$0" task create --title "no priority" >/dev/null 2>&1 && fail "task create without --priority accepted" || {
+    [[ $? -eq 2 ]] && pass "task create without --priority → exit 2" || pass "task create without --priority refused"
+  }
+  bash "$0" task claim >/dev/null 2>&1 && fail "task claim without --id accepted" || pass "task claim without --id refused"
+  bash "$0" task nonsense --id 1 >/dev/null 2>&1 && fail "unknown task subcommand accepted" || pass "unknown task subcommand refused"
+  bash "$0" handoff --title t --body b --task abc >/dev/null 2>&1 && fail "--task abc accepted" || pass "--task rejects non-numeric"
+
+  out="$(bash "$0" task ready 2>&1)" || fail "task ready rc"
+  echo "$out" | grep -q 'selftest-ready-tail' && pass "task ready" || fail "task ready: $out"
+
+  out="$(bash "$0" task claim --id 11 --agent grok 2>&1)" || fail "task claim rc"
+  echo "$out" | grep -Eq '"echo_agent"[[:space:]]*:[[:space:]]*"grok"' && pass "task claim sends agent" || fail "task claim: $out"
+
+  out="$(bash "$0" task create --title t --priority P0 --depends-on 3 --depends-on 5 2>&1)" || fail "depends rc"
+  echo "$out" | grep -Eq '"echo_depends_on"[[:space:]]*:[[:space:]]*"\[3,5\]"' && pass "repeatable --depends-on" || fail "depends: $out"
+
+  out="$(bash "$0" task create --title "dom tail" --priority P1 --domain domain-harness 2>&1)" || fail "task create --domain rc"
+  echo "$out" | grep -Eq '"echo_domain"[[:space:]]*:[[:space:]]*"domain-harness"' && pass "task create --domain reaches the wire" || fail "task create --domain: $out"
+  echo "$out" | grep -Eq '"echo_has_domain"[[:space:]]*:[[:space:]]*true' && pass "task create names the domain key" || fail "task create domain key: $out"
+
+  out="$(bash "$0" task update --id 3 --domain none 2>&1)" || fail "task update --domain none rc"
+  echo "$out" | grep -Eq '"echo_domain"[[:space:]]*:[[:space:]]*null' && pass "task update --domain none clears" || fail "task update --domain none: $out"
+  # The mock answers null for an absent key too: only the named key proves that the clear was sent.
+  echo "$out" | grep -Eq '"echo_has_domain"[[:space:]]*:[[:space:]]*true' && pass "task update --domain none names the domain key" || fail "task update --domain none key: $out"
+
+  out="$(bash "$0" task list --domain domain-harness --closed-since 5 2>&1)" || fail "task list filters rc"
+  echo "$out" | grep -q '|domain-harness|5|' && pass "task list sends --domain and --closed-since" || fail "task list filters: $out"
+
+  out="$(bash "$0" task list --compact 2>&1)" || fail "task list --compact rc"
+  echo "$out" | grep -q '^#7 open P0 domain-harness svod-hardening selftest compact row$' && pass "task list --compact prints one line per task" || fail "task list --compact: $out"
+
+  out="$(bash "$0" handoff --title h --body b --task 7 --task 9 2>&1)" || fail "handoff --task rc"
+  echo "$out" | grep -Eq '"echo_tasks"[[:space:]]*:[[:space:]]*"\[7,9\]"' && pass "handoff sends declared tails" || fail "handoff tasks: $out"
+
+  out="$(bash "$0" handoff --title h --body b --no-open-work 2>&1)" || fail "handoff --no-open-work rc"
+  echo "$out" | grep -Eq '"echo_no_open_work"[[:space:]]*:[[:space:]]*true' && pass "handoff sends --no-open-work" || fail "handoff deny: $out"
+
+  # supersede of a handoff is gated by the service, so the client must carry the
+  # declaration on this route too - without it the route is simply unusable.
+  out="$(bash "$0" supersede --id 5 --title t --body b --task 4 2>&1)" || fail "supersede --task rc"
+  echo "$out" | grep -Eq '"echo_tasks"[[:space:]]*:[[:space:]]*"\[4\]"' && pass "supersede sends declared tails" || fail "supersede tasks: $out"
+
+  local bloated
+  bloated="$(printf '%0301d' 0)"
+  out="$(bash "$0" supersede --id 99 --title X --body "## X
+- rule: $bloated
+- why: Y
+- evidence: Z" 2>&1)" && fail "lesson supersede accepted over-budget rule"
+  echo "$out" | grep -q 'rule: 301 chars / 300; --long reason required' && pass "lesson supersede budget gate" || fail "lesson supersede gate: $out"
+  out="$(bash "$0" append --kind lesson --title X --body "## X
+- rule: $bloated
+- why: Y
+- evidence: Z" 2>&1)" && fail "direct lesson append accepted over-budget rule"
+  echo "$out" | grep -q 'rule: 301 chars / 300; --long reason required' && pass "direct lesson append budget gate" || fail "direct lesson append gate: $out"
+
+  out="$(bash "$0" supersede --id 5 --title t --body b --no-open-work 2>&1)" || fail "supersede --no-open-work rc"
+  echo "$out" | grep -Eq '"echo_no_open_work"[[:space:]]*:[[:space:]]*true' && pass "supersede sends --no-open-work" || fail "supersede deny: $out"
+
+  if [[ "$fail" -ne 0 ]]; then
+    echo "SELFTEST FAILED" >&2
+    exit 1
+  fi
+  echo "SELFTEST OK (all checks passed)"
+}
+
+# ---- main ----
+
+main() {
+  if [[ $# -lt 1 ]]; then usage; exit 2; fi
+  case "$1" in
+    -h|--help|help) usage; exit 0 ;;
+    --selftest|selftest) shift; cmd_selftest "$@"; exit $? ;;
+    append) shift; cmd_append "$@" ;;
+    supersede) shift; cmd_supersede "$@" ;;
+    search) shift; cmd_search "$@" ;;
+    get|show) shift; cmd_get "$@" ;;
+    hot) shift; cmd_hot "$@" ;;
+    registry-read) shift; cmd_registry_read "$@" ;;
+    registry-update) shift; cmd_registry_update "$@" ;;
+    handoff) shift; cmd_handoff "$@" ;;
+    task) shift; cmd_task "$@" ;;
+    lessons) shift; cmd_lessons "$@" ;;
+    status) shift; cmd_status "$@" ;;
+    *) usage_die "unknown command: $1" ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,5 @@
+{
+  "name": "handover",
+  "version": "0.1.0",
+  "description": "Hand a lead session over in place without the relay (clear, then submit the successor prompt)"
+}

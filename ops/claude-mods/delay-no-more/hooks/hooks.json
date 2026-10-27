@@ -1,0 +1,1 @@
+{ "description": "delay-no-more hooks module", "modules": ["./register.ts"] }

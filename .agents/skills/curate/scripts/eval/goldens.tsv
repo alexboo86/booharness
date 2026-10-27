@@ -1,0 +1,45 @@
+# Retrieval goldens: query <TAB> expected-filepath-substring <TAB> lang(en|ru|mix)
+# Expanded 2026-06-23 to a DISCRIMINATING set (was 11, saturated at ~100%): heavy on
+# RU->EN cross-lingual (RU query -> note with EN slug) — the lever mpnet-768 would move —
+# plus hard paraphrases. Targets are confirmed notes in the basic-memory `terminal` corpus.
+# --- original 11 ---
+PostToolUseFailure hook error capture trace	posttoolusefailure	en
+how should the agent address the operator preferred names	operator_address	en
+Hyperliquid liquidations how to source feed	hyperliquid_liquidations	en
+semantic memory recall basic-memory reindex wiring	semantic_recall_wiring	en
+memory store has secrets never push to cloud backup	secrets_backup	en
+audit another running claude session transcript	audit_sibling	en
+parking_lot RwLock deadlock read write one statement	parking_lot	en
+никогда не делать MVP заглушки доводить фичу до конца	no_mvp	ru
+целостность данных полные свечи OHLC без потерь	full_data	ru
+не предлагать закончить сессию работать автономно	dont_offer	ru
+ClickHouse FORMAT JSON quotes 64-bit integers as strings	ch_format_json	mix
+# --- RU cross-lingual (RU phrasing -> EN-slug note) ---
+живые лимиты использования Claude пятичасовое окно	claude_oauth_usage	ru
+сколько осталось квоты у kimi через апи	kimi_quota	ru
+как с мака подключиться по ssh к виндовс машине	mac_ssh_to_win	ru
+спецификация фидов ликвидаций бирж сторона и объём	cex_liquidation_feed	ru
+куда складываются резервные копии и как восстановиться	nas_backups	ru
+почему не уходит исходящая почта с хостинга	timeweb_smtp	ru
+заставить codex не читать пользовательский конфиг	codex_ignore_user_config	ru
+индексатор памяти не уважает правила игнора	basic_memory_ignores_gitignore	ru
+поддельный исполняемый питон3 под виндой	windows_python3_stub	ru
+как фронт узнаёт о смене оформления	theme_apply_event	ru
+журнал проводов для торговых сигналов	trading_wire_log	ru
+закрытая прибыль по сделкам и метка времени создания	bybit_closed_pnl	ru
+многоязычный поиск по памяти и переиндексация модели	recall_multilingual_hybrid	ru
+почему важен путь записи памяти а не само хранилище	model_verdict_writepath	ru
+ключи доступа к источникам новостей мирового монитора	worldmonitor_api_keys	ru
+почему агент codex замирает в фоне	codex_bg_stdin	ru
+страж секретов смотрит не туда при смене директории	secret_guard_checks_tool_cwd	ru
+настройка новостного сервера для новостей	news_server_inferno	ru
+амстердамский сервер потоковых данных	nl1_server	ru
+автоподсказка релевантных навыков по тексту запроса	skill_compass	ru
+# --- EN hard paraphrase ---
+inventory of every production host and its endpoints	all_servers	en
+freehand drawing rendering mode on the chart canvas	drawing_canvas	en
+transactional email provider migration	email_unisender	en
+verify the per-bucket step size for order flow	of_bucket_step	en
+credentials and role of the inferno vps box	inferno_vps	en
+how to read live Claude usage limits programmatically	claude_oauth_usage	en
+order book closed position pnl timestamp field	bybit_closed_pnl	en

@@ -1,0 +1,226 @@
+{
+  "_comment": "How each family and Jev is signed in, and the local file that proves it. No secret values. Paths are relative to home or orchStateDir (~/.local/state/orch), never the harness state directory ~/.local/state/{prefix}. {prefix} is names.prefix. Facts are the credential files and login words in ops/usage-snapshot.mjs, ops/orchestrator/src/providers/index.ts, and the secrets file reader.",
+  "schemaVersion": 1,
+  "logins": {
+    "claude": {
+      "terminalLogin": { "command": "claude auth login" },
+      "login": {
+        "kind": "cli",
+        "command": "claude auth login",
+        "instruction": "sign in to Claude Code again"
+      },
+      "credential": {
+        "root": "home",
+        "path": ".claude/.credentials.json"
+      },
+      "proof": {
+        "kind": "json",
+        "required": [["claudeAiOauth", "accessToken"]],
+        "expiry": {
+          "path": ["claudeAiOauth", "expiresAt"],
+          "unit": "ms",
+          "zeroMeansUnknown": true
+        }
+      },
+      "unreadStore": {
+        "platform": "darwin",
+        "kind": "keychain",
+        "name": "Claude Code-credentials"
+      },
+      "note": "On darwin the same claudeAiOauth object is also in the Keychain item Claude Code-credentials; this checker reads only the file."
+    },
+    "codex": {
+      "terminalLogin": { "command": "pi", "provider": "openai-codex" },
+      "login": {
+        "kind": "pi",
+        "command": "/login",
+        "entries": ["openai-codex"]
+      },
+      "credential": {
+        "root": "home",
+        "path": ".codex/auth.json"
+      },
+      "proof": {
+        "kind": "jwt",
+        "present": ["tokens", "access_token"],
+        "required": [["tokens", "account_id"]],
+        "pi": {
+          "path": ".pi/agent/auth.json",
+          "entry": "openai-codex",
+          "token": "access",
+          "expiry": "expires",
+          "unit": "ms",
+          "type": "oauth"
+        }
+      },
+      "note": "The usage reader requires tokens.account_id as well as the access token before it will call; both must be present."
+    },
+    "grok": {
+      "terminalLogin": { "command": "pi", "provider": "xai" },
+      "login": {
+        "kind": "pi",
+        "command": "/login",
+        "entries": ["xai"]
+      },
+      "credential": {
+        "root": "home",
+        "path": ".grok/auth.json"
+      },
+      "proof": {
+        "kind": "first-value",
+        "field": "key",
+        "expiry": {
+          "field": "expires_at",
+          "unit": "iso"
+        },
+        "pi": {
+          "path": ".pi/agent/auth.json",
+          "entry": "xai",
+          "token": "access",
+          "expiry": "expires",
+          "unit": "ms",
+          "type": "oauth"
+        }
+      }
+    },
+    "glm": {
+      "terminalLogin": { "command": "harness-secret set glm" },
+      "login": {
+        "kind": "key",
+        "store": "providers.json",
+        "entries": ["glm.env.ANTHROPIC_AUTH_TOKEN"],
+        "prompts": {
+          "glm.env.ANTHROPIC_AUTH_TOKEN": "Z.AI API key of the GLM Coding Plan"
+        },
+        "fixed": { "glm.env.ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic" }
+      },
+      "credential": {
+        "root": "orchStateDir",
+        "path": "providers.json"
+      },
+      "proof": {
+        "kind": "json",
+        "required": [
+          ["glm", "env", "ANTHROPIC_BASE_URL"],
+          ["glm", "env", "ANTHROPIC_AUTH_TOKEN"]
+        ]
+      }
+    },
+    "kimi": {
+      "terminalLogin": { "command": "pi", "provider": "kimi-coding" },
+      "login": {
+        "kind": "pi",
+        "command": "/login",
+        "entries": ["kimi-coding"]
+      },
+      "credential": {
+        "root": "home",
+        "path": ".kimi-code/credentials"
+      },
+      "proof": {
+        "kind": "kimi",
+        "pi": {
+          "path": ".pi/agent/auth.json",
+          "entry": "kimi-coding",
+          "token": "access",
+          "expiry": "expires",
+          "unit": "ms"
+        },
+        "cli": {
+          "dir": ".kimi-code/credentials",
+          "token": "access_token",
+          "expiry": "expires_at",
+          "unit": "s"
+        }
+      }
+    },
+    "opencode": {
+      "terminalLogin": { "command": "pi", "provider": "opencode-go" },
+      "login": {
+        "kind": "pi",
+        "command": "/login",
+        "entries": ["opencode-go"]
+      },
+      "credential": {
+        "root": "home",
+        "path": ".pi/agent/auth.json"
+      },
+      "proof": {
+        "kind": "api-entry",
+        "entry": "opencode-go",
+        "type": "api_key",
+        "field": "key"
+      }
+    },
+    "qwen": {
+      "terminalLogin": { "command": "pi", "provider": "qwen-token-plan-individual" },
+      "login": {
+        "kind": "key",
+        "store": ".pi/agent/auth.json",
+        "entry": "qwen-token-plan-individual",
+        "prompts": {
+          "qwen-token-plan-individual": "Qwen token-plan API key"
+        }
+      },
+      "credential": {
+        "root": "home",
+        "path": ".pi/agent/auth.json"
+      },
+      "proof": {
+        "kind": "api-entry",
+        "entry": "qwen-token-plan-individual",
+        "type": "api_key",
+        "field": "key"
+      },
+      "usageCredential": {
+        "login": {
+          "kind": "cli",
+          "command": "bl auth login --console --console-site international"
+        },
+        "path": ".bailian/config.json",
+        "field": "access_token"
+      }
+    },
+    "mimo": {
+      "terminalLogin": { "command": "pi", "provider": "xiaomi-token-plan-ams" },
+      "login": {
+        "kind": "pi",
+        "command": "/login",
+        "entries": ["xiaomi-token-plan-ams", "xiaomi-token-plan-sgp", "xiaomi-token-plan-cn"]
+      },
+      "credential": {
+        "root": "home",
+        "path": ".pi/agent/auth.json"
+      },
+      "proof": {
+        "kind": "api-entry-any",
+        "entries": ["xiaomi-token-plan-ams", "xiaomi-token-plan-sgp", "xiaomi-token-plan-cn"],
+        "type": "api_key",
+        "field": "key"
+      },
+      "usageCredential": {
+        "kind": "chrome-cookie",
+        "hosts": ["platform.xiaomimimo.com", ".platform.xiaomimimo.com", ".xiaomimimo.com"]
+      }
+    },
+    "jev": {
+      "terminalLogin": { "command": "harness-secret set jev" },
+      "login": {
+        "kind": "key",
+        "store": ".claude/{prefix}-secrets.env",
+        "entry": "TYPESAFE_API_KEY",
+        "prompts": {
+          "TYPESAFE_API_KEY": "Jev API key (TYPESAFE_API_KEY)"
+        }
+      },
+      "credential": {
+        "root": "home",
+        "path": ".claude/{prefix}-secrets.env"
+      },
+      "proof": {
+        "kind": "env-line",
+        "entry": "TYPESAFE_API_KEY"
+      }
+    }
+  }
+}

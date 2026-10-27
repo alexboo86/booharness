@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "enabledPlugins": {
+    "brightdata-plugin@synced": false
+  },
+  "//": "PROJECT settings — committed so every machine that clones the repo gets the same baseline (Claude Code loads project .claude/settings.json). Personal / machine-specific / secret config goes in .claude/settings.local.json (gitignored). This file intentionally carries no project-local hooks: the active RTK hook and MCP servers come from global machine configuration. Former project hooks and legacy orchestration scripts were retired and removed."
+}

@@ -1,0 +1,6 @@
+{
+  "note": "Canonical codex trusted-project roots, installed by ops/bootstrap/install-harness.mjs into the marked booharness-codex-trust block of ~/.codex/config.toml. A root is a PLACEHOLDER the installer resolves on the target machine: the trust path is a machine value, computed at install time, never transcribed from a donor checkout. `platforms` narrows an entry to the platforms where it means anything; an entry with no `platforms` applies everywhere. Operator entries for other directories are preserved byte for byte. No secrets belong here - this file only names directories.",
+  "trust": [
+    { "root": "{repo}" }
+  ]
+}

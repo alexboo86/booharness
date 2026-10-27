@@ -1,0 +1,16 @@
+{
+  "wrapper": {
+    "package": "sleev",
+    "version": "1.8.5",
+    "registry": "https://registry.npmjs.org/",
+    "integrity": "sha512-8jPrIJpVmh1XYj7sUfLOaAbb3+6BUtpRdOFRe17WracCtKG50teiIXUl5vzc+KEwVBIUHeJNZHzY9eDKdJi/nA=="
+  },
+  "platform": {
+    "package": "sleev-darwin-arm64",
+    "version": "1.8.5",
+    "registry": "https://registry.npmjs.org/",
+    "integrity": "sha512-+k/fhA105UkcSI8Lgz32FHOx4tnH94IHm0fCJpdOxlURxIpeX/6S88i8p05wC8T4B/AtjGxaTlA9QjSonf2m2Q=="
+  },
+  "binarySha256": "349099b14385dee3b031d6e79c0a4fa33f4418db3b0dca7402c1e46628e33157",
+  "updateOffUrl": "http://127.0.0.1:9/sleev-stand-update-check-off"
+}

@@ -1,0 +1,487 @@
+[
+  {
+    "file": "scripts/test-orch-host-worktree-sweep.mjs",
+    "line": "const win32 = process.platform === 'win32';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const name = process.platform === 'win32' ? 'cargo.exe' : 'cargo';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const install = (dir, filename) => process.platform === 'win32' ? copyFileSync(process.execPath, path.join(dir, filename)) : symlinkSync(process.execPath, path.join(dir, filename));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "if (process.platform !== 'win32') chmodSync(path.join(shim, name), 0o755);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "for (const tool of ['ninja', 'msbuild', 'cmake', 'rustc']) install(real, process.platform === 'win32' ? `${tool}.exe` : tool);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "test('Windows shims compile past a conflicting link.exe and run through CreateProcess', { skip: process.platform !== 'win32' }, async (t) => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform !== 'win32', timeout: 240_000 }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform !== 'win32', timeout: 90_000 }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform !== 'win32' }, () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const ext = process.platform === 'win32' ? '.exe' : '';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "test('child termination signal passes through and releases its slot', { skip: process.platform === 'win32' && 'Windows does not expose POSIX signal exit status' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const gitBash = process.platform !== 'win32' ? 'bash' : [process.env.ProgramFiles, process.env.ProgramW6432]",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "if (process.platform === 'win32' && !gitBash) return t.skip('Git Bash is not installed');",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const gitBash = process.platform !== 'win32' ? 'bash' : [process.env.ProgramFiles, process.env.ProgramW6432]",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "if (process.platform === 'win32' && !gitBash) return t.skip('Git Bash is not installed');",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "globalThis.splitGateHost = { ssh: 'fixture', platform: process.platform, repo: path.join(area, 'repo'), node: 'node' };",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const faked = options.platform ? { ORCH_TEST_PLATFORM: options.platform, ...(process.platform !== 'win32' && { PATHEXT: ';' }) } : {};",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform === 'win32' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform === 'win32' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "{ skip: process.platform === 'win32', timeout: 30_000 }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const compilerPath = process.platform === 'win32'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-build-gate.mjs",
+    "line": "const normalize = (value) => process.platform === 'win32' ? value.toLowerCase() : value;",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-chat-daemon.mjs",
+    "line": "assert.equal(daemon.child.exitCode, process.platform === 'win32' && lifecycle === 'signal' ? 1 : 0);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-check-on.mjs",
+    "line": "writeFileSync(path.join(state, 'hosts.json'), JSON.stringify({ offline: { ssh: 'offline-test', platform: process.platform, repo, node: 'node' } }));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-check-on.mjs",
+    "line": "writeFileSync(path.join(state, 'hosts.json'), JSON.stringify({ offline: { ssh: 'offline-test', platform: process.platform, repo, node: 'node' } }));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-check-on.mjs",
+    "line": "test('CLI through the real daemon route prepares the checkout and returns the command result', { timeout: 30_000, skip: process.platform === 'win32' && 'local transport fixture uses a file symlink' }, async t => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-check-on.mjs",
+    "line": "writeFileSync(path.join(state, 'hosts.json'), JSON.stringify({ fixture: { ssh: 'check-on-local-transport', platform: process.platform, repo, node: process.execPath } }));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-context-wait.mjs",
+    "line": "const localCommand = process.platform === 'win32'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "const bash = process.platform === 'win32' ? spawnPlan(fileURLToPath(new URL('../ops/bootstrap/provision-worktree.sh', import.meta.url)), []).file : null;",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "test('host seat: a tab-named file with a terminator-only edit refuses the land', { skip: process.platform === 'win32' && 'a tab is not a valid Windows filename character' }, async (t) => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "symlinkSync(outside, path.join(lead, 'out'), process.platform === 'win32' ? 'junction' : 'dir');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "if (process.platform === 'win32') return t.skip('POSIX git shim');",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "if (process.platform === 'win32') return t.skip('POSIX git shim');",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "if (process.platform === 'win32') return t.skip('POSIX git shim');",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-land.mjs",
+    "line": "if (process.platform === 'win32' && git(lead, 'config', '--bool', 'core.symlinks') !== 'true') { t.skip('Git checkout does not support core.symlinks'); return; }",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-language.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-lead-lessons.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-lead-lessons.mjs",
+    "line": "const pathSep = process.platform === 'win32' ? ';' : ':';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('Claude leadTools credits the hook rewrite once, but not a Codex command or an already-routed call', { skip: process.platform === 'win32' && 'shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('a timed-out rtk rewrite is no verdict: the call stays pending and is credited when rtk answers', { skip: process.platform === 'win32' && 'shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('lead rows report rtk misses from their own log only where rtk rewrite has a filter', { skip: process.platform === 'win32' && 'shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('a 1,000-command lead log never blocks the loop: one board scan returns before rtk judged its commands, a later one reports the rtk counts', { skip: process.platform === 'win32' && 'shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('an rtk verdict is memoised per command across refreshes, and the queue drains', { skip: process.platform === 'win32' && 'a shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-leads.mjs",
+    "line": "test('rtk misses: only what rtk rewrite would change, judged by rtk itself', { skip: process.platform === 'win32' && 'a shebang stub cannot run on Windows' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-memory-apply.mjs",
+    "line": "if (process.platform === 'win32') writeFileSync(path.join(bin, 'memoryctl.cmd'), '@echo off\\r\\n\"%ProgramFiles%\\\\Git\\\\bin\\\\bash.exe\" \"%~dp0memoryctl\" %*\\r\\n');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-memory-apply.mjs",
+    "line": "const gitDir = process.platform === 'win32' ? path.dirname(execFileSync('where', ['git'], { encoding: 'utf8' }).split(/\\r?\\n/)[0]) : null;",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-memory-apply.mjs",
+    "line": "const fixturePath = process.platform === 'win32'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "const skip = process.platform === 'win32' ? 'fake agents are POSIX shebang scripts' : false;",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "assert.ok(existsSync(path.join(shimDir, process.platform === 'win32' ? `${tool}.exe` : tool)), tool);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "const cargo = path.join(shimDir, process.platform === 'win32' ? 'cargo.exe' : 'cargo');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "const dir = mkdtempSync(path.join(os.tmpdir(), process.platform === 'win32' ? 'orch-build-gate-run-$HOME-%PATH%-' : \"orch-build-gate-run-$HOME-%PATH%-it's-\"));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "const shim = path.join(shimDir, process.platform === 'win32' ? 'cargo.exe' : 'cargo');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-providers.mjs",
+    "line": "test(`Node-distributed ${name}.cmd selects the installed CLI and prefix override`, { skip: process.platform !== 'win32' }, () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-remote-exec-disconnect.mjs",
+    "line": "if (process.platform === 'win32') (await import('../ops/orchestrator/remote-exec.mjs')).jobwrap(process.env.ORCH_STATE_DIR);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-exec-disconnect.mjs",
+    "line": "const deadline = Date.now() + (process.platform === 'win32' ? 30_000 : 4000);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-invalid-path.mjs",
+    "line": "if (process.platform === 'win32') writeFileSync(`\\\\\\\\?\\\\${target.replaceAll('/', '\\\\')}`, body);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-invalid-path.mjs",
+    "line": "assert.equal(readFileSync(process.platform === 'win32' ? `\\\\\\\\?\\\\${path.join(seat, name).replaceAll('/', '\\\\')}` : path.join(seat, name), 'utf8'), `device ${name}\\n`);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-provision.mjs",
+    "line": "const bash = process.platform === 'win32'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-provision.mjs",
+    "line": "symlinkSync(repo, path.join(seat, rel), process.platform === 'win32' ? 'junction' : 'dir');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-web-provision.mjs",
+    "line": "const bash = process.platform === 'win32'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-web-provision.mjs",
+    "line": "function fixture(t, platform = process.platform) {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-web-provision.mjs",
+    "line": "symlinkSync(outside, path.join(f.vendor, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote-worktree.mjs",
+    "line": "test('snapshot retries deletion of a Windows held index', { timeout: 30_000, skip: process.platform !== 'win32' }, async t => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "line": "assert.ok(existsSync(path.join(shimDir, process.platform === 'win32' ? 'cargo.exe' : 'cargo')));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "line": "test('Windows remote Pi receives vcvars environment and host tool paths at the child boundary', { skip: process.platform !== 'win32' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "line": "const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "line": "const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
+    "line": "if (process.platform === 'win32') await compileWinRelay(sshDir);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-review-plan.mjs",
+    "line": "if (process.platform === 'win32') git('config', '--local', 'core.longpaths', 'true');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-rtk-gain.mjs",
+    "line": "test('rtk gain: the host probe script enumerates its own candidates and prints one reads line', { skip: process.platform === 'win32' ? 'the fake rtk is a posix shell script' : false }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-rtk-gain.mjs",
+    "line": "const leadDb = process.platform === 'darwin'",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "if (process.platform !== 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "symlinkSync(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "const windowsStyle = process.platform === 'win32' ? `${worktree}\\\\.` : join(root, 'C:\\\\work tree');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "const linkKind = process.platform === 'win32' ? 'junction' : 'dir';",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "if (process.platform !== 'win32') symlinkSync(worktree, windowsStyle, linkKind);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "const dollarLink = join(root, process.platform === 'win32' ? '$alias' : 'alias\\\\$x');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "assert.deepEqual(withScout.tools.map((tool) => tool.name), process.platform === 'win32' ? ['bash', 'scout_request'] : ['scout_request']);",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seat-guard.mjs",
+    "line": "const withoutScout = process.platform === 'win32' ? ['bash'] : [];",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-codemap-errors.mjs",
+    "line": "test('code map: a codegraph failure printed on stdout names its cause, not just the exit code', { skip: process.platform === 'win32' && 'POSIX shebang stub' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "new RegExp(`no placement target is eligible for a qwen scout that needs win; skipped: local ${process.platform} is not Windows; box linux is not Windows; win probe failed: win: probe exit 255`));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "assert.equal(store.listSeats().length, before + (process.platform === 'win32' ? 1 : 0), 'every refusal happens before insertion');",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "test('a provisioning step that outlives its timeout is killed with its children', { skip: process.platform === 'win32' && 'POSIX shell fixture' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-seats-lifecycle.mjs",
+    "line": "const bin = mkdtempSync(process.platform === 'win32' ? 'orch-prio-bin-' : path.join(os.tmpdir(), 'orch-prio-bin-'));",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "line": "test('code map: dashed remote brief path never becomes a Node or codegraph option', { skip: process.platform !== 'win32' && 'win32 SSH relay fixture' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "line": "const platform = process.platform === 'win32' ? 'win32' : process.platform;",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "line": "const platform = process.platform === 'win32' ? 'win32' : process.platform;",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "line": "if (process.platform === 'win32') {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-seats-reports.mjs",
+    "line": "test('code map: a hung codegraph is killed with everything it started when the map times out', { skip: process.platform === 'win32' && 'POSIX shebang stub' }, async () => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-worktree-add.mjs",
+    "line": "test('concurrent worktree adds share the common git directory queue', { skip: process.platform === 'win32' && 'POSIX git shim' }, async (t) => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-worktree-add.mjs",
+    "line": "test('worktree add in another repository does not wait for a held add', { skip: process.platform === 'win32' && 'POSIX git shim' }, async (t) => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-worktree-add.mjs",
+    "line": "test('failed worktree add releases its repository queue', { skip: process.platform === 'win32' && 'POSIX git shim' }, async (t) => {",
+    "class": "skip"
+  },
+  {
+    "file": "scripts/test-orch-worktree-add.mjs",
+    "line": "test('worktree removal shares the repository queue with a held add', { skip: process.platform === 'win32' && 'POSIX git shim' }, async (t) => {",
+    "class": "skip"
+  }
+]

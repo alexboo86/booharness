@@ -1,0 +1,26 @@
+{
+  "package": "@blackwell-systems/agent-lsp",
+  "version": "0.21.0",
+  "registry": "https://registry.npmjs.org/",
+  "integrity": "sha512-N3lktXAw3MKh4ioYDfTTm7JnVBYZKUKkyrHbOdmKqrZr91Uf5N9hLYCfIRv/EGEnRnIfyNm0z3s0LUwaUImElg==",
+  "dependencies": [
+    {
+      "package": "@blackwell-systems/agent-lsp-darwin-arm64",
+      "version": "0.21.0",
+      "registry": "https://registry.npmjs.org/",
+      "integrity": "sha512-66buuSFbFz7DgsmABrB8gku8ZBkmmpUtJiPwiwkpSvDpwETqXrYkADjJQf80sS48tQ4UJRvr+6KJzFlx5Hmj9Q=="
+    },
+    {
+      "package": "typescript-language-server",
+      "version": "5.0.0",
+      "registry": "https://registry.npmjs.org/",
+      "integrity": "sha512-Glr+4Ss9g6AupBPj3tnk3mrlSH1ROS2Zmr5h0Vmy3DA+MVq+5qq4tv4+SogB8VsEZ13Z9xU01zm54MMyI7Gdzw=="
+    },
+    {
+      "package": "typescript",
+      "version": "5.9.3",
+      "registry": "https://registry.npmjs.org/",
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="
+    }
+  ]
+}

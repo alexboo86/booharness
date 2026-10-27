@@ -1,0 +1,30 @@
+# Default: normalize all text files to LF in the repo.
+# Working tree gets LF too when core.autocrlf=input (recommended).
+* text=auto eol=lf
+
+# Shell / config — explicit LF (run on Linux servers)
+*.sh   text eol=lf
+
+# Windows-only scripts — keep CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary (no line-ending conversion, no text diff)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zst   binary
+*.zstd  binary
+*.exe   binary
+*.dll   binary
+*.dylib binary
+*.so    binary
+*.msi   binary
+*.dmg   binary
+*.bin   binary
+*.pem   binary
