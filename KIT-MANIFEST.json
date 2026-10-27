@@ -1,7 +1,7 @@
 {
   "kit": "harness-kit",
-  "sourceCommit": "973d589502473c28cb9c7fc28ec8da1750bd1fb1",
-  "fileCount": 1449,
+  "sourceCommit": "a773ab3e840223b0ca03b464b0045321bce9c443",
+  "fileCount": 1451,
   "files": [
     {
       "path": ".agents/domains/_domain-routing.schema.md",
@@ -25,8 +25,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge.md",
-      "bytes": 13148,
-      "sha256": "e284aab200c3a9f41ffca490358aca15b040a601128afd7b16dc190afef210c1"
+      "bytes": 13161,
+      "sha256": "67f1e03b0c330fdd0b367f86c88742d4384f572c52280ae3a7186d88915df55a"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/ai-mcp-removal-what-the-harness-keeps.md",
@@ -190,8 +190,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/portable-kit-build-and-verification.md",
-      "bytes": 5828,
-      "sha256": "da2e46cf630b904c1d598953f5bd04105c5d1eebe3ff3a7f0f306f49a4c5f162"
+      "bytes": 6185,
+      "sha256": "4bf656008b8d9ed3605c79641d53bc86df7a208a4eabb839c73c7edf06cafa35"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/provider-session-contracts-and-adapters.md",
@@ -4594,6 +4594,16 @@
       "sha256": "39a2b820523b9f0efcf42802d819aaf04c6c22a831ad2d0650aaed27e414973b"
     },
     {
+      "path": "CHANGELOG.md",
+      "bytes": 1255,
+      "sha256": "6153e06c99c6c248f459ad2218d20684e3284a5034dc891701eb629b91ce9c4e"
+    },
+    {
+      "path": "CHANGELOG.ru.md",
+      "bytes": 2270,
+      "sha256": "2654c78f97995b208e2cf111b8b1dd8ad9fb2a1d3270c7d0c0f3f9dda04a2900"
+    },
+    {
       "path": "CLAUDE.md",
       "bytes": 11123,
       "sha256": "39a2b820523b9f0efcf42802d819aaf04c6c22a831ad2d0650aaed27e414973b"
@@ -4615,13 +4625,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 23109,
-      "sha256": "03e3d622f7fe8ed1f64941eecf1e80bf040aa8bbe746ac032fd1597af2e292f1"
+      "bytes": 23678,
+      "sha256": "665bfe5d1bdf285795de156a809760fa3f233b44c38de40a87a5c78109bedd61"
     },
     {
       "path": "README.ru.md",
-      "bytes": 41353,
-      "sha256": "425efe80543c13891ee5ffa8cbd965b9e1576a72fbe4f7b7fec310349cf8bc7e"
+      "bytes": 42449,
+      "sha256": "f3a829fe0b012d4fe9281e45388e6abfcac0aad093152a7dcb1734b7b79795cf"
     },
     {
       "path": "RTK.md",

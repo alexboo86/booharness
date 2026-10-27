@@ -1,8 +1,8 @@
 # Knowledge: the agent harness
 
 fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
-amended: 2026-10-27 — kit build marks donor citations the kit does not ship (task 3164) (NOT fact-checked)
-body-sha256: 4fae14cd19c1
+amended: 2026-10-27 — publication refuses a kit change without both changelogs (operator 2026-10-27) (NOT fact-checked)
+body-sha256: 32039215fe21
 
 Patterns:
 - Commit gates: `scripts/check-commit.mjs` (not in this kit)

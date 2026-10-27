@@ -6,7 +6,7 @@
 
 # BooHarness
 
-[Русский](README.ru.md) · [Installation guide](INSTALL.md) · [Install prompt](INSTALL-PROMPT.md) · [Licence](LICENSE)
+[Русский](README.ru.md) · [Installation guide](INSTALL.md) · [Install prompt](INSTALL-PROMPT.md) · [Changelog](CHANGELOG.md) · [Licence](LICENSE)
 
 BooHarness coordinates coding agents from several model families in a local development environment. A lead session plans work, briefs worker **seats**, reads their reports and commits accepted changes. The harness supplies orchestration, isolated working copies, review rules, durable memory and a board showing work in progress.
 
@@ -78,10 +78,17 @@ Roles define a seat's job and available methods; families define which provider 
 | Scout | Locate code and answer a bounded question with source evidence |
 | Researcher | Investigate a subject and return sourced findings |
 | Coder | Implement an agreed task and run the relevant checks |
+| Tester | Reproduce defects with tests and verify user paths |
+| Designer | Design or redesign a surface within the project's UI rules |
+| Copywriter | Write user-facing copy, metadata and locale strings |
 | Reviewer | Inspect a change and reproduce blocking findings |
+| Legal | Review legal copy, payments, personal data and consent |
+| Security | Review security changes with threat models and reproduced PoCs |
 | Bughunter | Investigate and reproduce a defect |
 | Debater | Examine competing approaches |
 | Plan critic | Check a proposed plan before implementation |
+
+The kit ships no legal-compliance or product-voice skill, so a Legal or Copywriter seat works without a domain skill until you add your own for your jurisdiction or your product's voice.
 
 Quota selection is not a claim that one family is best at every task. orch reads vendor usage every five minutes and prefers eligible families at or behind their budget pace. Credentials come from the configured provider stores; unreadable limits are not a proven spare budget. Families without working access must be paused.
 
