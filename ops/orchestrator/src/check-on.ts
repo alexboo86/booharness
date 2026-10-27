@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { checkoutTop, largestUntrackedSnapshotDirs, snapshotBytes, snapshotCommit } from './worktrees.ts';
 import { SNAPSHOT_REMOTE_MAX_BYTES } from './seats-create.ts';
 import { hash, prepareLeadCheckout, runCheckCommand } from './remote-repo.ts';
-import { provisionCheckDependencies } from './remote-provision.ts';
+import { provisionCheckDependencies, provisionCheckPyTools } from './remote-provision.ts';
 import { loadConfig, readHost } from './config.ts';
 import { acquireLock, pidRecord, releaseLock, runningInstance } from './lock.ts';
 import { probeHost } from './placement.ts';
@@ -20,6 +20,13 @@ const digest = (value: string) => createHash('sha256').update(value).digest('hex
 const lockFile = (stateDir: string, host: string, repo: string) => path.join(stateDir, 'lead-check', `${digest(JSON.stringify([host, realpathSync(repo)]))}.lock`);
 const activeLocks = new Set<string>();
 const dependencyRoots = ['', 'ops/orchestrator', 'ops/mcp-vendor'];
+
+async function prepareCheckPyTools(host: string | undefined, repo: string, sha: string, dir: string, timings?: Record<string, number>): Promise<void> {
+  if (!await git(repo, 'ls-tree', sha, '--', 'ops/py-tools/install.mjs')) return;
+  const started = performance.now();
+  try { await provisionCheckPyTools(host, dir); }
+  finally { if (timings) timings.pyTools = performance.now() - started; }
+}
 
 /** The daemon rechecks supplied snapshots too; a direct HTTP caller cannot bypass the bound. */
 export async function snapshotForCheck(repo: string, supplied?: string): Promise<string> {
@@ -85,6 +92,7 @@ export async function prepareCheckOn(host: string | undefined, repo: string, sha
   try { await provisionCheckDependencies(host, dir, changed); }
   finally { if (options.timings) options.timings.provision = performance.now() - provision; }
   save(locks);
+  await prepareCheckPyTools(host, repo, sha, dir, options.timings);
   return dir;
 }
 

@@ -39,6 +39,8 @@ export type BoardSeat = {
   effort: string | null;
   /** Skills the context inlined (required) and listed for the seat to read (context.ts). */
   skills: { required: string[]; listed: string[]; router: { skills: string; lessons: string; knowledge: string; skillReason?: string; lessonReason?: string; knowledgeReason?: string } | null } | null;
+  /** Distinct lessons delivered across turns; full wins over indexed. Null until a turn leaves queued. */
+  lessons: { full: number; indexed: number } | null;
   /** The Pi extensions orch itself loads into this seat's session (providers/pi.ts piArgs, stand.ts); empty for a native harness. */
   extensions: string[];
   /** Provisioning, or a turn queued or running: the seat is at work now. */
@@ -206,6 +208,15 @@ async function buildBoard(rt: Runtime, leads: () => LeadRow[] | Promise<LeadRow[
   }
   const seatsPromise = Promise.all(open.map(async (seat): Promise<BoardSeat> => {
     const turns = rt.store.listTurns(seat.id);
+    const full = new Set<string>();
+    const indexed = new Set<string>();
+    for (const turn of turns) {
+      for (const lesson of rt.store.lessonDeliveries(turn.id)) {
+        (lesson.mode === 'full' ? full : indexed).add(lesson.lesson_id);
+      }
+    }
+    for (const id of full) indexed.delete(id);
+    const lessons = turns.some((turn) => turn.status !== 'queued') ? { full: full.size, indexed: indexed.size } : null;
     const queued = turns.filter((turn) => turn.status === 'queued').length;
     const turn = turns.find((turn) => turn.status === 'running') ?? turns.at(-1) ?? null;
     const data = seat.data as Record<string, any>;
@@ -216,6 +227,7 @@ async function buildBoard(rt: Runtime, leads: () => LeadRow[] | Promise<LeadRow[
       model: typeof data.providerModel === 'string' ? data.providerModel : typeof data.model === 'string' ? data.model : null,
       effort: typeof data.effort === 'string' ? data.effort : seat.family === 'codex' ? CODEX_DEFAULT.effort : null,
       skills: data.skills && Array.isArray(data.skills.required) && Array.isArray(data.skills.listed) ? { required: data.skills.required, listed: data.skills.listed, router: data.skills.router && typeof data.skills.router.skills === 'string' && typeof data.skills.router.lessons === 'string' ? data.skills.router : null } : null,
+      lessons,
       extensions: piExtensions(seat.role, seat.family, data, rt.stateDir),
       ...scopeOf(seat.role, turns),
       parent: typeof data.parent === 'string' ? data.parent : null,
@@ -787,6 +799,14 @@ function badges(s, instruments) {
   }
   // A knowledge read is counted for leads and seats without skills metadata too.
   if (kinds.knowledge) { const kb = el('span', 'badge used', 'knowledge'); kb.append(el('b', '', kinds.knowledge)); kb.title = 'domain knowledge.md read'; wrap.append(kb); }
+  if (s.lessons) {
+    const b = el('span', 'badge ' + (s.lessons.full + s.lessons.indexed > 0 ? 'used' : 'unused'), 'lessons');
+    if (s.lessons.full + s.lessons.indexed === 0) b.append(el('b', '', 0));
+    else b.append(el('b', '', s.lessons.full + ' full'));
+    if (s.lessons.indexed > 0) b.append(el('b', '', s.lessons.indexed + ' on demand'));
+    b.title = 'full = whole text in the brief; on demand = title line, the seat reads it if needed';
+    wrap.append(b);
+  }
   close(wrap);
 
   // Tools: our shell instruments that were used, the provider's own tools, and one shell badge.

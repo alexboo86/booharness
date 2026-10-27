@@ -108,6 +108,7 @@ export type BoardSeat = {
     listed: string[]
     router: { skills: string; lessons: string; knowledge: string; skillReason?: string; lessonReason?: string; knowledgeReason?: string } | null
   } | null
+  lessons: { full: number; indexed: number } | null
   extensions: string[]
   active: boolean
   turn: string | null

@@ -12,6 +12,7 @@ work.scouts = [{ id: 'scout-sample', family: 'grok', status: 'running' }]
 work.worktree = { files: 3, stat: '+12 -2' }
 work.captures = 'capture-sample'
 work.skills = { required: ['plan-before-code'], listed: ['impeccable'], router: { skills: 'map', lessons: 'unavailable', knowledge: 'map', skillReason: 'sample unavailable', lessonReason: 'sample offline' } }
+work.lessons = { full: 2, indexed: 1 }
 work.extensions = ['orch-guard', 'codex-edit', 'stand-arm']
 work.kinds = { rtk: 7, 'rtk-missed': 2, 'rtk-pending': 1, knowledge: 1, 'skill:impeccable': 1, codegraph: 4, memoryctl: 3, 'mcp:sample-server': 2, 'sh:node': 3, 'tool:read': 2, edit: 2, shell: 5 }
 const done = svgBoard.seats[1]!
@@ -20,6 +21,7 @@ done.parent = 'parent-finished'
 done.scouts = [{ id: 'finished-scout', family: 'kimi', status: 'done' }]
 done.captures = 'finished-capture'
 done.kinds = { rtk: 1 }
+done.lessons = { full: 0, indexed: 0 }
 svgBoard.leads[0]!.cwd = '/synthetic/project/terminal'
 svgBoard.leads[0]!.kinds = { codegraph: 2, 'tool:read': 1 }
 svgBoard.limits[0]!.readings!.push({ window: 'month', used: 42, resetsAt: '2026-02-01T12:00:00.000Z' })

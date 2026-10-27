@@ -15,8 +15,10 @@ import { hashlineEditHostPrefix } from './hashline-edit.ts';
 import { spawnProvider } from './providers/spawn.ts';
 import { gatedSetupLine, type ProvisionStep, SLOT_ACQUIRED_MARKER, slotWaitMs } from './worktrees.ts';
 import { withHostClone } from './remote-repo.ts';
+import { createKeyedQueue } from './keyed-queue.ts';
 
 const CONFIG = 'ops/orchestrator/worktree-setup.json';
+const withPyToolsInstall = createKeyedQueue();
 const ENV_FILE = /(?<![\w.])\.env\b/;
 // Fail closed if the reviewed setup step changes: a read-only host must never run an arbitrary checkout command.
 const CODEGRAPH_INIT = 'command -v codegraph >/dev/null 2>&1 && codegraph init --yes . >/dev/null 2>&1 || true';
@@ -142,6 +144,14 @@ export async function provisionCheckDependencies(host: string | undefined, dir: 
     const run = await runOnHost(host, config ? 'node' : bash, args, dir, {}, 20 * 60_000, 4000, Boolean(config));
     if (run.code !== 0) throw new Error(`check-on dependency install (${root || 'root'}) exit ${run.code}: ${run.output.trim()}`);
   }
+}
+
+/** The installer owns readiness; serialize its host-wide site lock independently of clone mutation. */
+export async function provisionCheckPyTools(host: string | undefined, dir: string): Promise<void> {
+  await withPyToolsInstall(JSON.stringify(host ?? null), async () => {
+    const run = await runOnHost(host, 'node', ['ops/py-tools/install.mjs'], dir, {}, 10 * 60_000);
+    if (run.code !== 0) throw new Error(`check-on py-tools install exit ${run.code}: ${run.output.trim()}`);
+  });
 }
 
 /** The checkout's own setup, or orch's copy when the checkout's commit predates the file. */

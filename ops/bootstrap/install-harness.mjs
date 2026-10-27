@@ -51,6 +51,7 @@ import { effectiveLeadSkills, harnessPaths, readHarnessConfig } from '../../scri
 import { inspectSkillEntry, skillKey } from './skill-entry.mjs';
 import { writePermissionSettings } from './permissions-target.mjs';
 import { installRtkExcludes } from './rtk-config-target.mjs';
+import { runPyToolsStep } from './install-py-tools.mjs';
 import { buildJsonConfig, jsonEntry, publishConfigs, serverBelongs } from './mcp-config-target.mjs';
 import { git } from '../../scripts/git-env.mjs';
 import {
@@ -2526,6 +2527,7 @@ function main() {
   const releaseLock = acquireInstallLock(ctx);
   try {
   const report = { ok: true, home, repo };
+  runPyToolsStep(ctx, report);
   if (want('code-intel')) report.codeIntel = maybeInstallCodeIntel(ctx);
   if (want('instructions')) report.instructions = installInstructions(ctx);
   if (want('skills') && !ctx.skipSkills) report.skills = installSkills(ctx);

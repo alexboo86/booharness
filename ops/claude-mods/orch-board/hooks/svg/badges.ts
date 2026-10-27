@@ -28,7 +28,7 @@ export function badges(layout: Layout, source: BadgeSource, instruments: readonl
       label: b.name, counts: b.counts, kind: b.tone,
       tone: b.tone === 'missing' ? 'red' as const : 'badge' as const, tip: b.detail,
       hue: b.tone === 'missing' || b.tone === 'unused' ? undefined : hueOf(group.label, b.name),
-      cls: group.label === 'skills' && b.name !== 'knowledge' && b.name !== 'no jev' ? 'skill' : '',
+      cls: group.label === 'skills' && b.name !== 'knowledge' && b.name !== 'lessons' && b.name !== 'no jev' ? 'skill' : '',
     })), layout.pad + 45, 5, 24)
     layout.body += text(layout.pad, top + 13, group.label.toUpperCase(), 'badgeMuted', 10, undefined, false, 'sect-label')
   }

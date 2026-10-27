@@ -11,6 +11,8 @@ const assert = {
 import { badgeGroups, leadAge, leadTone, tokenCount } from './leads-format';
 import { leadsSvg } from '../svg/leads';
 import { svgBoard } from '../../tests/fixtures/svg';
+import { badges } from '../svg/badges';
+import { Layout } from '../svg/kinora';
 
 test('lead family draws the registry mark before its plain name; unknown families stay name-only', () => {
   const render = (family: string) => leadsSvg({ ...svgBoard, leads: [{ ...svgBoard.leads[0]!, family: family as never }] }, 800, Date.parse(svgBoard.at)).svg;
@@ -86,6 +88,29 @@ test('routing fallback is explicit but ordinary map knowledge does not imply no 
       detail: 'skills: map (timeout); lessons: unavailable (unknown): routing fallback',
     }],
   }]);
+});
+
+test('lesson badges show full and indexed deliveries, including zero, but not absent lead metadata', () => {
+  for (const [lessons, counts, tone] of [
+    [{ full: 2, indexed: 1 }, ['2 full', '1 on demand'], 'used'],
+    [{ full: 0, indexed: 3 }, ['0 full', '3 on demand'], 'used'],
+    [{ full: 1, indexed: 0 }, ['1 full'], 'used'],
+    [{ full: 0, indexed: 0 }, [0], 'unused'],
+  ] as const) {
+    const source = { kinds: { knowledge: 1 }, lessons };
+    const group = badgeGroups(source, [])[0]!;
+    assert.deepEqual(group.badges.map((badge) => badge.name), ['knowledge', 'lessons']);
+    assert.deepEqual(group.badges[1], {
+      name: 'lessons', counts: [...counts], tone,
+      detail: 'full = whole text in the brief; on demand = title line, the seat reads it if needed',
+    });
+    const layout = new Layout(800);
+    badges(layout, source, []);
+    assert.match(layout.body, />lessons<tspan/);
+    assert.doesNotMatch(layout.body, /class="[^"]*\bskill\b/);
+  }
+  assert.deepEqual(badgeGroups({ lessons: null }, []), []);
+  assert.deepEqual(badgeGroups(svgBoard.leads[0]!, []).flatMap((group) => group.badges).filter((badge) => badge.name === 'lessons'), []);
 });
 
 test('RTK pending alone is not a miss or an invented zero call count', () => {

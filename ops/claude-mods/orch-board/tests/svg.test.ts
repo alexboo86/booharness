@@ -133,7 +133,8 @@ test('docked pictures use pane width, not the surrounding viewport, and keep int
     expect(visible(source)).toContain('synthetic active card')
     expect(visible(source)).not.toContain('history card')
     // Pult rows carry no page padding: the image ends just under the last badge row.
-    const height = Number(source.match(/^<svg[^>]* height="([^"]+)"/)?.[1])
+    // Compare in layout units: the rects sit in the viewBox, the height attribute is scaled by 14/13.
+    const height = Number(source.match(/^<svg[^>]* viewBox="0 0 [^ ]+ ([^"]+)"/)?.[1])
     const bottom = Math.max(...[...source.matchAll(/<rect x="[^"]+" y="([^"]+)" width="[^"]+" height="([^"]+)"/g)].map(m => Number(m[1]) + Number(m[2])))
     expect(height - bottom).toBeGreaterThanOrEqual(0)
     expect(height - bottom).toBeLessThanOrEqual(24)
@@ -299,10 +300,10 @@ test('every web board display element reaches the desktop images and inline nati
     ['header-image', ['orch', 'working', 'finished', 'flagged', '/next lead past the limit', 'DRAIN · 1', 'pause error: pause failed', '1k rtk saved', '$8']],
     ['leads-image', ['Codex', 'Claude', 'terminal', '100%', '100 / 100', 'window 10', 'active ', 'codegraph 2', 'Context past the limit: finish the step, write the handoff, run /next']],
     ['chat-image', ['Live handles: alpha, beta', '1 watching', '2 earlier posts', 'alpha', 'beta:', 'sample pending', 'beta · pending', 'beta · no watcher', '⚑', 'all:', 'operator', 'plain log &lt;tag&gt; &amp; &quot;quotes&quot;', 'second line']],
-    ['seats-image', ['coder · alpha', 'mac', 'running', '+2 queued', 'working sample', 'for parent-sample', 'asked scout 1', 'sample-model · effort low', '5s', '3 files · +12 -2', 'capture-sample', 'SKILLS', 'plan-before-code', 'impeccable', 'no jev', 'knowledge 1', 'TOOLS', 'rtk 7 2 missed 1 pending', 'shell 3', 'read 2', 'MCP', 'codegraph 4', 'memoryctl 3', 'sample-server 2', 'PI', 'orch-guard', 'codex-edit 2', 'stand-arm', 'sample flag']],
+    ['seats-image', ['coder · alpha', 'mac', 'running', '+2 queued', 'working sample', 'for parent-sample', 'asked scout 1', 'sample-model · effort low', '5s', '3 files · +12 -2', 'capture-sample', 'SKILLS', 'plan-before-code', 'impeccable', 'no jev', 'knowledge 1', 'lessons 2 full 1 on demand', 'TOOLS', 'rtk 7 2 missed 1 pending', 'shell 3', 'read 2', 'MCP', 'codegraph 4', 'memoryctl 3', 'sample-server 2', 'PI', 'orch-guard', 'codex-edit 2', 'stand-arm', 'sample flag']],
     ['machines-image', ['mac', 'this Mac', '1 active seat', 'CPU', '10% · 2 cpus', 'MEM', '50% · 4.0 of 8.0 GB', 'DISK', '60% · 40.0 GB free', 'read ', 'unreachable: down', 'probing…', 'disk unreadable: denied']],
     ['family-image', ['alpha', '80%', 'budget week 80%', 'reset ', 'month 42%', 'beta', '?', 'unreadable', 'quota ran out', 'provider outage · back off 20 min', 'auth failure · ranked last 60 min', 'read 9 min ago', 'last good reading']],
-    ['finished-image', ['finished sample', 'reviewer · beta', 'remote', 'APPROVE', '2 findings · 1 calls', 'finished-capture', 'for parent-finished', 'scouts kimi', 'sample-model', 'low', 'rtk 1']],
+    ['finished-image', ['finished sample', 'reviewer · beta', 'remote', 'APPROVE', '2 findings · 1 calls', 'finished-capture', 'for parent-finished', 'scouts kimi', 'sample-model', 'low', 'lessons 0', 'rtk 1']],
   ] as const
   expect((await ui.findAll({ type: 'Svg' })).length).toBe(sections.length)
   for (const [key, labels] of sections) {

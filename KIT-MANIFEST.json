@@ -1,7 +1,7 @@
 {
   "kit": "harness-kit",
-  "sourceCommit": "a773ab3e840223b0ca03b464b0045321bce9c443",
-  "fileCount": 1451,
+  "sourceCommit": "dcc814f98da7e79876c062684607a59e5a510a1a",
+  "fileCount": 1452,
   "files": [
     {
       "path": ".agents/domains/_domain-routing.schema.md",
@@ -1530,8 +1530,8 @@
     },
     {
       "path": ".agents/skills/review-verification-protocol/SKILL.md",
-      "bytes": 9507,
-      "sha256": "3e6b9689088cdf041b1a21d18dbd0775fd51c7cda967091cd66fdec95a7bf573"
+      "bytes": 10497,
+      "sha256": "1baf2b110a52c1c6fdf0711fcf5f7edc3582256b1665460baa278d57fafd047b"
     },
     {
       "path": ".agents/skills/review-verification-protocol/references/rust-review.md",
@@ -4595,13 +4595,13 @@
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 1255,
-      "sha256": "6153e06c99c6c248f459ad2218d20684e3284a5034dc891701eb629b91ce9c4e"
+      "bytes": 2125,
+      "sha256": "e675898bd854d40b87c09ba09971fd3d0c123cc41572052eb52dcf9353a9bd90"
     },
     {
       "path": "CHANGELOG.ru.md",
-      "bytes": 2270,
-      "sha256": "2654c78f97995b208e2cf111b8b1dd8ad9fb2a1d3270c7d0c0f3f9dda04a2900"
+      "bytes": 3712,
+      "sha256": "77fa72a8393de4d6e17af9f729fadbebc48366c94914d711cbfe25fa355d49b6"
     },
     {
       "path": "CLAUDE.md",
@@ -4665,8 +4665,8 @@
     },
     {
       "path": "docs/agent/harness-allowlist.md",
-      "bytes": 51085,
-      "sha256": "4eb9518e9cd9578ba087de7ba7753ae03d12d6332046b27cca77a5cf8947201e"
+      "bytes": 52160,
+      "sha256": "88ce2c173bb7112df9439982192e0de8de56f5ffd52c5d3e8abbbf3793683a66"
     },
     {
       "path": "docs/agent/memory-macos-cutover.md",
@@ -5000,8 +5000,8 @@
     },
     {
       "path": "ops/bootstrap/CONTRACT.md",
-      "bytes": 9120,
-      "sha256": "7268b6d53cc2d98042ff28aeb629627ed488595030e1689ae81605732c684d0d"
+      "bytes": 9712,
+      "sha256": "58433dba3e80bade95ff76fcab7771450c906847d6fababf777eb1e85d48b683"
     },
     {
       "path": "ops/bootstrap/agent-instructions.md",
@@ -5085,13 +5085,13 @@
     },
     {
       "path": "ops/bootstrap/install-harness-args.mjs",
-      "bytes": 1878,
-      "sha256": "065f72cbcadd70359ee1bf68dd4058052a942b2e86bd80a46ed246da8bcd3183"
+      "bytes": 1890,
+      "sha256": "e244708c4eca060cf069a9f1af938914960f0fd7584634e2529f0d7206030469"
     },
     {
       "path": "ops/bootstrap/install-harness.mjs",
-      "bytes": 125715,
-      "sha256": "db70b5afeef04b0d95d37e5c4a6b58a8d36defaff862f04073cbb9f20234db3d"
+      "bytes": 125803,
+      "sha256": "e4b92944d7dfaba58b3b0f83add354d5a414d7d7d5fe32fd3186de286d65365e"
     },
     {
       "path": "ops/bootstrap/install-lock.mjs",
@@ -5102,6 +5102,11 @@
       "path": "ops/bootstrap/install-memory.mjs",
       "bytes": 59348,
       "sha256": "6046d181ef2c85c8e621509a2687ab8378ccd984cc7631600157bff4300df988"
+    },
+    {
+      "path": "ops/bootstrap/install-py-tools.mjs",
+      "bytes": 1366,
+      "sha256": "74ab9240e7c996a22dde1557936d102175eb692d5d9473ba5b70d2868bdca65f"
     },
     {
       "path": "ops/bootstrap/jev-client.mjs",
@@ -5580,13 +5585,13 @@
     },
     {
       "path": "ops/claude-mods/orch-board/hooks/sections/leads-format.test.ts",
-      "bytes": 7636,
-      "sha256": "cff268bd3386c90a1dcfca8056fa345f1ae8e0b2b09ea9df79352e55b9d5685f"
+      "bytes": 8891,
+      "sha256": "816ea30e9382d9cc1a6fefb8870a03c3b5a5729d1d6a44ce3dbe2c02077d123e"
     },
     {
       "path": "ops/claude-mods/orch-board/hooks/sections/leads-format.ts",
-      "bytes": 6237,
-      "sha256": "61072c844051241c2b423708f6ad81b84728d5f56e2f0b1778753f8855178685"
+      "bytes": 6672,
+      "sha256": "622854b25c3def3d4a8419ce8d88e69ebcd8bb3db0c286d30e5898dc8b6d72b9"
     },
     {
       "path": "ops/claude-mods/orch-board/hooks/sections/meters-format.test.ts",
@@ -5610,8 +5615,8 @@
     },
     {
       "path": "ops/claude-mods/orch-board/hooks/svg/badges.ts",
-      "bytes": 1907,
-      "sha256": "84698c4dc4103a90d935f308c7e6720da70f7f61af0004c704d9fbd60da482fa"
+      "bytes": 1931,
+      "sha256": "4f77902621c22896d19504552bf4455b8701e8db0b750fc7ded46875f5da7d07"
     },
     {
       "path": "ops/claude-mods/orch-board/hooks/svg/chat.ts",
@@ -5685,8 +5690,8 @@
     },
     {
       "path": "ops/claude-mods/orch-board/tests/fixtures/svg.ts",
-      "bytes": 1787,
-      "sha256": "054c1a2a5115c4b0c74ce359ff6f4e84ff5ecc937093b01c4b8b6dae84700d96"
+      "bytes": 1865,
+      "sha256": "e74b876729d0b2cb63d8f670f215e0eca03bc530eba5ba7a9b308dce62e0687c"
     },
     {
       "path": "ops/claude-mods/orch-board/tests/open.test.ts",
@@ -5705,8 +5710,8 @@
     },
     {
       "path": "ops/claude-mods/orch-board/tests/svg.test.ts",
-      "bytes": 37547,
-      "sha256": "e6a7cbe6f2866944a81e9a1ddafac446de76e456657a786ea063d9cd90e0bcf0"
+      "bytes": 37704,
+      "sha256": "68ebd696ef8afca01e9ec0fe0942f2532f99e13ec9c0efc932dcb02d98a6a185"
     },
     {
       "path": "ops/claude-mods/orch-board/tests/wake.test.ts",
@@ -5720,8 +5725,8 @@
     },
     {
       "path": "ops/claude-mods/orch-board/types/index.d.ts",
-      "bytes": 5974,
-      "sha256": "b4c677105e6392f55f1c471b0791cccc844dedbc5f9e358fb90c4e787d8eab5f"
+      "bytes": 6026,
+      "sha256": "f5eec29f8377029d78d2130f83443bbb92d198c8f1aff7c72a3f72fad92dbbba"
     },
     {
       "path": "ops/claude-mods/secrets-veil/.claude-plugin/plugin.json",
@@ -5970,8 +5975,8 @@
     },
     {
       "path": "ops/orchestrator/src/check-on.ts",
-      "bytes": 10257,
-      "sha256": "6449b7039a60848e0d648f3e96ee4715441c6cd82d7d767c9f3bba78b2172b6d"
+      "bytes": 10746,
+      "sha256": "b1f02fdf641dd6186db0d050f75218f7861ca8c57254429b1512d774b82c942b"
     },
     {
       "path": "ops/orchestrator/src/check-verify.ts",
@@ -6005,8 +6010,8 @@
     },
     {
       "path": "ops/orchestrator/src/dashboard.ts",
-      "bytes": 69350,
-      "sha256": "b2c2b3f70d6929ef74cb36829b000aca88aeccdc0e4a1f2d6c645e1b045e8921"
+      "bytes": 70427,
+      "sha256": "65e91798ebec77b08930e24d4782f51b02c37bb445a849aaf1def4cb94f127ea"
     },
     {
       "path": "ops/orchestrator/src/digest-text.ts",
@@ -6230,8 +6235,8 @@
     },
     {
       "path": "ops/orchestrator/src/remote-provision.ts",
-      "bytes": 29462,
-      "sha256": "3cf48957ca50396f2a4acb026d71c61d4db754f596e42fcaba877fe74e0860ca"
+      "bytes": 30054,
+      "sha256": "9e12d9f37476ab8e5d03ead924613894968167e9597399ca58e8b77923c9b3c8"
     },
     {
       "path": "ops/orchestrator/src/remote-repo.ts",

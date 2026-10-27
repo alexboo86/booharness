@@ -16,6 +16,7 @@ paths:
   - ops/bootstrap/install-git-hooks.mjs
   - ops/bootstrap/install-harness-args.mjs
   - ops/bootstrap/install-harness.mjs
+  - ops/bootstrap/install-py-tools.mjs
   - ops/bootstrap/install-lock.mjs
   - ops/bootstrap/install-memory.mjs
   - ops/bootstrap/json-context-wrap.mjs
@@ -85,6 +86,12 @@ Other production consumers import these helpers directly (paths below are within
 
 Outside consumers include `ops/orchestrator/install.mjs`, `ops/harness-kit/build-kit.mjs` (not in this kit) and memory tooling.
 Operator CLI entrypoints include `install-harness.mjs`, `install-memory.mjs`, `doctor.mjs`, `harness-config.mjs`, `harness-login.mjs` and `harness-secret.mjs`.
+The `install-harness.mjs --only py-tools` step invokes the `ops-py-tools`
+installer CLI for the selected home; it must run on the target platform.
+Foreign-platform configuration runs and checkouts without that installer report
+an explicit skipped result instead of attempting native dependency installation.
+An attempted py-tools failure is included in the report with its remedy; other
+selected steps continue, and the installer exits nonzero.
 This ownership-only split preserves existing direct-helper imports; it adds no facade or importer rewrite.
 
 `node ops/bootstrap/ollama-setup.mjs setup` configures the macOS embedding service
@@ -153,3 +160,4 @@ Observed imports resolved through the generated registry:
 
 - Task 2409, slice C, batch 40: documented existing installation/context APIs and observed dependencies; no installer or hook changes.
 - Task 3141, slice B: split routing and runtime hooks into separate ownership contracts; retain installer/helpers/assets and select the existing runtime-discovery entry. No code or file moves.
+- Task 3184 S1: add the py-tools provisioning step, preserving argument validation and home-scoped locking.

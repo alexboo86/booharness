@@ -4,6 +4,12 @@
 
 Each publication of BooHarness to this repository adds an entry here, newest first.
 
+## 2026-10-27, fourth publication
+
+- orch board: each seat card has a `lessons` badge with the count of lessons delivered to the seat: `N full` (whole text in the brief) and `N on demand` (title only; the seat reads the lesson when it needs it).
+- Review protocol: the reviewer also checks the change against the requirement (`requirement gap:`) and against needless scope (`overbuilt:`). A REQUEST_CHANGES verdict names who fixes each blocker: the coder, the lead (a brief or plan gap) or the operator (a requirement change).
+- Preparation for a complexity-growth commit gate: install-harness has a new `py-tools` step (`--only py-tools`), and `main.ts check-on <host>` runs that installer on the host after npm. The allowlist names crapper and dryer. The gate and its Python tools (`ops/py-tools`) are not in this kit, so a kit install reports the step as `skipped`.
+
 ## 2026-10-27, third publication
 
 - README: the role table lists all twelve seat roles; Tester, Designer, Copywriter, Legal and Security were missing. A note says the kit ships no legal-compliance or product-voice skill.

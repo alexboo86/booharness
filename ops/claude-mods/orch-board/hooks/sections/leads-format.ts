@@ -18,6 +18,7 @@ export type BadgeSource = {
     } | null;
   } | null;
   extensions?: string[];
+  lessons?: { full: number; indexed: number } | null;
 };
 
 export type Badge = {
@@ -86,6 +87,14 @@ export function badgeGroups(source: BadgeSource, instruments: readonly string[])
   }
   if (kinds.knowledge) {
     skills.push({ name: 'knowledge', counts: [kinds.knowledge], tone: 'used', detail: 'domain knowledge.md read' });
+  }
+  if (source.lessons) {
+    const { full, indexed } = source.lessons;
+    skills.push({
+      name: 'lessons', counts: full + indexed === 0 ? [0] : [full + ' full', ...(indexed > 0 ? [indexed + ' on demand'] : [])],
+      tone: full + indexed > 0 ? 'used' : 'unused',
+      detail: 'full = whole text in the brief; on demand = title line, the seat reads it if needed',
+    });
   }
   if (skills.length) groups.push({ label: 'skills', badges: skills });
 
