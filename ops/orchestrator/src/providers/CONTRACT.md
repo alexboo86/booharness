@@ -84,12 +84,12 @@ Protocol-specific helpers and test setters are not a replacement public facade.
 
 ## Invariants
 
-- Usage input is uncached input; unavailable cache/cost/whole-turn usage stays null rather than guessed. Source: `types.ts`; `index.ts` (native turn usage); `scripts/test-orch-providers.mjs`.
+- Usage input is uncached input; unavailable cache/cost/whole-turn usage stays null rather than guessed. Source: `types.ts`; `index.ts` (native turn usage); `scripts/test-orch-providers.mjs` (not in this kit).
 - Start and resume return the same session interface; a closed process must not be treated as a usable continuing session. Source: `types.ts` (`ProviderAdapter`, `ProviderSession`); `pi.ts`.
 - Credential parse failures expose fixed error classes/codes, not JSON parser messages containing credential bytes. Source: `index.ts` (`credentialErrorKind`).
-- Native Qwen/MiMo require a landable role and full access; route availability alone does not authorize read-only launch. Source: `index.ts` (`nativeCoderArgs`); `scripts/test-orch-providers.mjs`.
+- Native Qwen/MiMo require a landable role and full access; route availability alone does not authorize read-only launch. Source: `index.ts` (`nativeCoderArgs`); `scripts/test-orch-providers.mjs` (not in this kit).
 - Pi launch requires the pinned installed runtime and adapter configuration; it refuses missing/mismatched prerequisites instead of using a different binary. Source: `pi.ts` (`assertPiRuntime`, MCP adapter checks).
-- Pi arguments reject project trust through `--no-approve` while supplying explicit managed resources. Source: `pi.ts` (`piArgs`); `scripts/test-orch-providers.mjs`.
+- Pi arguments reject project trust through `--no-approve` while supplying explicit managed resources. Source: `pi.ts` (`piArgs`); `scripts/test-orch-providers.mjs` (not in this kit).
 
 ## Dependencies
 
@@ -106,10 +106,10 @@ Protocol-specific helpers and test setters are not a replacement public facade.
 
 ## Tests
 
-- `scripts/test-orch-providers.mjs` — adapter start/resume, events, usage, credentials and Pi configuration boundaries.
-- `scripts/test-orch-remote.mjs` — command resolution, remote launch environment and transport helpers.
-- `scripts/test-orch-remote-pi-mcp-live.mjs` — opt-in real remote Pi/MCP preflight.
-- Narrow adapter command: `node scripts/test-orch-providers.mjs`.
+- `scripts/test-orch-providers.mjs` (not in this kit) — adapter start/resume, events, usage, credentials and Pi configuration boundaries.
+- `scripts/test-orch-remote.mjs` (not in this kit) — command resolution, remote launch environment and transport helpers.
+- `scripts/test-orch-remote-pi-mcp-live.mjs` (not in this kit) — opt-in real remote Pi/MCP preflight.
+- Narrow adapter command: `node scripts/test-orch-providers.mjs` (`scripts/test-orch-providers.mjs` not in this kit).
 
 ## Owner
 

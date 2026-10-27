@@ -3,16 +3,16 @@
 > Часть свода правил агента. Корень — [CLAUDE.md](../../CLAUDE.md).
 > **Читать когда:** настраиваешь MCP / plugins / skills / hooks; перед добавлением любого нового tool/skill.
 
-Текущий аудит: [план экономики харнесса, 18.09.2026](harness-economy-plan-2026-09-18.md) и [проверенные результаты](harness-economy-results-2026-09-18.md).
+Текущий аудит: план экономики харнесса, 18.09.2026 (`docs/agent/harness-economy-plan-2026-09-18.md` not in this kit) и проверенные результаты (`docs/agent/harness-economy-results-2026-09-18.md` not in this kit).
 
-Class and requires of every canon skill: [skill classes](skill-classes.generated.md), generated from the `skills` key of `.agents/domains/_skill-map.json`.
+Class and requires of every canon skill: skill classes (`docs/agent/skill-classes.generated.md` not in this kit), generated from the `skills` key of `.agents/domains/_skill-map.json`.
 
 ## Канон одной строкой
 
 ```
 method skills (investigate-first, surgical-patch, verify-and-stop,
 plan-before-code, enumerate-cases) + codegraph + ast-grep + RTK
-+ domain-* + project ops skills + memoryctl + ui-canon + PreToolUse rtk
++ domain-* + project ops skills + memoryctl + PreToolUse rtk
 + booharness MCP (ops/support only)
 ```
 
@@ -36,11 +36,11 @@ By decision #11988 (survey #11987), the retained upstream skills are vendored at
 
 ### External web and test skills — explicit operator addition, 2026-10-22
 
-By decision #19444 the operator approved two external skills, vendored unmodified at pinned commits with their licenses and per-skill provenance: [`vercel-react-best-practices`](../../.agents/skills/vercel-react-best-practices/PROVENANCE.md) (vercel-labs/agent-skills, `skills/react-best-practices`, MIT) for React and Next.js performance work in the web domain; and [`vitest`](../../.agents/skills/vitest/PROVENANCE.md) (antfu/skills, `skills/vitest`, MIT) for Vitest test authoring. The vitest skill is generated against Vitest 5 while this repo runs Vitest 4 (root `package.json`) and 2 (`web/package.json`): its `PROVENANCE.md` lists every rule that does not hold on those versions, checked against the Vitest docs and changelog, and that list outranks the vendored text here. As with the vetted skills, bundled scripts and network/install commands are supply-chain surfaces named in provenance, not auto-approved execution, and the rest of those upstream packs, their MCPs and tooling are not added. Neither skill authorizes browser/Vite preview as a Tauri runtime. Routing through `.agents/domains/_skill-map.json` and the web domain arrive separately; until then these are allowlisted content, not routed skills.
+By decision #19444 the operator approved two external skills, vendored unmodified at pinned commits with their licenses and per-skill provenance: [`vercel-react-best-practices`](../../.agents/skills/vercel-react-best-practices/PROVENANCE.md) (vercel-labs/agent-skills, `skills/react-best-practices`, MIT) for React and Next.js performance work in the web domain; and [`vitest`](../../.agents/skills/vitest/PROVENANCE.md) (antfu/skills, `skills/vitest`, MIT) for Vitest test authoring. The vitest skill is generated against Vitest 5 while this repo runs Vitest 4 (root `package.json`) and 2 (`web/package.json` (not in this kit)): its `PROVENANCE.md` lists every rule that does not hold on those versions, checked against the Vitest docs and changelog, and that list outranks the vendored text here. As with the vetted skills, bundled scripts and network/install commands are supply-chain surfaces named in provenance, not auto-approved execution, and the rest of those upstream packs, their MCPs and tooling are not added. Neither skill authorizes browser/Vite preview as a Tauri runtime. Routing through `.agents/domains/_skill-map.json` and the web domain arrive separately; until then these are allowlisted content, not routed skills.
 
 ### Design skills — explicit operator addition, 2026-10-22
 
-By decision #19474 the operator approved two external skills for the future designer role, vendored unmodified at pinned commits with their licenses and per-skill provenance: [`ui-ux-pro-max`](../../.agents/skills/ui-ux-pro-max/PROVENANCE.md) (nextlevelbuilder/ui-ux-pro-max-skill, `.claude/skills/ui-ux-pro-max`, MIT) and [`emil-design-eng`](../../.agents/skills/emil-design-eng/PROVENANCE.md) (emilkowalski/skills, `skills/emil-design-eng`, MIT). Designer role defaults arrive in a later slice; these entries are class `method` with no trigger, so until then they are allowlisted content, not routed skills. ui-ux-pro-max's mobile-sized defaults (44×44px touch targets, mobile-first breakpoints, 16px base type) lose to `docs/ui-canon.md` on the terminal. As with the vetted skills, bundled scripts and network/install commands are supply-chain surfaces named in provenance, not auto-approved execution, and the rest of those upstream packs, their CLIs, repo-root refresh scripts and tooling are not added. Neither skill authorizes browser/Vite preview as a Tauri runtime.
+By decision #19474 the operator approved two external skills for the future designer role, vendored unmodified at pinned commits with their licenses and per-skill provenance: [`ui-ux-pro-max`](../../.agents/skills/ui-ux-pro-max/PROVENANCE.md) (nextlevelbuilder/ui-ux-pro-max-skill, `.claude/skills/ui-ux-pro-max`, MIT) and [`emil-design-eng`](../../.agents/skills/emil-design-eng/PROVENANCE.md) (emilkowalski/skills, `skills/emil-design-eng`, MIT). Designer role defaults arrive in a later slice; these entries are class `method` with no trigger, so until then they are allowlisted content, not routed skills. ui-ux-pro-max's mobile-sized defaults (44×44px touch targets, mobile-first breakpoints, 16px base type) lose to the adopted project's UI rules. As with the vetted skills, bundled scripts and network/install commands are supply-chain surfaces named in provenance, not auto-approved execution, and the rest of those upstream packs, their CLIs, repo-root refresh scripts and tooling are not added. Neither skill authorizes browser/Vite preview as a Tauri runtime.
 
 ### Copywriter anti-slop skill — explicit operator addition, 2026-10-23
 
@@ -60,7 +60,7 @@ The operator approved Peekaboo as a capture and drive tool (decisions #14768 and
 
 ### ASD-STE100 dictionary source — explicit operator addition, 2026-10-06
 
-The operator approved the open extraction of the ASD-STE100 issue 9 dictionary, the PyPI package `biz.dfch.AsdSte100Vocab` (AGPL-3.0), as the word source of the STE checker (decisions #14851 and #14861, task 2164). It is data, not a tool: the package is unpacked and read, never installed into a runtime and never executed. `scripts/ste-build-dictionary.mjs` reads its `asdste100_issue9_base.jsonl` (one named `--source` at a time) and writes `ste/dictionary.json` under the orch state directory; it refuses an `--out` inside a git work tree. The dictionary is never committed: the licence of the standard for such extractions is unverified, and only this Mac reads the file. `scripts/ste-check.mjs` reads that dictionary and `ops/orchestrator/ste/technical-names.json`, with no network and no model. When the operator has the official issue 9 PDF from ASD (free, on a request form that is his to send), it becomes the source and the build prints the difference.
+The operator approved the open extraction of the ASD-STE100 issue 9 dictionary, the PyPI package `biz.dfch.AsdSte100Vocab` (AGPL-3.0), as the word source of the STE checker (decisions #14851 and #14861, task 2164). It is data, not a tool: the package is unpacked and read, never installed into a runtime and never executed. `scripts/ste-build-dictionary.mjs` (not in this kit) reads its `asdste100_issue9_base.jsonl` (one named `--source` at a time) and writes `ste/dictionary.json` under the orch state directory; it refuses an `--out` inside a git work tree. The dictionary is never committed: the licence of the standard for such extractions is unverified, and only this Mac reads the file. `scripts/ste-check.mjs` reads that dictionary and `ops/orchestrator/ste/technical-names.json`, with no network and no model. When the operator has the official issue 9 PDF from ASD (free, on a request form that is his to send), it becomes the source and the build prints the difference.
 
 ### Vendored Claude Code mods — explicit operator addition, 2026-10-16
 
@@ -370,7 +370,7 @@ timeout = 60
 npm run check:unpinned-installs        # ратчет; новая непинованная установка = красный
 ```
 
-Двенадцать записей на 2026-08-24, `scripts/unpinned-installs.json`: три
+Двенадцать записей на 2026-08-24, `scripts/unpinned-installs.json` (not in this kit): три
 `pip install`, три `uvx`, три `npx`, два `curl | sh`, один `wget` в
 `/usr/local/bin`. Базлайн может только СОКРАЩАТЬСЯ — новая установка валит
 проверку, а сознательно добавить запись можно только через `--write-baseline` с

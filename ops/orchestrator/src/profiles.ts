@@ -69,7 +69,9 @@ export const MATRIX: Record<ProfileRole, Partial<Record<Family, Profile>>> = {
     // ~20x cheaper than Sol on the shared Codex plan quota; glm flash spends 1/3 of glm-5.3 (decision #12038).
     // high, not medium: at medium it returned partial on large reconnaissance (operator #12934).
     codex: { model: 'gpt-6-luna', effort: 'high' },
-    glm: { model: 'glm-5.3-flash', effort: 'low' },
+    // high, not low: the 2026-10-20..27 trial scored 0.649 against 0.558 at low, at twice the tokens per turn
+    // (decision #18608, task 2692); glm accepts only low, high and max.
+    glm: { model: 'glm-5.3-flash', effort: 'high' },
   },
   researcher: {
     grok: { model: 'grok-4.7', effort: 'medium' },

@@ -48,7 +48,7 @@ consume it. The supporting tools also have real callers across the module bounda
 | `node src/main.ts check-on <host> [--repo <lead checkout>] -- <command...>` | Snapshots a lead checkout through the daemon, reuses its host scratch checkout, provisions changed dependency locks and streams a managed check with its exit code; no commit stamp or local fallback. |
 
 Production consumers include `src/main.ts`, `src/seat-guard.ts`, and
-`scripts/check-orch-tests.mjs`; the remote launcher is invoked by provider spawning.
+`scripts/check-orch-tests.mjs` (not in this kit); the remote launcher is invoked by provider spawning.
 
 ## Inputs
 
@@ -81,13 +81,13 @@ not re-exports of the registered entry:
 
 ## Invariants
 
-- A missing, unreadable or mismatched suite receipt refuses restart; only the current input hash passes. Source: `suite-pass.mjs`; `scripts/test-check-orch-tests-select.mjs`.
+- A missing, unreadable or mismatched suite receipt refuses restart; only the current input hash passes. Source: `suite-pass.mjs`; `scripts/test-check-orch-tests-select.mjs` (not in this kit).
 - Knowledge Markdown and Git metadata do not invalidate the shared restart hash; executable inputs, fixtures and skills still do. Source: `suite-pass.mjs` (`suiteHash`).
 - Receipt publication uses a temporary file and rename, not a partially written final record. Source: `suite-pass.mjs` (`writeSuitePass`).
-- Remote header validation precedes spawning; build-gate ownership stays on the execution host. Source: `remote-exec.mjs`; `scripts/test-orch-remote.mjs`.
-- Worktree backups keep 14 days (operator decision #19671): an entry directly under `stateDir/worktree-backups` whose newest content is older goes, except a file named by the marker of a removal still in progress (`autoPruned` set, `worktreeRemoved` not true; sampled at the deletion moment); a finished marker protects nothing and a symlinked entry is never followed. Source: `src/backup-sweep.ts`, `src/prune.ts` (`protectedBackupPaths`); `scripts/test-orch-backup-sweep.mjs`.
-- Remote stdin disconnect kills the child tree; Windows commands use the job wrapper rather than silently running unwrapped. Source: `remote-exec.mjs`; `scripts/test-orch-remote-exec-disconnect.mjs`.
-- Lead checks refuse merges and snapshots above 256 MiB, serialize each host/lead run with a named state-directory lock, and mutate shared clones only through the daemon's host queue. Source: `src/check-on.ts`, `src/remote-repo.ts`; `scripts/test-orch-check-on.mjs`.
+- Remote header validation precedes spawning; build-gate ownership stays on the execution host. Source: `remote-exec.mjs`; `scripts/test-orch-remote.mjs` (not in this kit).
+- Worktree backups keep 14 days (operator decision #19671): an entry directly under `stateDir/worktree-backups` whose newest content is older goes, except a file named by the marker of a removal still in progress (`autoPruned` set, `worktreeRemoved` not true; sampled at the deletion moment); a finished marker protects nothing and a symlinked entry is never followed. Source: `src/backup-sweep.ts`, `src/prune.ts` (`protectedBackupPaths`); `scripts/test-orch-backup-sweep.mjs` (not in this kit).
+- Remote stdin disconnect kills the child tree; Windows commands use the job wrapper rather than silently running unwrapped. Source: `remote-exec.mjs`; `scripts/test-orch-remote-exec-disconnect.mjs` (not in this kit).
+- Lead checks refuse merges and snapshots above 256 MiB, serialize each host/lead run with a named state-directory lock, and mutate shared clones only through the daemon's host queue. Source: `src/check-on.ts`, `src/remote-repo.ts`; `scripts/test-orch-check-on.mjs` (not in this kit).
 
 ## Dependencies
 
@@ -106,12 +106,12 @@ not re-exports of the registered entry:
 
 ## Tests
 
-- `scripts/test-check-orch-tests-select.mjs` — suite input selection and restart receipt invalidation.
-- `scripts/test-orch-remote.mjs` — remote header, environment and launch behavior.
-- `scripts/test-orch-remote-exec-disconnect.mjs` — child lifetime on stdin disconnect; Windows builds the helper first.
-- `scripts/test-orch-install.mjs` — host installer definitions and activation behavior.
-- `scripts/test-orch-backup-sweep.mjs` — worktree-backup retention, marker protection and dry-run behavior.
-- Narrow receipt check: `node scripts/test-check-orch-tests-select.mjs`.
+- `scripts/test-check-orch-tests-select.mjs` (not in this kit) — suite input selection and restart receipt invalidation.
+- `scripts/test-orch-remote.mjs` (not in this kit) — remote header, environment and launch behavior.
+- `scripts/test-orch-remote-exec-disconnect.mjs` (not in this kit) — child lifetime on stdin disconnect; Windows builds the helper first.
+- `scripts/test-orch-install.mjs` (not in this kit) — host installer definitions and activation behavior.
+- `scripts/test-orch-backup-sweep.mjs` (not in this kit) — worktree-backup retention, marker protection and dry-run behavior.
+- Narrow receipt check: `node scripts/test-check-orch-tests-select.mjs` (`scripts/test-check-orch-tests-select.mjs` not in this kit).
 
 ## Owner
 

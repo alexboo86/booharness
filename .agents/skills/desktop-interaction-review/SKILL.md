@@ -11,8 +11,7 @@ without a mouse, two panels disagree about the same symbol, and touching a
 setting re-renders the chart.
 
 Styling rules — tokens, no hardcoded hex/px/rgba, light theme — live in
-`docs/ui-canon.md` and its §99 checklist, with `npm run check:ui-canon` and
-`npm run check:light-theme` as the sensors. This skill is the *interaction* lens
+the adopted project's design rules and their checks. This skill is the *interaction* lens
 that those do not cover.
 
 ## 1. Keyboard reachability
@@ -113,7 +112,7 @@ render count is not.
 - [ ] custom controls have role, name, keyboard handlers, disabled state
 - [ ] no single-key shortcut fires while a text field has focus
 - [ ] no meaning carried by colour alone; contrast checked in BOTH themes
-- [ ] no hardcoded hex/px/rgba (`npm run check:ui-canon`, `npm run check:light-theme`)
+- [ ] no hardcoded hex/px/rgba (the project's style checks)
 - [ ] every surface showing a shared fact updates on every path that changes it
 - [ ] stale/disconnected is shown, not silently kept as the last value
 - [ ] the interaction does not re-render the chart subtree

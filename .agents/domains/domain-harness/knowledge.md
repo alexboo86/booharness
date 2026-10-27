@@ -1,11 +1,11 @@
 # Knowledge: the agent harness
 
 fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
-amended: 2026-10-26 — glm working coder cap 10 (decision 20271) (NOT fact-checked)
-body-sha256: 8f45dab8a7df
+amended: 2026-10-27 — kit build marks donor citations the kit does not ship (task 3164) (NOT fact-checked)
+body-sha256: 4fae14cd19c1
 
 Patterns:
-- Commit gates: `scripts/check-commit.mjs`
+- Commit gates: `scripts/check-commit.mjs` (not in this kit)
 - Orch MCP tools: `ops/orchestrator/src/http.ts`
 - Session hooks: `ops/bootstrap/session-start.mjs`
 - Installer steps: `ops/bootstrap/install-harness.mjs`

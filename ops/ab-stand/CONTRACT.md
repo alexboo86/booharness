@@ -37,7 +37,7 @@ There is no single barrel. The registry entry is the shared codex-edit installer
 - `ensureCodexEdit` — installs/verifies the pinned extension and returns its readiness result.
 
 `ops/orchestrator/src/codex-edit.ts` invokes the entry as a subprocess, not an ESM facade.
-`scripts/orch-seats-test-helpers.mjs` imports the stock-prefix and verification helpers.
+`scripts/orch-seats-test-helpers.mjs` (not in this kit) imports the stock-prefix and verification helpers.
 The other operator entrypoints are `install.mjs`, `smoke.mjs`, `run.mjs`, `report.mjs`, `metrics.mjs` and `edit-metrics.mjs`; see `ops/ab-stand/README.md` for their commands.
 `scripts/test-ab-stand*.mjs` additionally import the scoring, arm, authentication, matrix, reporting and observation-mask helpers directly; these are not an application runtime facade.
 
@@ -84,16 +84,16 @@ Direct import targets, resolved against the generated module registry (the uncha
 
 ## Tests
 
-- `scripts/test-ab-stand.mjs` — matrix planning, guards, authentication, fixture scoring and report behavior.
-- `scripts/test-ab-stand-metrics.mjs` — usage metric formatting and selection.
-- `scripts/test-ab-stand-edit-metrics.mjs` — edit failure classification and session metrics.
-- `scripts/test-ab-stand-obs-mask.mjs` — observation masking behavior.
-- `scripts/orch-seats-test-helpers.mjs` verifies an existing stock prefix as fixture preparation; it is not an install/check regression test.
+- `scripts/test-ab-stand.mjs` (not in this kit) — matrix planning, guards, authentication, fixture scoring and report behavior.
+- `scripts/test-ab-stand-metrics.mjs` (not in this kit) — usage metric formatting and selection.
+- `scripts/test-ab-stand-edit-metrics.mjs` (not in this kit) — edit failure classification and session metrics.
+- `scripts/test-ab-stand-obs-mask.mjs` (not in this kit) — observation masking behavior.
+- `scripts/orch-seats-test-helpers.mjs` (not in this kit) verifies an existing stock prefix as fixture preparation; it is not an install/check regression test.
 - No dedicated installer behavior test was found for the entry's containment and tarball verification; those guarantees above are code-sourced.
 
 ### Command
 
-`node --test scripts/test-ab-stand-metrics.mjs scripts/test-ab-stand-edit-metrics.mjs scripts/test-ab-stand-obs-mask.mjs`
+`node --test scripts/test-ab-stand-metrics.mjs scripts/test-ab-stand-edit-metrics.mjs scripts/test-ab-stand-obs-mask.mjs` (`scripts/test-ab-stand-metrics.mjs` not in this kit, `scripts/test-ab-stand-edit-metrics.mjs` not in this kit, `scripts/test-ab-stand-obs-mask.mjs` not in this kit)
 
 ## Owner
 

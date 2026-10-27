@@ -5,7 +5,7 @@ Source: `.claude/skills/ui-ux-pro-max/` at commit `623a9a9037d006ea727f8213f084d
 Installed 2026-10-22 by operator approval (memory decision #19474).
 License: MIT, per upstream `LICENSE` at the repository root (Copyright (c) 2024 Next Level Builder). Local `LICENSE` records that text verbatim; it is not part of the upstream skill folder.
 Not vendored: the rest of nextlevelbuilder/ui-ux-pro-max-skill (other `.claude/skills/*`, `cli/`, `src/`, `docs/`, `gallery/`, `preview/`, `projects/`, `screenshots/`, `stack/`, and repo-root `scripts/`). SKILL.md calls only files inside this folder (`references/quick-reference.md`, `references/pro-rules.md`, `scripts/search.py` and the `data/` that script reads). It addresses the search script as `${CLAUDE_PLUGIN_ROOT}/.claude/skills/ui-ux-pro-max/scripts/search.py`, the upstream plugin layout, not `.agents/skills/ui-ux-pro-max/scripts/search.py`. Here run it as `python3 .agents/skills/ui-ux-pro-max/scripts/search.py` from the repository root; this local errata outranks every `${CLAUDE_PLUGIN_ROOT}` command line of the vendored SKILL.md. In-folder tests walk parents looking for repo-root `scripts/refresh-google-fonts.py` and `scripts/refresh-icon-catalog.py`; those files are not copied. `scripts/refresh-google-fonts.py` reaches the network (`urllib.request.urlopen`).
-On this terminal, the skill's mobile-sized defaults (44×44px touch targets, mobile-first breakpoints, 16px base type, px density scales) lose to `docs/ui-canon.md`.
+In an adopted project, the skill's mobile-sized defaults (44×44px touch targets, mobile-first breakpoints, 16px base type, px density scales) lose to that project's design rules.
 Supply-chain surface: Python only. None of the vendored scripts open a network connection (stdlib; `validate_data.py` uses `urllib.parse` only). `scripts/search.py` is the entry SKILL.md tells an agent to run; it imports `scripts/core.py`, `scripts/design_system.py` and `scripts/reasoning_contract.py` and reads local `data/`. `scripts/design_system.py` can write `design-system/` under a caller-supplied `--output-dir` when `--persist` is passed (filesystem, not network). These scripts are not approved automatic steps.
 
 Runtime scripts, each `#!/usr/bin/env python3`, no network:
@@ -34,7 +34,7 @@ Tests, Python, no network of their own (subprocess of local Python only). `scrip
 
 ## Run scripts
 
-Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline`. This section is written by that command.
+Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline` (`scripts/check-skill-contract.mjs` not in this kit). This section is written by that command.
 
 ```run-scripts
 scripts/core.py sha256:c3be4b23e7150e6b45095213158cfa3c8ad96502f01dde3f6ffff9de64a4f481

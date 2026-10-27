@@ -162,18 +162,18 @@ and reporting/check scripts. `pi-extension.ts` also has an SDK-loaded default ex
 
 ## Invariants
 - Host admission keeps instrument availability boolean and fail-closed; per-tool checks distinguish `ok`, `absent`, and `timed out` with the raw error. Checks run in parallel with 4-second deadlines inside the 10-second load probe. Creation retries once only when unavailable required checks all timed out, never an absent or unknown verdict; refusals include each cause.
-- Image capabilities and catalog exceptions come from the [ops-orchestrator-model-input](../../../docs/contracts/modules/ops-orchestrator-model-input.md) module's data-only entry, `model-input.ts`.
-- Credential kicks leave refreshes and credential writes to vendor CLIs; Claude uses non-inference `doctor` with auto-updates disabled, closed stdin, a hard SIGKILL deadline and a persisted 30-minute cooldown. Missing/unreadable credentials never authorize a kick. Source: `token-kick.ts`; `scripts/test-orch-usage.mjs`.
+- Image capabilities and catalog exceptions come from the ops-orchestrator-model-input (`docs/contracts/modules/ops-orchestrator-model-input.md` not in this kit) module's data-only entry, `model-input.ts`.
+- Credential kicks leave refreshes and credential writes to vendor CLIs; Claude uses non-inference `doctor` with auto-updates disabled, closed stdin, a hard SIGKILL deadline and a persisted 30-minute cooldown. Missing/unreadable credentials never authorize a kick. Source: `token-kick.ts`; `scripts/test-orch-usage.mjs` (not in this kit).
 - Writable connections use busy timeout before WAL, `synchronous=FULL` and foreign keys; committed state is durable. Source: `store.ts` (`openStore`).
-- Migrations run atomically and refuse a schema newer than this daemon; failed immediate transactions roll back. Source: `store.ts` (`transaction`, `migrate`); `scripts/test-orch-core.mjs`.
-- Event history is append-only, enforced by UPDATE/DELETE abort triggers. Source: `store.ts` (migration SQL); `scripts/test-orch-core.mjs`.
+- Migrations run atomically and refuse a schema newer than this daemon; failed immediate transactions roll back. Source: `store.ts` (`transaction`, `migrate`); `scripts/test-orch-core.mjs` (not in this kit).
+- Event history is append-only, enforced by UPDATE/DELETE abort triggers. Source: `store.ts` (migration SQL); `scripts/test-orch-core.mjs` (not in this kit).
 - Seats created during a drain hold new provisioning (except scout/critic); held rows survive restart and resume setup before queued turns, or resume on drain cancel. Closing a held row creates no checkout. Started provisioning still blocks drain exit.
-- Restart interrupts running turns but preserves queued work; the drain flag is committed state. Source: `store.ts` (`interruptOrphans`, `setDrain`); `scripts/test-orch-drain.mjs`.
-- Idle close ages failed seats and ready seats with no turns from `created_at`, using `idleFloorDays(role)`. Never-prompted landable seats still require landed proof at every age; the two-day unlanded rule applies only to terminal-turn idleness. Closing/scope fences, fresh checks and normal close cleanup remain in force. Source: `prune.ts`, `seats-close.ts`; `scripts/test-orch-idle-close.mjs`.
-- Hot-path seat reads use bounded queries/pages rather than parsing all closed history. Source: `store.ts` (`SeatQuery`, `pruneCandidatesPage`); `scripts/test-orch-store-hot-paths.mjs`.
+- Restart interrupts running turns but preserves queued work; the drain flag is committed state. Source: `store.ts` (`interruptOrphans`, `setDrain`); `scripts/test-orch-drain.mjs` (not in this kit).
+- Idle close ages failed seats and ready seats with no turns from `created_at`, using `idleFloorDays(role)`. Never-prompted landable seats still require landed proof at every age; the two-day unlanded rule applies only to terminal-turn idleness. Closing/scope fences, fresh checks and normal close cleanup remain in force. Source: `prune.ts`, `seats-close.ts`; `scripts/test-orch-idle-close.mjs` (not in this kit).
+- Hot-path seat reads use bounded queries/pages rather than parsing all closed history. Source: `store.ts` (`SeatQuery`, `pruneCandidatesPage`); `scripts/test-orch-store-hot-paths.mjs` (not in this kit).
 - Sweep leases and daily stamps supplied by `sweep-shared.ts` serialize daemon and manual CLI passes; scoped host passes never publish the all-host daily stamp, and dry-run leaves gate state untouched. Sweep scheduling and candidate safety belong to `ops-orchestrator-surface`.
-- Checkout-owning roles (coder, tester, designer, copywriter, reviewer, legal, security and bughunter) are told to remove comparison worktrees before reporting; read-only roles receive no such instruction. Source: `context.ts`; `scripts/test-orch-context-wait.mjs`.
-- Lesson application is recorded only for lessons actually delivered in full; full lead delivery cannot be downgraded by indexed delivery. Source: `store.ts` (delivery methods); `scripts/test-orch-core.mjs`.
+- Checkout-owning roles (coder, tester, designer, copywriter, reviewer, legal, security and bughunter) are told to remove comparison worktrees before reporting; read-only roles receive no such instruction. Source: `context.ts`; `scripts/test-orch-context-wait.mjs` (not in this kit).
+- Lesson application is recorded only for lessons actually delivered in full; full lead delivery cannot be downgraded by indexed delivery. Source: `store.ts` (delivery methods); `scripts/test-orch-core.mjs` (not in this kit).
 
 ## Dependencies
 
@@ -191,13 +191,13 @@ and reporting/check scripts. `pi-extension.ts` also has an SDK-loaded default ex
 
 ## Tests
 
-- `scripts/test-orch-core.mjs` — schema/store and core daemon behavior.
-- `scripts/test-orch-store-hot-paths.mjs` — bounded store reads and query behavior.
-- `scripts/test-orch-drain.mjs` — restart drain and queued-turn preservation.
-- `scripts/test-orch-chat.mjs` — chat state and delivery boundary.
-- `scripts/test-orch-provisioning-close.mjs` — provisioning/close lifecycle.
-- `scripts/test-orch-turn-live.mjs` — bounded live turn log, its loopback route and LAN refusal.
-- Narrow store command: `node scripts/test-orch-store-hot-paths.mjs`.
+- `scripts/test-orch-core.mjs` (not in this kit) — schema/store and core daemon behavior.
+- `scripts/test-orch-store-hot-paths.mjs` (not in this kit) — bounded store reads and query behavior.
+- `scripts/test-orch-drain.mjs` (not in this kit) — restart drain and queued-turn preservation.
+- `scripts/test-orch-chat.mjs` (not in this kit) — chat state and delivery boundary.
+- `scripts/test-orch-provisioning-close.mjs` (not in this kit) — provisioning/close lifecycle.
+- `scripts/test-orch-turn-live.mjs` (not in this kit) — bounded live turn log, its loopback route and LAN refusal.
+- Narrow store command: `node scripts/test-orch-store-hot-paths.mjs` (`scripts/test-orch-store-hot-paths.mjs` not in this kit).
 
 ## Owner
 

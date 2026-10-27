@@ -135,6 +135,9 @@ export function vcvarsToolchain(vcvars64, base, capture = captureVcvars,
 }
 
 export function run(input = process.stdin) {
+  // ssh on a Linux host can start with umask 0002 (task 3158): seat files are then group-writable
+  // and tests that check file modes fail. A seat gets 022, the umask a Mac seat has.
+  if (process.platform !== 'win32') process.umask(0o022);
   let pending = Buffer.alloc(0);
   let child;
   input.on('data', (chunk) => {

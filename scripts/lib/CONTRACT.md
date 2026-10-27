@@ -78,7 +78,7 @@ Consumers import individual helper files; `anchor-grammar.mjs` is the registry e
 
 Outside consumers include `scripts/module-registry.mjs`, knowledge-anchor gates,
 `ops/bootstrap/domain-lessons-hook.mjs`, `ops/bootstrap/install-memory.mjs`,
-benchmark scripts and `scripts/audit-theme-colors.mjs`.
+benchmark scripts and `scripts/audit-theme-colors.mjs` (not in this kit).
 The kit overlay installer also consumes the pinned-model import helpers.
 
 ## Inputs
@@ -96,7 +96,7 @@ The kit overlay installer also consumes the pinned-model import helpers.
 
 ## Invariants
 
-- Main guards compare realpaths and return false for missing/unresolvable argv; source: `scripts/lib/is-main.mjs`, `scripts/test-is-main.mjs`.
+- Main guards compare realpaths and return false for missing/unresolvable argv; source: `scripts/lib/is-main.mjs`, `scripts/test-is-main.mjs` (not in this kit).
 - Domain selection respects map order and returns null on no match; source: `scripts/lib/domain-of.mjs`.
 - CSS expansion rejects cycles, duplicate imports, qualified relative imports and realpath escapes from `src/styles`; source: `scripts/lib/expand-index-css.mjs`.
 - Model creation occurs only after the pinned byte length and SHA-256 both match; temporary files are removed even on failure; source: `scripts/lib/import-embed-model.mjs`.
@@ -119,12 +119,12 @@ The kit overlay installer also consumes the pinned-model import helpers.
 
 ## Tests
 
-- `scripts/test-is-main.mjs` — symlink-safe entry detection and gate usage.
-- `scripts/test-ts-module-loader.mjs` — TS resolution, import-meta handling and loader behavior.
-- `scripts/test-index-css-cascade-contract.mjs` — facade expansion and cascade ordering.
-- `scripts/test-hook-topology.mjs` — Kimi wiring checks.
-- `scripts/test-lead-chat-topology.mjs` — installed lead-chat probes.
-- `scripts/test-install-memory.mjs` — installer integration with forward rendering.
+- `scripts/test-is-main.mjs` (not in this kit) — symlink-safe entry detection and gate usage.
+- `scripts/test-ts-module-loader.mjs` (not in this kit) — TS resolution, import-meta handling and loader behavior.
+- `scripts/test-index-css-cascade-contract.mjs` (not in this kit) — facade expansion and cascade ordering.
+- `scripts/test-hook-topology.mjs` (not in this kit) — Kimi wiring checks.
+- `scripts/test-lead-chat-topology.mjs` (not in this kit) — installed lead-chat probes.
+- `scripts/test-install-memory.mjs` (not in this kit) — installer integration with forward rendering.
 
 ## Owner
 

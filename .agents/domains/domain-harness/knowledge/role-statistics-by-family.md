@@ -27,8 +27,8 @@ tiers, WEAK metrics and the reader warning (`ops/orchestrator/src/profiles.ts`).
 
 Behind-pace spread score is min(need, `NEED_SPREAD_CAP`)/(1+A), capped at 3. Equal score
 prefers higher raw need then earlier chain. Bucket membership (need >= 1) and printed
-need stay raw. Tests: `scripts/test-orch-role-quality.mjs`,
-`scripts/test-orch-seat-pick-tier.mjs`, `scripts/test-orch-seat-pick-spread.mjs`.
+need stay raw. Tests: `scripts/test-orch-role-quality.mjs` (not in this kit),
+`scripts/test-orch-seat-pick-tier.mjs` (not in this kit), `scripts/test-orch-seat-pick-spread.mjs` (not in this kit).
 
 verified: 2026-10-11
 

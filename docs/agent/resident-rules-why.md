@@ -37,7 +37,7 @@ percentage of учеников with a result (`typical-result-claim`) are `block
 (`deposit-advice`), «инвестиционный советник» and «повышение квалификации» are
 `review` — the last two because the memo allows them inside a licensed model
 and forbids them outside it: legal in ONE model of the product and not in the
-other, so `scripts/legal-copy-ledger.json` must say which model was chosen and
+other, so `scripts/legal-copy-ledger.json` (not in this kit) must say which model was chosen and
 by whom.
 
 The ledger ONLY SHRINKS: a new phrase fails, and so does an excuse that

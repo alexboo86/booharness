@@ -177,8 +177,8 @@ pinned Pi runtime with that vendor's subscription route, `native` = the vendor's
 |---|---|---|---|---|
 | **claude** | researcher, coder, reviewer, plan critic (not plain scout) | coder `claude-opus-5-5` high; reviewer/critic `claude-sonnet-5-5` high; researcher `claude-sonnet-5` high | native Claude Code | `claude` CLI signed in to a Claude subscription |
 | **codex** | scout, researcher, debater, coder, reviewer, critic, bughunter | `gpt-6.1-sol` (coder/reviewer/critic high, bughunter max, researcher/debater medium); scout `gpt-6-luna` high | pi (`openai-codex`) | Pi `/login` for `openai-codex` (ChatGPT subscription); the `codex-edit` Pi extension (phase 7.3) |
-| **glm** | scout, researcher, debater, coder, reviewer, critic, bughunter | `glm-5.3` (high; bughunter max; researcher low); scout `glm-5.3-flash` low | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
-| **kimi** | researcher, debater, coder, reviewer, critic, bughunter | `k3` high in every role | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
+| **glm** | scout, researcher, debater, coder, reviewer, critic, bughunter | `glm-5.3` (high; bughunter max; researcher low); scout `glm-5.3-flash` high | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
+| **kimi** | researcher, debater, coder, reviewer, critic, bughunter | `k3.1-pro` high in every role | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
 | grok | scout, researcher, debater, coder, reviewer, critic | `grok-4.7` | pi (`xai`) | Pi `/login` for `xai` |
 | opencode | scout | `glm-5.3-flash` | pi (`opencode-go`) | Pi `/login` for `opencode-go` |
 | qwen | scout, researcher, debater, coder, reviewer, critic, bughunter | `qwen3.8-max` (coder/researcher medium, reviewer/critic high, bughunter max); scout `qwen3.8-flash` low | pi (`qwen-token-plan-individual`) | Pi `/login` with the Qwen token-plan key |

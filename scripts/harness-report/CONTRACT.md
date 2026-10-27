@@ -64,8 +64,8 @@ implement the same report-section convention. `index.mjs [--days <n>]
 
 - `scripts/harness-report/collect-rtk.test.mjs` pins candidate discovery, corrupt/live/absent history and window diagnostics.
 - `scripts/harness-report/collect-memory.test.mjs` pins store joins, prefix paths, source drift and corruption reporting.
-- `scripts/harness-report/collect-lead.test.mjs` pins command parsing, transcript scope and empty measurement.
-- Narrow check: `node --test scripts/harness-report/collect-rtk.test.mjs scripts/harness-report/collect-memory.test.mjs scripts/harness-report/collect-lead.test.mjs`.
+- `scripts/harness-report/collect-lead.test.mjs` (not in this kit) pins command parsing, transcript scope and empty measurement.
+- Narrow check: `node --test scripts/harness-report/collect-rtk.test.mjs scripts/harness-report/collect-memory.test.mjs scripts/harness-report/collect-lead.test.mjs` (`scripts/harness-report/collect-lead.test.mjs` not in this kit).
 
 ## Owner
 

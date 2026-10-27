@@ -177,7 +177,7 @@ The receipt is at most 200 code points (the script refuses longer text and write
 
 Before the first dry night's page edit, prove that this top-level scheduled lead session can use orch `seat_land`; if not proven, keep page lines as scratch proposals only. Land is lead-only, never delegated to a seat.
 
-Use orch MCP `seat_create` for a coder worktree based on freshly fetched `origin/master`; `seat_prompt` supplies only the gated delta and the part reservation. The coder runs `npm run check:commit` via its allowed equivalent `node scripts/check-commit.mjs`, then the routine uses `review_plan`, commissions independent review through orch MCP, and resolves review before proceeding. The routine itself runs this in the page worktree immediately before lead `seat_land` (the land-worktree skill does not run it):
+Use orch MCP `seat_create` for a coder worktree based on freshly fetched `origin/master`; `seat_prompt` supplies only the gated delta and the part reservation. The coder runs `npm run check:commit` via its allowed equivalent `node scripts/check-commit.mjs` (`scripts/check-commit.mjs` not in this kit), then the routine uses `review_plan`, commissions independent review through orch MCP, and resolves review before proceeding. The routine itself runs this in the page worktree immediately before lead `seat_land` (the land-worktree skill does not run it):
 
 ```bash
 node scripts/verify-land.mjs --strict-freshness

@@ -47,7 +47,7 @@ front matter and a prompt body.
 
 ## Invariants
 
-- Routine data must have complete nonempty front matter, a valid lowercase/hyphen id, five cron fields and a nonempty prompt; duplicates and non-regular files fail the whole load. Source: `scripts/lib/routines.mjs`; `scripts/test-routines.mjs`.
+- Routine data must have complete nonempty front matter, a valid lowercase/hyphen id, five cron fields and a nonempty prompt; duplicates and non-regular files fail the whole load. Source: `scripts/lib/routines.mjs`; `scripts/test-routines.mjs` (not in this kit).
 - Scheduler installation belongs to the lead app and user choice; setup skips existing ids and never edits or deletes scheduled tasks. Source: `.agents/domains/domain-harness/knowledge/kit-adoption-routines-and-login-credentials.md`.
 - Consolidation never silently changes protected tasks/handoffs, pinned entries or entries changed within 24 hours; the active-lesson exception requires stage E's rechecked evidence and delivery gate. Source: `consolidate-memory-daily.md` (iron invariant and bounds).
 - Service unavailability is reported, not replaced with a local memory source; direct SQL mutation is forbidden. Source: `consolidate-memory-daily.md` (scan and bounds).
@@ -71,9 +71,9 @@ front matter and a prompt body.
 
 ## Tests
 
-- `scripts/test-routines.mjs` — definition loading, required fields and whole-load refusal cases.
-- `scripts/test-routine-ledger.mjs` — consumer-side run/date/task accounting.
-- Commands: `node scripts/test-routines.mjs`; `node scripts/test-routine-ledger.mjs`.
+- `scripts/test-routines.mjs` (not in this kit) — definition loading, required fields and whole-load refusal cases.
+- `scripts/test-routine-ledger.mjs` (not in this kit) — consumer-side run/date/task accounting.
+- Commands: `node scripts/test-routines.mjs` (`scripts/test-routines.mjs` not in this kit); `node scripts/test-routine-ledger.mjs` (`scripts/test-routine-ledger.mjs` not in this kit).
 - Prompt execution decisions require evidence review; loading tests do not prove unattended maintenance outcomes.
 
 ## Owner

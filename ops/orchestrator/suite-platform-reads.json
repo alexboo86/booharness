@@ -326,6 +326,11 @@
   },
   {
     "file": "scripts/test-orch-remote.mjs",
+    "line": "test('the remote child runs with umask 022 when the host shell starts with 0002 (task 3158)', { skip: process.platform === 'win32' }, async () => {",
+    "class": "same"
+  },
+  {
+    "file": "scripts/test-orch-remote.mjs",
     "line": "assert.ok(existsSync(path.join(shimDir, process.platform === 'win32' ? 'cargo.exe' : 'cargo')));",
     "class": "same"
   },

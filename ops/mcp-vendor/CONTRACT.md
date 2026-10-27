@@ -61,8 +61,8 @@ with `npm ci --prefix ops/mcp-vendor`; the kit builder ships this package.
 ## Tests
 
 - No module-owned executable test exists; the tracked implementation is the package manifest/lockfile pair.
-- `scripts/test-mcp-ssot-render.mjs` — consumer-side MCP configuration rendering, not server protocol behavior.
-- `ops/harness-kit/test-neutral-config.mjs` — checks shipped vendor manifests for donor-specific metadata in a built kit.
+- `scripts/test-mcp-ssot-render.mjs` (not in this kit) — consumer-side MCP configuration rendering, not server protocol behavior.
+- `ops/harness-kit/test-neutral-config.mjs` (not in this kit) — checks shipped vendor manifests for donor-specific metadata in a built kit.
 - Installation command: `npm ci --omit=dev --prefix ops/mcp-vendor` (requires registry/network access).
 
 ## Owner

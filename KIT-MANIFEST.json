@@ -1,6 +1,6 @@
 {
   "kit": "harness-kit",
-  "sourceCommit": "9fb7622d45308d0af24701e3779965cf9774c5d2",
+  "sourceCommit": "973d589502473c28cb9c7fc28ec8da1750bd1fb1",
   "fileCount": 1449,
   "files": [
     {
@@ -25,28 +25,28 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge.md",
-      "bytes": 13106,
-      "sha256": "9436038c3006dcce2b8abcdee26abf5cfe40da99fa0d395c728a575dd61f601f"
+      "bytes": 13148,
+      "sha256": "e284aab200c3a9f41ffca490358aca15b040a601128afd7b16dc190afef210c1"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/ai-mcp-removal-what-the-harness-keeps.md",
-      "bytes": 1185,
-      "sha256": "9d2d5449aebf4eb99b049ede401f802c15cf2e0aecd8f79165ff6411fe11651d"
+      "bytes": 1239,
+      "sha256": "7036ae09b8e5533f802261fb1ea7c8c3b7504fcf2cf5ff61c6552758674e986b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/asd-ste100-and-language-mode-behavior.md",
-      "bytes": 4447,
-      "sha256": "727b7eb7b494d28591bc200187bd2f24dd4b2bdc255611b2617916cb1c0a1bec"
+      "bytes": 4573,
+      "sha256": "f92bdee85c02e0a43247ceb0ea42b01c45111a30f26b528e16684c118633e106"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/board-polling-and-cached-board.md",
-      "bytes": 3411,
-      "sha256": "b9ea80d74daf8d4aebeb92e83108950a7c0e8fe8db6faba5fcd9669e732b8cdf"
+      "bytes": 3483,
+      "sha256": "1b82ccea6843bbfb7478defbba1ddcedbc61e125619b7668f80b2b32e4be9591"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md",
-      "bytes": 3812,
-      "sha256": "c4fe4ffc9342a624fb7687bcffa4d1a45bb717138d2d939762cc00ad415dfb7f"
+      "bytes": 3848,
+      "sha256": "054aa64a5f8d344368666016006ac0a3ae406b3f4ade438a3144438bde2f07dc"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/coder-retained-survival.md",
@@ -55,43 +55,43 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/contract-ownership-and-installer.md",
-      "bytes": 7489,
-      "sha256": "409f3c380cca0feffa2f1ba7bb1a512804e6318bdba68e9a0229d16e67fd99ee"
+      "bytes": 7627,
+      "sha256": "56a129c72f7b9a6e7d5848678634b5a64e2f0a28dbd99e0b3fe7761b1c3d51cf"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/debater-rebuttals-and-model-separation.md",
-      "bytes": 3956,
-      "sha256": "e406268fb3d334d7028f99b5f2833b4e8d2c85950141aa1dc547d1170e4b9d5d"
+      "bytes": 4010,
+      "sha256": "1ce4af11cac0cb1fd79d321f1f788f27d97d2379421450ce7f2e8ff0e0c80dcf"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/duplicate-constants-gate-step.md",
-      "bytes": 664,
-      "sha256": "e92de459fee6b645629c4f1e6883fc15a940921d4bb9632d69757681ff066c3e"
+      "bytes": 718,
+      "sha256": "083a09cea0ca5cb3101977ba8eea4d735d81c235c218c46dc61a1feab4e899e7"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/edit-tool-arms-and-stock-rollout.md",
-      "bytes": 5025,
-      "sha256": "1c843a8ffee5b6f57b4d34dd89b8a0941d22394693390dfdb34cada64c63f09a"
+      "bytes": 5043,
+      "sha256": "2bbc634f51effc89b8cbc564018a55e4cb6c1be121302ab799cfa26d56a18b39"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/embedding-models-and-vector-search.md",
-      "bytes": 1601,
-      "sha256": "691d321caae6deee9fd67452d1ebe749a5b8dff9d5d899eba4a97c69f3e28c39"
+      "bytes": 1619,
+      "sha256": "7d15479f3437f2537516898146db53a57accfa1a933ac1b4cea17c3461319467"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/family-role-models-and-budget-ranking.md",
-      "bytes": 8163,
-      "sha256": "f9d1c5b58c50ea70c2a1623c510b79f1130c4853c0dc9f50944cb754420db218"
+      "bytes": 8262,
+      "sha256": "d00ff58e992dedb2a02f6bf1d0b9af1e48ccbb0c07ee55b6e6296975398414b5"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/harness-prefix-configuration.md",
-      "bytes": 5085,
-      "sha256": "5f4fc5af6743200494e62dbeba29a5a4242483f762421d9ad331a01ccedbbc0c"
+      "bytes": 5229,
+      "sha256": "d51498d58a48c063f2c31fd3ebba7f649d33aeb180dcea96c007bdbe0b7249cf"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/host-placement-and-build-infrastructure.md",
-      "bytes": 6838,
-      "sha256": "1707206b1a0eed0cdc1504b336e856a9c34a3574045d8dac0869dfdcd64dfcc7"
+      "bytes": 6856,
+      "sha256": "c97d03cfcef1c854488621d77511862e55960b46980efc50dec99ff76d24d684"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/image-input-eligibility-and-skill-enforcement.md",
@@ -105,53 +105,53 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/isolation-of-orch-tests-from-host-and-state.md",
-      "bytes": 2064,
-      "sha256": "62a8fa891f9aaeb34d45e0bfc81f579d567cefaf13a526d983543eada43252e4"
+      "bytes": 2241,
+      "sha256": "a514dd4434336700635b96c5192f925a39251895cf68d0716f64ae1cd50198fc"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/kit-adoption-routines-and-login-credentials.md",
-      "bytes": 4607,
-      "sha256": "2e4c01a8ee499685552f03475e3cfcfec41b958c2cc1756824ea9ee53ae9cbcd"
+      "bytes": 4655,
+      "sha256": "e7044baecd5ca7ef273f134b47b8356fb5db511e56fc9c22a5db715e38f00125"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/knowledge-page-cut-tool.md",
-      "bytes": 1040,
-      "sha256": "28608ade894e59ab28b50746464d2dbc4eca628d9d485058fbb5cb946355ea51"
+      "bytes": 1151,
+      "sha256": "359957eca8231f94cddd54ccac490ae1bd2269caead80aa1a6ab9a9656c11e7d"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/knowledge-page-size-rules.md",
-      "bytes": 1681,
-      "sha256": "56752da0f581d17073e685b6f1106cec8af60687f08404b162811e7b11499294"
+      "bytes": 1793,
+      "sha256": "7aa27c7aebc1f81f0daf4f93b19c73ec674832ef163456ea1733d90bef931e4d"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/knowledge-render-passages-around-a-hit.md",
-      "bytes": 1153,
-      "sha256": "96dd1ee1b837dbc713971bd2db5e7e3955d5360498f8156aa1893e8979198a4f"
+      "bytes": 1223,
+      "sha256": "62fc81629475b1eb23c914c41d5ebb082808af39b87c912bea84f2f3a4eb634b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/known-limits-and-open-work-lookup.md",
-      "bytes": 317,
-      "sha256": "a97a04767f147ef08de7fd4a8f159dace9e14aeaecd605522a4eab70e9e3748c"
+      "bytes": 335,
+      "sha256": "5f3ec7a0ee0e5aa5fd6324a04a85cf60fa7770c9f1a5516673d3e9deebb160ac"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/lead-chat-rules-and-handover.md",
-      "bytes": 1234,
-      "sha256": "10321d12e009bd3e0b67797149b1ea0eaccd7e4dcb64cb8a8a1a7ca01527a64c"
+      "bytes": 1252,
+      "sha256": "af5c1e489cb44b270a69ef26cb5ad0a9c1bde31824b9972ff4c1251a65765ac4"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/lead-usage-capture-and-screenshot-seats.md",
-      "bytes": 5677,
-      "sha256": "e6018b8a1e1c4b9d38bd8b85a9953eedcc17f2736368288f6d9828da4fcf5b9d"
+      "bytes": 5767,
+      "sha256": "590b2bfa4a827a6996c62df800d62e350c1eb1db273d1203b55ccaef6793f719"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/lesson-capture-and-delivery.md",
-      "bytes": 5973,
-      "sha256": "64745dfc1f6415323bc9c831b25e57c635bf2d39f65963cf97be276114055dc7"
+      "bytes": 5991,
+      "sha256": "4c301a972c453356d2dc2dc7db91eccbafb4d59d1733603ec513c7de580ccd18"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/memory-deep-search-re-rank-routes.md",
-      "bytes": 1115,
-      "sha256": "ec0f1d3cc517ddf7a17b84aa109c7ef26bc440c5ca0b177616cfb71c4d518799"
+      "bytes": 1151,
+      "sha256": "65add8cb10d4d471846896def64081f9c12713a176ba63f56a82ea027d30f528"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/memory-lessons-and-task-records.md",
@@ -160,18 +160,18 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/memory-service-and-durable-records.md",
-      "bytes": 4045,
-      "sha256": "246e91a168307c48d389f1eb4bb53079a672ff206689dda064d25fc824130769"
+      "bytes": 4063,
+      "sha256": "8b743b19ca2021b89937c6a168900375456b6504a581129e6f8ebcecd7fb496b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/module-registry-and-contracts.md",
-      "bytes": 1460,
-      "sha256": "b88b07f7bc962425b8417ef160d35c4a66db54928e0b9b9cf46a9b7d45bcdd22"
+      "bytes": 1604,
+      "sha256": "6d2fdb72e80ef5dbd9c6226028dbd57709800b2f4ef7a2e4436fa4a7e7df3c6c"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/optional-config-keys-and-the-config-writer.md",
-      "bytes": 4411,
-      "sha256": "2adeb459bdfa2629fd5b63b52c5773280a787d874a050a36f937860f5936d099"
+      "bytes": 4537,
+      "sha256": "2bd1b5c88776939447e106b09d97786210e00940a68a20cc50983ac02ca1824c"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/orch-daemon-storage-and-installation.md",
@@ -180,8 +180,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/pick-statistics-and-reviewer-yield.md",
-      "bytes": 3289,
-      "sha256": "0a5b98fe992dd9c7ab6afbc8fe18bdf2cbe71886c84689d3c43f3bdc15a30a21"
+      "bytes": 3325,
+      "sha256": "4f6863733bb8e2362408e036ef37537dea022d93b1bb8ed2dc387fd7ed2b67bd"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/pilots-isolation-and-stand-measurements.md",
@@ -190,8 +190,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/portable-kit-build-and-verification.md",
-      "bytes": 5114,
-      "sha256": "05f0a7b9b7862a6a4d343c49cba61112932609170cac77bb0e5c9882576c3bee"
+      "bytes": 5828,
+      "sha256": "da2e46cf630b904c1d598953f5bd04105c5d1eebe3ff3a7f0f306f49a4c5f162"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/provider-session-contracts-and-adapters.md",
@@ -225,8 +225,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/role-statistics-by-family.md",
-      "bytes": 2151,
-      "sha256": "87556b0de31a499caa70c031a30f318423b02c4feda91f577db7aca2fcc4392e"
+      "bytes": 2205,
+      "sha256": "cb096c2d7adfdfa929629f534de9996cd72242d220e575ed71baad35dd16b1a8"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/runtime-installation-provisioning-and-updates.md",
@@ -235,38 +235,38 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/runtime-role-matrix-configuration-and-team-presets.md",
-      "bytes": 2742,
-      "sha256": "1c284ed64df508c990ea5408946a589871d521a3627568d633f3f41842e69c64"
+      "bytes": 2778,
+      "sha256": "f4c253969908405dbb01a9443adde6320208f588896b609df5bae2bf71ab6243"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/safety-gates-and-proof-boundaries.md",
-      "bytes": 5693,
-      "sha256": "ec49060634abb93cf6792f6fea36c2e950676ea3aa95a98cf73d06de6785699e"
+      "bytes": 6030,
+      "sha256": "ac72300dc08ae37bb68593dba2fa7af071954c8da3922063a0ee1e3c5ee8ea92"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/seat-checkout-lifecycle-and-worktree-safety.md",
-      "bytes": 4707,
-      "sha256": "d91ea79ac11141960e3c287f66e06b2673f55b68b41185e43cf8277a3dd1e03f"
+      "bytes": 4725,
+      "sha256": "9563244b4b0e6fa1df319c237f89e11f49b5f8f4e39217243d3eb05e3ceedb70"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/seat-context-knowledge-lessons-and-skills.md",
-      "bytes": 4380,
-      "sha256": "c9cdb79ff2b8004dcedef5187e5c622e26681a684fdfff1afed2cab19b803247"
+      "bytes": 4488,
+      "sha256": "f33258f66f8f239543859a6b1e45aebb4345fab251f928b8b19475fe8b584168"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/setup-wizard-doctor-and-guided-setup.md",
-      "bytes": 4057,
-      "sha256": "34c68a55876a3d0ac13989a9ab1b2243a5888947e71eb564038d40c086b63595"
+      "bytes": 4093,
+      "sha256": "64546e139f2ff94d9389e6aa59aeb485de4aeda86df35cca8c29de804b81ccf0"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/shared-account-lease.md",
-      "bytes": 3642,
-      "sha256": "5b77f16710fa4fd5a82dcfd6392a7245ad0c1059af867d90d7ee8c5fa7880e3e"
+      "bytes": 3750,
+      "sha256": "b111b1ce5eb85b918aa4564d4d149d83e25a9391ed8fc9d4707fc5d1e32a3c5b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/skill-routing-and-vendored-skills.md",
-      "bytes": 3952,
-      "sha256": "2db093e5628aae02b1ff491d8f12a364f5801b0654b91497299c47832cf5c081"
+      "bytes": 4041,
+      "sha256": "81b25a5ef78f494ede934cd8e917e7a3c3adbd77b726daad2c734ca07183e30e"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/task-board-and-wake-responses.md",
@@ -275,18 +275,18 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/turns-reports-monitoring-and-lead-view.md",
-      "bytes": 6176,
-      "sha256": "ab90a732ac449979ef489090457875f59e0098c9e84c55fc1f9be510e2c9228b"
+      "bytes": 6194,
+      "sha256": "3667b941be8b27fbd5dfd2564b6dfc01fd512f0183a980c3cbc9df69387e293b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/wait-daemon-state-and-schema-repair.md",
-      "bytes": 4060,
-      "sha256": "39bbbd638fe9d314b62ccd8e0e2010e8f944c56382150d5aef515534e6c52479"
+      "bytes": 4078,
+      "sha256": "d1b793a70f60b016a0dbad6c2a0d2b83146827315e499bd8ffbf572195d28163"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/wizard-dependencies-and-apply-phase.md",
-      "bytes": 3204,
-      "sha256": "804692752385a25326b9af6f5fc7a83ae05fe20381d49dbad7484781214079e4"
+      "bytes": 3234,
+      "sha256": "f2799ae23989e5435c6e5b2e17c4318b294d636ef526ec964f3e852c41f301c2"
     },
     {
       "path": ".agents/domains/domain-platform-shell/SKILL.md",
@@ -720,8 +720,8 @@
     },
     {
       "path": ".agents/skills/desktop-interaction-review/SKILL.md",
-      "bytes": 6873,
-      "sha256": "a7dfe3850aa4b5fa678d699815035199b2dcc210147b2a3eb68231b282d5ad16"
+      "bytes": 6778,
+      "sha256": "97b9f7544da62bae6ecf58fda6fe116e387682db5cb71e5788b0836652c66966"
     },
     {
       "path": ".agents/skills/diagnosing-bugs/LICENSE",
@@ -730,8 +730,8 @@
     },
     {
       "path": ".agents/skills/diagnosing-bugs/PROVENANCE.md",
-      "bytes": 1545,
-      "sha256": "679c8fa708bd9c8a88f0c5c180afea53084059e290efabc06696a9eed09b0853"
+      "bytes": 1598,
+      "sha256": "52a64c07f62e7bf1d56613cfb43fe9d6664ffe5e3f06b49282ef3be6e88eb542"
     },
     {
       "path": ".agents/skills/diagnosing-bugs/SKILL.md",
@@ -765,8 +765,8 @@
     },
     {
       "path": ".agents/skills/emil-design-eng/PROVENANCE.md",
-      "bytes": 1311,
-      "sha256": "9625138d1f7a92e2d6843afcc6ed8a9e7420f74a5dfdb40000c7ebced070ceda"
+      "bytes": 1364,
+      "sha256": "f18c3a1989a91bf701961c8c98098d8f4c8ba719f5fad5f3d23c8c76b486532c"
     },
     {
       "path": ".agents/skills/emil-design-eng/SKILL.md",
@@ -785,8 +785,8 @@
     },
     {
       "path": ".agents/skills/find-skills/PROVENANCE.md",
-      "bytes": 1181,
-      "sha256": "292c1257a22dde8445aace5208e8afe4ac25878d505c2781747954b2851c5075"
+      "bytes": 1234,
+      "sha256": "84f25756a26f384dd57fc4d1bfdb712bd374a777101fd30b7c7b2913a2adfba9"
     },
     {
       "path": ".agents/skills/find-skills/SKILL.md",
@@ -815,8 +815,8 @@
     },
     {
       "path": ".agents/skills/i-have-adhd/PROVENANCE.md",
-      "bytes": 1308,
-      "sha256": "ad3aeb29fe6e524ef93529f9cf33012eabe029dc5e933554a2fbce9fe693a681"
+      "bytes": 1361,
+      "sha256": "1f5a948756b8cc1e74d840c1f4802fd57f67150c727778dfef0ad8f9ea0003c4"
     },
     {
       "path": ".agents/skills/i-have-adhd/SKILL.md",
@@ -830,8 +830,8 @@
     },
     {
       "path": ".agents/skills/impeccable/PROVENANCE.md",
-      "bytes": 1781,
-      "sha256": "056e911a64f32a50ab36e20a1f4a5a54dae9c77fa4d1a618a49b4840dd974f00"
+      "bytes": 1834,
+      "sha256": "2781a5e2114c811fe18c739821716ef8ff73af211b80e70eaf7210688403dfcb"
     },
     {
       "path": ".agents/skills/impeccable/SKILL.md",
@@ -1150,8 +1150,8 @@
     },
     {
       "path": ".agents/skills/investigate-first/PROVENANCE.md",
-      "bytes": 3285,
-      "sha256": "c1b1d31e6e5192406838a2b74aeb126b8ba7f45ef6817b233efbf7ee246f19de"
+      "bytes": 3338,
+      "sha256": "c24f4386319309a929f8330d4b3dd943ff56488c8559db5f5d2fc83b3948b78f"
     },
     {
       "path": ".agents/skills/investigate-first/SKILL.md",
@@ -1195,13 +1195,13 @@
     },
     {
       "path": ".agents/skills/orch-team/SKILL.md",
-      "bytes": 58830,
-      "sha256": "7a7f5bf1cc0c9886e1aebe25a2fed9e015e2796f087d9e5c21f2e9ec9920bdbf"
+      "bytes": 59038,
+      "sha256": "1dab80ecb8974cd6edd4ea9c4d1651c5f9ec47cca3aa7c92350f86b3424fe218"
     },
     {
       "path": ".agents/skills/plan-before-code/SKILL.md",
-      "bytes": 1872,
-      "sha256": "f31cdb89752f7ce746cd78613a2bf6aac3d1e67f673df4a4c20a14e13349eef9"
+      "bytes": 1890,
+      "sha256": "9f024674b5ebf3e6c97e4035975a799a605321dd89d55f690bb15b2e9acf65c9"
     },
     {
       "path": ".agents/skills/plan-critic/SKILL.md",
@@ -1215,8 +1215,8 @@
     },
     {
       "path": ".agents/skills/playwright-best-practices/PROVENANCE.md",
-      "bytes": 1556,
-      "sha256": "61515323a8d121963c525257ca13d77f477c0e957f706f8d3fb5f7e2d1653168"
+      "bytes": 1609,
+      "sha256": "74c3eb29680888cb7c78127103c2114e48a1b2de2af52ecffb71294fc277d493"
     },
     {
       "path": ".agents/skills/playwright-best-practices/SKILL.md",
@@ -1525,8 +1525,8 @@
     },
     {
       "path": ".agents/skills/review-verification-protocol/PROVENANCE.md",
-      "bytes": 2132,
-      "sha256": "70f18f8769f3fb844395e435ad875d7e8f66c2b67ed15fb88be74f1f9773bd28"
+      "bytes": 2185,
+      "sha256": "456be78fc936a16056cd0a2a4d972ddc0f30122c12b6256d71f1ac538111e859"
     },
     {
       "path": ".agents/skills/review-verification-protocol/SKILL.md",
@@ -1545,8 +1545,8 @@
     },
     {
       "path": ".agents/skills/rust-async-rules/PROVENANCE.md",
-      "bytes": 2300,
-      "sha256": "8207c5c0a312d5b2daa9a8e17dc4c9e7f1de342ac52b6b62935e64ad7a55e0ef"
+      "bytes": 2353,
+      "sha256": "f8b25c363aeb1885b9905d3b51b60ee6410f028b5212a7bae19cfa5f75d10bfe"
     },
     {
       "path": ".agents/skills/rust-async-rules/SKILL.md",
@@ -2890,8 +2890,8 @@
     },
     {
       "path": ".agents/skills/rust-code-review/PROVENANCE.md",
-      "bytes": 2812,
-      "sha256": "a9f450472a7d301a34d80ee806ddf3c519c2b77e855135f229621c121589f04a"
+      "bytes": 2865,
+      "sha256": "6f6b1eb49bc091ad245f7577eddaa99d6692f6c2c44ccf03f660d14cc9fa3bc1"
     },
     {
       "path": ".agents/skills/rust-code-review/SKILL.md",
@@ -2985,8 +2985,8 @@
     },
     {
       "path": ".agents/skills/security-and-hardening/PROVENANCE.md",
-      "bytes": 1482,
-      "sha256": "8262be2449b2aa437bc6d837c6f6cc4d0082ec52c4f626f07957c3d5f8ff3c98"
+      "bytes": 1535,
+      "sha256": "cfafa30173d6c73f82a300b786e672ff33e0a174680319fff1994cf9120d2c3b"
     },
     {
       "path": ".agents/skills/security-and-hardening/SKILL.md",
@@ -3010,8 +3010,8 @@
     },
     {
       "path": ".agents/skills/sepia/PROVENANCE.md",
-      "bytes": 2184,
-      "sha256": "8532cccb76a93448a0c8b205c8340c8e4f1cd1f08575482217aa7922a4c50a60"
+      "bytes": 2237,
+      "sha256": "7127f16c269e2a90c0684fd152b5f8f3481e0fd89d1c9c4e2092beb3c49fa934"
     },
     {
       "path": ".agents/skills/sepia/SKILL.md",
@@ -3130,8 +3130,8 @@
     },
     {
       "path": ".agents/skills/surgical-patch/PROVENANCE.md",
-      "bytes": 3230,
-      "sha256": "89a9d8e621bc842431f1751f7ac148ae41d279f359da8ddf3f6fc4a25d4f3110"
+      "bytes": 3283,
+      "sha256": "0b6d4ee4f6c20c394d766c6b27847a470b039297b0efbb62f77bd9fc800bf262"
     },
     {
       "path": ".agents/skills/surgical-patch/SKILL.md",
@@ -3160,8 +3160,8 @@
     },
     {
       "path": ".agents/skills/tokio-async-code-review/PROVENANCE.md",
-      "bytes": 1946,
-      "sha256": "49488470c06ae604affb7815468876b07262b930e6ef5f930265b4ef1ed82015"
+      "bytes": 1999,
+      "sha256": "ce04f66a246c340e2c9e4735d5a6202bdfd125e37c1ff667c07e62144908164a"
     },
     {
       "path": ".agents/skills/tokio-async-code-review/SKILL.md",
@@ -3230,8 +3230,8 @@
     },
     {
       "path": ".agents/skills/ui-ux-pro-max/PROVENANCE.md",
-      "bytes": 6036,
-      "sha256": "ff90e63793b682d07a617730e3c7883bfd26e0a2f9142e047c9f52214bb47214"
+      "bytes": 6103,
+      "sha256": "53fdecd5bb5512b0f0491e205adb17624813460088a035fadc848b35b6d79b50"
     },
     {
       "path": ".agents/skills/ui-ux-pro-max/SKILL.md",
@@ -3610,8 +3610,8 @@
     },
     {
       "path": ".agents/skills/vercel-composition-patterns/PROVENANCE.md",
-      "bytes": 1363,
-      "sha256": "a2d2baf64291fe073b4b8b6c2c15cbeb6f4273927fae024c38811c96754bd9c9"
+      "bytes": 1416,
+      "sha256": "1c72d43229d32be4e3d085618ed2a31636ec2ce42671be274a881f9845e6ffab"
     },
     {
       "path": ".agents/skills/vercel-composition-patterns/README.md",
@@ -3690,8 +3690,8 @@
     },
     {
       "path": ".agents/skills/vercel-react-best-practices/PROVENANCE.md",
-      "bytes": 1632,
-      "sha256": "1f9523e421f42ce5950fcb28d03c52a7a7cbd003e83ddb7e4ce9b280fb69fd8e"
+      "bytes": 1685,
+      "sha256": "bb34ad4b9acc5bb10a4975b5a69aef4b19ed96d09610cb20221f719feb95e9ee"
     },
     {
       "path": ".agents/skills/vercel-react-best-practices/README.md",
@@ -4075,8 +4075,8 @@
     },
     {
       "path": ".agents/skills/verify-and-stop/PROVENANCE.md",
-      "bytes": 2928,
-      "sha256": "b536de493ca019f9d0446a92e73a0ddf8ce73328224f5e194ec4006558cfd207"
+      "bytes": 2981,
+      "sha256": "b0fad57353ee50db1e4dd45601ef68cb4e331ed3918fcb1d4f4dbcad769ee3e5"
     },
     {
       "path": ".agents/skills/verify-and-stop/SKILL.md",
@@ -4105,8 +4105,8 @@
     },
     {
       "path": ".agents/skills/vitest/PROVENANCE.md",
-      "bytes": 8248,
-      "sha256": "f35f834526d5b6d360baffc3e86f2b8880998f171af4e9b0cb8df7e8562195f0"
+      "bytes": 8319,
+      "sha256": "800b49b46586f3b7f9d5b8dbbe5e8e2f1a0a434c90e653a23a1fe87e91ad562b"
     },
     {
       "path": ".agents/skills/vitest/SKILL.md",
@@ -4220,8 +4220,8 @@
     },
     {
       "path": ".claude/hooks/README.md",
-      "bytes": 1020,
-      "sha256": "51531a1cffdf138502cf416e33db7f6fea0e46e87af6bff5f9fecf8ea43ddbc9"
+      "bytes": 1038,
+      "sha256": "9495165b48813b5867d92d0df0dc8167fd4b4ad1327c69d62a5d7a517bb0d123"
     },
     {
       "path": ".claude/rtk-shims/_rtk_shim",
@@ -4605,8 +4605,8 @@
     },
     {
       "path": "INSTALL.md",
-      "bytes": 93990,
-      "sha256": "4d9157f09fe7c16437a9672096e2ad9444ec554c793aa58627571928d2aff72c"
+      "bytes": 93997,
+      "sha256": "a7cb051c44fdba2a4659b0c13f07916b06eed3995397cfb6cbd6d920e8d8f711"
     },
     {
       "path": "LICENSE",
@@ -4655,8 +4655,8 @@
     },
     {
       "path": "docs/agent/harness-allowlist.md",
-      "bytes": 50962,
-      "sha256": "c94bab6c852df5f5c25de0eb834d56ecf2957c12db4e920e5193e94107f0d2eb"
+      "bytes": 51085,
+      "sha256": "4eb9518e9cd9578ba087de7ba7753ae03d12d6332046b27cca77a5cf8947201e"
     },
     {
       "path": "docs/agent/memory-macos-cutover.md",
@@ -4670,13 +4670,13 @@
     },
     {
       "path": "docs/agent/resident-rules-why.md",
-      "bytes": 10911,
-      "sha256": "3b54fe1d869f13f3f6d312fc073ce472d3c54853e18448a877d855e2857ddd45"
+      "bytes": 10929,
+      "sha256": "307a6fb3c612b59ddf7bb303878c264e8c6b5674da703669af9f38a7169debc8"
     },
     {
       "path": "docs/agent/the-ladder.md",
-      "bytes": 3559,
-      "sha256": "0fe3023041a183a52e9ff298974f1c25f43ed14fedf07b097e85a31dc67a7c23"
+      "bytes": 3548,
+      "sha256": "9711ad99773453abe1b26857d6403d9155dbf3ae7145fde244619bcbf588b4f6"
     },
     {
       "path": "img/banner-dark.svg",
@@ -4745,13 +4745,13 @@
     },
     {
       "path": "ops/ab-stand/CONTRACT.md",
-      "bytes": 7019,
-      "sha256": "0bd57061522e1324bc75f8998e6f15ec2f9efaf55ad64bf3aa0e2a336b8c9f73"
+      "bytes": 7293,
+      "sha256": "7659819a529209e253b6f525a525735da169348c9cab2fdb5ec009960a26819b"
     },
     {
       "path": "ops/ab-stand/README.md",
-      "bytes": 44554,
-      "sha256": "da64e2c4a6afcd481d6962e48c7004787423a05c2270d00ab93fb9d5feb2cd63"
+      "bytes": 44921,
+      "sha256": "f193dd411b0fc2ef2a3d5da047763519e1f10fb3720e0c1ea9e88f846c1e3a6b"
     },
     {
       "path": "ops/ab-stand/agent-lsp-install.mjs",
@@ -4875,8 +4875,8 @@
     },
     {
       "path": "ops/ab-stand/lesson-fixtures.md",
-      "bytes": 4312,
-      "sha256": "2d720c78f6d18f407863937b9e073eb194a2e7b54390d488c84a8d0131be3ea8"
+      "bytes": 4330,
+      "sha256": "ceb31d4228480684bdc531c33aa447566338a9fa22dc600fadb7b2066bbdbff4"
     },
     {
       "path": "ops/ab-stand/lesson-probe.mjs",
@@ -4990,8 +4990,8 @@
     },
     {
       "path": "ops/bootstrap/CONTRACT.md",
-      "bytes": 8846,
-      "sha256": "d25fca77ef2944787304bd35ada107944730dadf95fa12869ed233d082f892fe"
+      "bytes": 9120,
+      "sha256": "7268b6d53cc2d98042ff28aeb629627ed488595030e1689ae81605732c684d0d"
     },
     {
       "path": "ops/bootstrap/agent-instructions.md",
@@ -5295,8 +5295,8 @@
     },
     {
       "path": "ops/bootstrap/team-presets.json",
-      "bytes": 14918,
-      "sha256": "d5767850f92e7caf49a416676525c9df890acd29a8cc18cbf5c3a10682411f69"
+      "bytes": 14919,
+      "sha256": "ee407c792c4330ce9714f5ba8a4558bc3fc9084bbbfe018fb5a373ede2b7b735"
     },
     {
       "path": "ops/bootstrap/test-rtk-rewrite-plus.mjs",
@@ -5340,8 +5340,8 @@
     },
     {
       "path": "ops/claude-mods/CONTRACT.md",
-      "bytes": 7595,
-      "sha256": "f03415f9fc040fd631856b2d4b8086fa44cd0f8c7f554cad443a3cdfa90d0e5d"
+      "bytes": 7649,
+      "sha256": "3282000f6949a2245e8de11d5f7f9406987fe7a9f05896d7ff44ca4f03be5f2e"
     },
     {
       "path": "ops/claude-mods/collision-guard/.claude-plugin/plugin.json",
@@ -5830,8 +5830,8 @@
     },
     {
       "path": "ops/mcp-vendor/CONTRACT.md",
-      "bytes": 3267,
-      "sha256": "99dbcfc96353850ad79a7eeb97bf6f733b82598f0d9e762f6a074632e8ffdedd"
+      "bytes": 3303,
+      "sha256": "cfa02c404fbe2da357d0347b02ba85acab3a9beb629fbe9ef1f8ee3e31ca2afb"
     },
     {
       "path": "ops/mcp-vendor/package-lock.json",
@@ -5850,13 +5850,13 @@
     },
     {
       "path": "ops/orchestrator/CONTRACT.md",
-      "bytes": 7395,
-      "sha256": "840c7a1a1e1cd329354388f12d0e53a2e9242bd7767469ab627560044354ba89"
+      "bytes": 7654,
+      "sha256": "3de5f230608f1c5a2bc1ac1ac08be3169ced5d2f5a1108b0d7f87166d53476fb"
     },
     {
       "path": "ops/orchestrator/README.md",
-      "bytes": 70956,
-      "sha256": "b8716d69e95a0386a5bd700ad3a691051dcd8c2422e15a9bc198b7a41bbcb703"
+      "bytes": 70924,
+      "sha256": "a7beae5d180ee3ed96b811692fce4ab75ac5a54e63ee82a8782bf54d2d1f18e5"
     },
     {
       "path": "ops/orchestrator/TASKS-BOARD.md",
@@ -5895,8 +5895,8 @@
     },
     {
       "path": "ops/orchestrator/jobwrap/CONTRACT.md",
-      "bytes": 3440,
-      "sha256": "c49a3ddecbba0769e93bef14574f8358cfbdb2189a07565807cd5d1959cd260a"
+      "bytes": 3458,
+      "sha256": "96cb98518a7bab99cfa030d6cbc733ad7a39ca80688263fdcd7cdadb6e15234e"
     },
     {
       "path": "ops/orchestrator/jobwrap/Cargo.lock",
@@ -5930,13 +5930,13 @@
     },
     {
       "path": "ops/orchestrator/remote-exec.mjs",
-      "bytes": 11911,
-      "sha256": "b943acbbd0170821ee565312059a957d36208ec90c8b35db6490686a1a58e157"
+      "bytes": 12154,
+      "sha256": "16e2f2db44f4d890a31f90e023b92fc951424c8f49e43ac91f5be40d5e88330d"
     },
     {
       "path": "ops/orchestrator/src/CONTRACT.md",
-      "bytes": 14857,
-      "sha256": "7df5315ab9c90731c18cb8d501d7a87852e76da9ab78655094d79c0427791083"
+      "bytes": 15175,
+      "sha256": "0200572a7f249875395076ff98d0748990f0042a864da5d92e582b65dc07c146"
     },
     {
       "path": "ops/orchestrator/src/backup-sweep.ts",
@@ -6150,13 +6150,13 @@
     },
     {
       "path": "ops/orchestrator/src/profiles.ts",
-      "bytes": 51871,
-      "sha256": "75c07ded50a2e8f2e4ea32782c55233fa6f70c70f8878734fdc5b14ff62980c3"
+      "bytes": 52056,
+      "sha256": "559b9f20a74fec68618f96c9d2068cf05e6f86ec1ad6ddc2afcbd72a5ca5aff9"
     },
     {
       "path": "ops/orchestrator/src/providers/CONTRACT.md",
-      "bytes": 7749,
-      "sha256": "22308affa0b36c58fe395cf45afa1342237578d4ba965dd4218a9f1eb9d5d736"
+      "bytes": 7909,
+      "sha256": "1a0d2e161d5ddf2f9b3e0f60071c169dee6c06a404ed1829ecf14ba27acffd3c"
     },
     {
       "path": "ops/orchestrator/src/providers/acp.ts",
@@ -6490,8 +6490,8 @@
     },
     {
       "path": "ops/orchestrator/suite-platform-reads.json",
-      "bytes": 19488,
-      "sha256": "e8615cb92ef7efacd9ac3d211a28dbe49b5dfd372019770b21cde1c36de2212c"
+      "bytes": 19724,
+      "sha256": "126e3ae6f9f5180810538f2ac23c7dd3cc2ea27a0ea1d3e90c1ee87996155931"
     },
     {
       "path": "ops/orchestrator/tsconfig.json",
@@ -6505,8 +6505,8 @@
     },
     {
       "path": "ops/pi-runtime/CONTRACT.md",
-      "bytes": 3171,
-      "sha256": "64dca1af2ca49b65d6379f7011035140b0ebaf931a4decb6e1188825e84674ca"
+      "bytes": 3207,
+      "sha256": "b99f75cf533d24cf50155f5b219d7470d9b86afe8be82592adff561ef229fcfe"
     },
     {
       "path": "ops/pi-runtime/package-lock.json",
@@ -6520,13 +6520,13 @@
     },
     {
       "path": "ops/routines/CONTRACT.md",
-      "bytes": 4579,
-      "sha256": "df680e4825a3b09118eb05a00499f1b6fc40a81a28cff85e9547f228aa78b1b8"
+      "bytes": 4731,
+      "sha256": "3a1d0df141dc7645ac63ed8e4918e96344aadd5f8d170965d7d29eb080bac5c6"
     },
     {
       "path": "ops/routines/consolidate-memory-daily.md",
-      "bytes": 23430,
-      "sha256": "e80dedc67a5152a11a4089baf83b5db7990902015678b7da7b91836f365cbe6f"
+      "bytes": 23475,
+      "sha256": "6b3794d89e4c9c175e2534e251875b9da176ac8014a135500d5dae1a9f0031a5"
     },
     {
       "path": "ops/routines/lesson-dedupe-weekly.md",
@@ -6595,8 +6595,8 @@
     },
     {
       "path": "scripts/check-hook-topology.mjs",
-      "bytes": 72818,
-      "sha256": "c7c4faa6bad47d2b7e14dd80ff2a59e2eb2d19d7735d0f25e861eea6fb9cf2bd"
+      "bytes": 72607,
+      "sha256": "e77903b3be452e4cb655fb02f1a5d1f5ea30ee1c7d48b575231777304bd5bcb0"
     },
     {
       "path": "scripts/check-installed-line-endings.mjs",
@@ -6640,8 +6640,8 @@
     },
     {
       "path": "scripts/harness-report/CONTRACT.md",
-      "bytes": 4117,
-      "sha256": "ddb74c4f4c35f14f7c0948c328f57cb643264621c677a22e97922b8dbb4142d8"
+      "bytes": 4200,
+      "sha256": "c9fe16f7210984273373e52bd6bc41d4ba6676cb41472ec847d467668495e764"
     },
     {
       "path": "scripts/harness-report/collect-lead.mjs",
@@ -6685,8 +6685,8 @@
     },
     {
       "path": "scripts/lib/CONTRACT.md",
-      "bytes": 10118,
-      "sha256": "f59ee9e807a0dc2e02da902bba35def2c58494cb9a6da2b5c7e930fce62c28be"
+      "bytes": 10262,
+      "sha256": "d5b1ee7edeab8e6fd8c6371b63ea38d93d4c89941296c3d2c01dab1a0ddc95d7"
     },
     {
       "path": "scripts/lib/anchor-grammar.mjs",

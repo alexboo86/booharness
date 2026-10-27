@@ -33,7 +33,7 @@ Never on the chopping block, whatever the rung:
 - data integrity — the contract's own inviolable rule;
 - error handling that prevents loss;
 - security;
-- the UI canon (`docs/ui-canon.md`) for anything the operator looks at.
+- the project's UI rules for anything the operator looks at.
 
 Minimal is not unfinished. A change that drops one of these is not a smaller
 change, it is a broken one.

@@ -73,4 +73,4 @@ absent from `fixtures.json`. It is not a product defect or an A/B fixture.
 The spare 12799 has no reviewer mistake in the supplied candidates data, so is
 not substituted. Five new ids bring the corpus from 8 to 13. Per lesson #13063,
 the lead must update the frozen fixture-count pin in
-`scripts/test-ab-stand.mjs`; this coder seat may neither edit nor run that suite.
+`scripts/test-ab-stand.mjs` (not in this kit); this coder seat may neither edit nor run that suite.

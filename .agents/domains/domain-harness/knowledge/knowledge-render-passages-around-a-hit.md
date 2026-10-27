@@ -6,6 +6,6 @@ verified: 2026-10-13
 
 Hit paragraphs up to 1,024 bytes ride whole; larger ones get 240-byte sides. Ends move outward to `; `, `. ` or `: ` within 80 bytes, else next space; backtick spans remain whole. Touching windows join; cut ends carry `…`; UTF-8 characters remain whole.
 
-Head/passages fit `KNOWLEDGE_BUDGET_PER_PAGE` (6 KiB); index allowance is 1,536 bytes, total cap 7,680. `ops/bootstrap/domain-lessons-hook.mjs` admits lessons plus page within 8,192 bytes. Passage tests use frozen `scripts/fixtures/knowledge-passages.md`, not live pages.
+Head/passages fit `KNOWLEDGE_BUDGET_PER_PAGE` (6 KiB); index allowance is 1,536 bytes, total cap 7,680. `ops/bootstrap/domain-lessons-hook.mjs` admits lessons plus page within 8,192 bytes. Passage tests use frozen `scripts/fixtures/knowledge-passages.md` (not in this kit), not live pages.
 
-Check: `npx vitest run scripts/knowledge-page.test.mjs`
+Check: `npx vitest run scripts/knowledge-page.test.mjs` (`scripts/knowledge-page.test.mjs` not in this kit)

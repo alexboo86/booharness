@@ -18,7 +18,7 @@ unset refuses empty rows; reset removes a row, deleting the file when last. Show
 file/compiled rows; refusal changes no bytes and exits nonzero. Caller keys become own
 properties so `__proto__` reaches validation. Killed writes leave lock/temp: the next
 writer refuses after 5 s naming the lock, and the next successful writer removes stale
-temp (`ops/orchestrator/src/profiles.ts`, `scripts/test-orch-roles-file.mjs`).
+temp (`ops/orchestrator/src/profiles.ts`, `scripts/test-orch-roles-file.mjs` (not in this kit)).
 
 `ops/bootstrap/team-presets.json` holds economy/balanced/strong tiers and known models;
 balanced equals compiled MATRIX. `loadTeamPresets` validates family/role/tier/effort
@@ -34,7 +34,7 @@ builder result consumed by wizard teams. Invalid preset/flags/families/file or b
 lock writes nothing and exits 2; other roles verbs use exit 1. Roles set warns but
 accepts unknown catalogue models; unreadable presets suppress only that warning.
 Show prints empty rows as `no family`; JSON remains the doctor's interface
-(`ops/orchestrator/src/profiles.ts`, `scripts/test-orch-team-presets.mjs`).
+(`ops/orchestrator/src/profiles.ts`, `scripts/test-orch-team-presets.mjs` (not in this kit)).
 
 verified: 2026-09-23
 

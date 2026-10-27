@@ -6,7 +6,7 @@
 check:commit` / `check:push` / `check:deletions` и `.githooks/*`.
 
 Каталог сохранён: его оверлеят `start-worktree.sh` и сканирует
-`scripts/audit-rule-sensors.mjs` (dormant-hook отчёт). Новый хук добавляй
+`scripts/audit-rule-sensors.mjs` (not in this kit) (dormant-hook отчёт). Новый хук добавляй
 только вместе с записью в settings и строкой в
 [docs/agent/harness-allowlist.md](../../docs/agent/harness-allowlist.md).
 

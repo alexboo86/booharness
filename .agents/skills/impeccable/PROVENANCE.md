@@ -8,7 +8,7 @@ Installed through skill-installer into the canonical source tree; executable per
 
 ## Run scripts
 
-Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline`. This section is written by that command.
+Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline` (`scripts/check-skill-contract.mjs` not in this kit). This section is written by that command.
 
 ```run-scripts
 scripts/impeccable sha256:39d9600489073e227e4f4d55c451ce4252a6632ed7ae37923efbbcbc91f16d07

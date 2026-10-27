@@ -61,8 +61,8 @@ arbitrary `pi` on PATH.
 
 ## Tests
 
-- `scripts/test-orch-providers.mjs` — exercises Pi start/resume with a fixture runtime root and installed metadata.
-- `scripts/test-orch-remote-pi-mcp-live.mjs` — opt-in live remote probe using the pinned host binary.
+- `scripts/test-orch-providers.mjs` (not in this kit) — exercises Pi start/resume with a fixture runtime root and installed metadata.
+- `scripts/test-orch-remote-pi-mcp-live.mjs` (not in this kit) — opt-in live remote probe using the pinned host binary.
 - No package-local test script exists.
 - Installation command: `npm ci --prefix ops/pi-runtime`; this mutates the host install and requires registry access.
 

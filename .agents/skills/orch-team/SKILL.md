@@ -60,7 +60,7 @@ was last seen over 24 hours ago; a named post keeps every row (task 2305).
 - **An app start takes a lease, not a start line** (operator #14945, task
   2171, plan #14955). Before a start, run the main checkout's script with the
   handle and the session id of your live chat binding:
-  `node scripts/app-lease.mjs take --as <handle> --session <session_id> --minutes <1-180> --note "<what, which host>" <resource>...`
+  `node scripts/app-lease.mjs take --as <handle> --session <session_id> --minutes <1-180> --note "<what, which host>" <resource>...` (`scripts/app-lease.mjs` not in this kit)
   - Resources are slots of the account pool: each instance runs on its own
     terminal account, because one account holds one live instance (operator
     #15099, plan #15109). `mac-window` (root `lead1`, port 5183) and `mac-2`
@@ -73,7 +73,7 @@ was last seen over 24 hours ago; a named post keeps every row (task 2305).
     takes `win`. A take is all or nothing.
   - `take` and `show` print `root=`, `port=` and `label=` for each slot you
     hold. Start the instance on that root: on win
-    `node scripts/perf/win-perf.mjs --root <root> ...` takes the slot's port by
+    `node scripts/perf/win-perf.mjs --root <root> ...` (`scripts/perf/win-perf.mjs` not in this kit) takes the slot's port by
     itself when `PERF_PORT` is not set; on the Mac a signed root needs
     `PERF_BRIDGE=1`. A second win slot is a named take (`win-2`): a bare `win`
     extends the slot you hold.
@@ -221,7 +221,7 @@ Pick the role by the work before you create a coder (task 2953: in 10-17..10-24 
 Each role brings its defining skill or skills (`.agents/domains/_skill-map.json` roleDefaults: designer `design-direction`, security `security-and-hardening`, copywriter its product copy skill and `anti-slop` (#19584), legal its compliance skill; the copy and compliance skills are product-bound and kit-excluded, so read their names in roleDefaults). Its other skills are trigger candidates that Jev filters against the brief, so a brief that names the surface and the task brings them; the brief does not name skills. Researcher, designer, copywriter and legal run on this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`); this Mac always offers it. Legal and security share the reviewer class with reviewer: one family never takes two of them on one title, the cap of 2 counts per role, and the author's family steps aside for each as for a reviewer.
 
 - **tester.** Pick it for proof by tests: Test 0 reproduces a reported bug before any fix (a test that fails on the target commit); Test 3 accepts a landed change by the same user path, before and after. Brief: mode, kit (desktop, visual, web, data, install), target (the report, or the landed commit and its base), the user path with expected and observed results, `files`; for a desktop or visual kit the lease you hold (root, port, minutes): the tester never takes a lease and never starts the app. Report: the coder contract; `criteria[0]` is the verdict (reproduced, not reproduced, accept, reject). Land: `seat_land` as a coder; to hand a red test to the fixing coder, land it into a task worktree and create the coder with `repo: <task worktree>, snapshot: true`. A flagged change of an existing test needs the commit to name the changed behaviour (#14245). Limits: outside the coder cap, no blocker rechecks.
-- **designer.** Pick it for a new look, a redesign or a visual direction with alternatives; a logic change in a component stays a coder's. Brief: the surface and its files, the goal in the operator's words, what must stay (ui-canon), the captures or lease you have. Report: the coder contract; directions and the chosen one with why; capture paths in `checked`; `npm run check:ui-canon` and `check:light-theme` in `checks`. Land as a coder; a path outside its scope needs `override_reason`. It reads images by default (`design-direction` requires `input:image`): `images` is true even when omitted, and `images: false` does not turn it off, so a model with no image input leaves the pick.
+- **designer.** Pick it for a new look, a redesign or a visual direction with alternatives; a logic change in a component stays a coder's. Brief: the surface and its files, the goal in the operator's words, what must stay (the project's design rules), the captures or lease you have. Report: the coder contract; directions and the chosen one with why; capture paths in `checked`; the project's UI checks in `checks`. Land as a coder; a path outside its scope needs `override_reason`. It reads images by default (`design-direction` requires `input:image`): `images` is true even when omitted, and `images: false` does not turn it off, so a model with no image input leaves the pick.
 - **copywriter.** Pick it for page copy, metadata, SEO, locale strings and academy text. Brief: the pages, the audience, the keyword source. Report: the coder contract; each keyword or market fact with its URL and read date in evidence. Land as a coder; a path outside its write scope needs `override_reason`.
 - **legal.** Create it as a reviewer of the diff (`snapshot` or `base`, `author: <coder>`) when the change touches legal copy, payments, personal data or consent. Report: the reviewer contract; each finding names the law article, the URL and its read date. It is a review, not advice to the operator.
 - **security.** Create it as a reviewer of the diff on a security path (auth, tokens, credentials, install, hooks, Tauri capabilities, IPC). Report: the reviewer contract; each finding names the CWE, a reproduced PoC and the severity. `review_plan` does not create a security seat: it only sets the ordinary reviewer count (a security path keeps at least one; two when own security lines changed and Jev risk is at least 0.7, or when Jev is unavailable and those lines changed). A security seat is extra, and only the lead creates it.
@@ -605,8 +605,8 @@ Each line below was one or more refused calls in a single lead session.
   because the gates report one failure at a time:
   1. No commit needs a page edit or a lesson (operator #19505). When the change
      moves what a knowledge page maps, edit that page and run
-     `node scripts/stamp-knowledge-page.mjs <page> --amended "<what>"`; the history
-     gate judges the new lines. The size gate (`scripts/check-knowledge-size.mjs`,
+     `node scripts/stamp-knowledge-page.mjs <page> --amended "<what>"` (`scripts/stamp-knowledge-page.mjs` not in this kit); the history
+     gate judges the new lines. The size gate (`scripts/check-knowledge-size.mjs` (not in this kit),
      task 2398) refuses growth of a page part above 16,384 prose bytes and a new
      line above 2,048 bytes. A part is a `## ` section, or a file of a split page.
      Put new text in a new part with its `verified:` line and a proof (in a split
@@ -616,7 +616,7 @@ Each line below was one or more refused calls in a single lead session.
      file IN the commit (`node scripts/memory/capture-lesson.mjs <domain> ...`).
      `--no-lesson` and `--no-knowledge-page` are refused: the gates are gone.
   3. For a vendored skill with `npx`/`pip` lines, run
-     `node scripts/check-unpinned-installs.mjs --write-baseline` (never edit
+     `node scripts/check-unpinned-installs.mjs --write-baseline` (`scripts/check-unpinned-installs.mjs` not in this kit) (never edit
      vendored text). After the commit, run
      `node ops/bootstrap/install-harness.mjs --only skills` and then
      `node scripts/check-skills-drift.mjs`.

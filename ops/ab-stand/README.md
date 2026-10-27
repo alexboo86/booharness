@@ -581,6 +581,6 @@ The installer prints the stand-root `rm -rf --` command but never runs it. Compa
 `~/.pi/agent/{settings.json,mcp-adapter.json,auth.json,extensions/rtk.ts}` and
 `~/.local/state/orch/providers.json` before and after install/smoke; active
 unrelated OAuth refreshes must be identified rather than called stand changes.
-Tests: `node scripts/test-ab-stand.mjs`,
-`node --test scripts/test-orch-seat-guard.mjs scripts/test-orch-providers.mjs scripts/test-orch-seats-core.mjs scripts/test-orch-seats-reports.mjs scripts/test-orch-seats-lifecycle.mjs scripts/test-orch-seats-board.mjs`,
+Tests: `node scripts/test-ab-stand.mjs` (`scripts/test-ab-stand.mjs` not in this kit),
+`node --test scripts/test-orch-seat-guard.mjs scripts/test-orch-providers.mjs scripts/test-orch-seats-core.mjs scripts/test-orch-seats-reports.mjs scripts/test-orch-seats-lifecycle.mjs scripts/test-orch-seats-board.mjs` (`scripts/test-orch-seat-guard.mjs` not in this kit, `scripts/test-orch-providers.mjs` not in this kit, `scripts/test-orch-seats-core.mjs` not in this kit, `scripts/test-orch-seats-reports.mjs` not in this kit, `scripts/test-orch-seats-lifecycle.mjs` not in this kit, `scripts/test-orch-seats-board.mjs` not in this kit),
 `npx tsc --noEmit -p tsconfig.app.json`.

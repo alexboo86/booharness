@@ -105,7 +105,7 @@
   },
   "balanced": {
     "scout": {
-      "glm": { "model": "glm-5.3-flash", "effort": "low" },
+      "glm": { "model": "glm-5.3-flash", "effort": "high" },
       "codex": { "model": "gpt-6-luna", "effort": "high" },
       "grok": { "model": "grok-4.7", "effort": "low" },
       "opencode": { "model": "glm-5.3-flash", "effort": null },

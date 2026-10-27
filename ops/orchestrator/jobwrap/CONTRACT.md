@@ -62,7 +62,7 @@ The source's private `main` is the executable entry, not an importable API.
 
 ## Tests
 
-- `scripts/test-orch-remote-exec-disconnect.mjs` — checks remote child shutdown on stdin disconnect; on Windows it prebuilds this helper.
+- `scripts/test-orch-remote-exec-disconnect.mjs` (not in this kit) — checks remote child shutdown on stdin disconnect; on Windows it prebuilds this helper.
 - That integration test is not an independent assertion of every Job Object or quoting invariant.
 - No module-local Rust unit test exists.
 - Windows build check: `cargo check --manifest-path ops/orchestrator/jobwrap/Cargo.toml`.

@@ -31,7 +31,7 @@ The mods are engine-loaded plugin folders, not an application-side React or orch
 
 Paths above are relative to `ops/claude-mods/`; each plugin's `hooks/hooks.json` selects its registration module.
 There is no external source import of the registry entry: the Claude Code engine discovers it through plugin metadata.
-`ops/bootstrap/permissions-target.mjs` selects installable folders; `ops/harness-kit/build-kit.mjs` packages their files.
+`ops/bootstrap/permissions-target.mjs` selects installable folders; `ops/harness-kit/build-kit.mjs` (not in this kit) packages their files.
 
 ### Wire names
 
@@ -65,7 +65,7 @@ There is no external source import of the registry entry: the Claude Code engine
 - Daemon strings are escaped before SVG embedding; large sections are paginated instead of exceeding image limits. Source: `.agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md`; `ops/claude-mods/orch-board/hooks/svg/kinora.ts`.
 - The handover text is delivered after clear only for a clear session-end, and a refused clear drops pending text. Source: `.agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md` handover section.
 - Secrets-veil fails closed when masking fails; encoded PNG/JPEG/GIF/WEBP/PDF media fields use named-value masking rather than generic entropy masking that corrupts media. Source: `.agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md`; `ops/claude-mods/secrets-veil/tests/fail-closed.test.ts`.
-- A family-logo registry change requires regenerating the plugin-local copy because mods cannot import outside their folder. Source: `.agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md`; `scripts/test-orch-family-logo-copy.mjs`.
+- A family-logo registry change requires regenerating the plugin-local copy because mods cannot import outside their folder. Source: `.agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md`; `scripts/test-orch-family-logo-copy.mjs` (not in this kit).
 
 ## Dependencies
 
@@ -89,7 +89,7 @@ There is no external source import of the registry entry: the Claude Code engine
 - `ops/claude-mods/secrets-veil/tests/fail-closed.test.ts` — masking failure/oversize safety.
 - `ops/claude-mods/secrets-veil/tests/fail-closed-env.test.ts` — secret-environment failure handling.
 - `ops/claude-mods/delay-no-more/tests/patterns.test.ts` — deferred-tool matching patterns.
-- `scripts/test-orch-family-logo-copy.mjs` — generated logo-copy freshness.
+- `scripts/test-orch-family-logo-copy.mjs` (not in this kit) — generated logo-copy freshness.
 - Fresh worktrees lack engine-generated `.claude-plugin/types/`; mod typechecking requires those types from an engine-loaded checkout.
 
 ### Command

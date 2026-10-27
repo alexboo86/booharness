@@ -9,7 +9,7 @@ Supply-chain surface: no executable scripts or install/network steps in this ski
 
 ## Version surface — this repo runs Vitest 4 and 2, upstream targets 5
 
-Upstream states the skill is based on **Vitest 5.0.1** (SKILL.md). This repo runs **Vitest 4** (`package.json` `^4.1.5`, installed 4.1.9) and **Vitest 2** (`web/package.json` `^2.1.8`). Every rule below does **not** hold on the named versions. Checked against the vitest-dev/vitest GitHub release notes (v3.0.0 2025-01-16, v4.0.0 2025-10-22, v5.0.0 2026-09-03, and 4.x/5.x minor notes) and the v4.1.9 / v2.1.8 docs. The vendored text is unedited; this section is the local errata. Checked and holding on both: `test.for` (2.0.0) and `toMatchTypeOf`→`toExtend` (`toExtend` ships with expect-type 1.3.0, pinned in both trees).
+Upstream states the skill is based on **Vitest 5.0.1** (SKILL.md). This repo runs **Vitest 4** (`package.json` `^4.1.5`, installed 4.1.9) and **Vitest 2** (`web/package.json` (not in this kit) `^2.1.8`). Every rule below does **not** hold on the named versions. Checked against the vitest-dev/vitest GitHub release notes (v3.0.0 2025-01-16, v4.0.0 2025-10-22, v5.0.0 2026-09-03, and 4.x/5.x minor notes) and the v4.1.9 / v2.1.8 docs. The vendored text is unedited; this section is the local errata. Checked and holding on both: `test.for` (2.0.0) and `toMatchTypeOf`→`toExtend` (`toExtend` ships with expect-type 1.3.0, pinned in both trees).
 
 Rules holding on neither Vitest 4 nor Vitest 2 (v5 surface):
 
@@ -48,7 +48,7 @@ Rules additionally not holding on Vitest 2 (`web/`, 3.x/4.x surface):
 
 ## Run scripts
 
-Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline`. This section is written by that command.
+Every shipped file of this skill that can run (exec bit, `#!` line or script extension), plus any shipped file its markdown runs, pinned by sha256. `npm run check:skill-contract` fails when one changes, appears or disappears; re-read the script, then re-pin with `node scripts/check-skill-contract.mjs --write-run-script-baseline` (`scripts/check-skill-contract.mjs` not in this kit). This section is written by that command.
 
 ```run-scripts
 ```

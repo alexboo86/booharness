@@ -11,7 +11,7 @@ Changing existing test assertions follows PRIME 7. Reviewers and bughunters may 
 Other proof is independent review, typecheck, lint, cargo check and reproduction commands;
 a blocker requires command reproduction. Performance measurement (perf harnesses,
 `scripts/perf`, project-specific performance tools) and visual evaluation (screenshots, parity
-stands, ui-canon, light-theme/contrast audits, desktop-interaction-review) remain
+stands, UI-rule and contrast audits, desktop-interaction-review) remain
 allowed and runnable (scope #12895).
 
 ## Run
@@ -436,7 +436,7 @@ starts a fresh session, whose first message carries the whole role context again
 
 What a Linux host needs before its hosts.json entry (always-on, PATH symlinks, the Pi agent
 directory, git identity, memory forward, the live proof) is the checklist in
-[docs/agent/linux-host-bringup.md](../../docs/agent/linux-host-bringup.md) (task 2342).
+`docs/agent/linux-host-bringup.md` (not in this kit) (task 2342).
 
 On a Windows host a remote seat runs through [remote-exec.mjs](remote-exec.mjs) over SSH, and
 every remote command is spawned through [jobwrap](jobwrap/), the `orch-jobwrap` helper (task 1838):

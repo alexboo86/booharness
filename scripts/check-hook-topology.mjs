@@ -561,17 +561,6 @@ const grokShellEvent = JSON.stringify({
 // session it has never seen. Its own suite covers the grammar - what is probed
 // here is only that the answer is not a refusal, however spelled.
 const orderProbeSession = `hook-topology-probe-${process.pid}`;
-const orderProbeMark = join(tmpdir(), 'toolset-code-intel', orderProbeSession);
-// The ordering hook is silent for a session it has already spoken to, and pids
-// are reused: a leftover mark from an earlier run would make this probe pass
-// without the hook ever reaching its verdict. A negative check that never
-// runs is a green light, not a check.
-rmSync(orderProbeMark, { force: true });
-const sourceReadEvent = JSON.stringify({
-  tool_name: 'Bash',
-  tool_input: { command: 'grep foo svod/src/main.rs' },
-  session_id: orderProbeSession,
-});
 for (const [script, mode, event, label] of [
   ['codex-rtk-hook.mjs', undefined, heavyEvent, 'codex-rtk-hook.mjs'],
   ['codex-rtk-hook.mjs', undefined, grokShellEvent, 'codex-rtk-hook.mjs (grok event shape)'],
@@ -603,16 +592,23 @@ for (const [mode, wantExit, mustName, label] of [
   // that is what keeps the rule from costing a turn on every call — so two probes
   // sharing one id would have the second judge the MARK instead of the runtime,
   // and read as a silent pass. Same trap the hook's own suite records.
+  const session = `${orderProbeSession}-${mode}`;
+  // Pids are reused: a mark left by an earlier run with this pid would make the
+  // hook go quiet and fail this probe (task 3151: 1532 leftover marks), so the
+  // mark of THIS session goes before the probe and after it.
+  const mark = join(tmpdir(), 'toolset-code-intel', session);
+  rmSync(mark, { force: true });
   const event = JSON.stringify({
     tool_name: 'Bash',
     tool_input: { command: 'grep foo svod/src/main.rs' },
-    session_id: `${orderProbeSession}-${mode}`,
+    session_id: session,
   });
   const probe = spawnSync(
     process.execPath,
     [join(REPO, 'ops', 'bootstrap', 'code-intel-order-hook.mjs'), mode],
     { input: event, encoding: 'utf8', env: probeEnv, timeout: 20000 },
   );
+  rmSync(mark, { force: true });
   const body = probe.stdout || '';
   check(
     probe.status === wantExit && /"permissionDecision":"deny"/.test(body) && mustName.test(body),
@@ -636,7 +632,6 @@ if (checkKimi) {
     'kimi/rtk-deny — a heavy command must return the RTK command in its deny reason',
   );
 }
-rmSync(orderProbeMark, { force: true });
 
 // 3b. What kimi ACCEPTED, not what we wrote.
 //
