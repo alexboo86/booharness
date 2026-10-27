@@ -1,7 +1,7 @@
 {
   "kit": "harness-kit",
-  "sourceCommit": "dcc814f98da7e79876c062684607a59e5a510a1a",
-  "fileCount": 1452,
+  "sourceCommit": "163ecc814c323c267ea318b942648ded265d9adc",
+  "fileCount": 1453,
   "files": [
     {
       "path": ".agents/domains/_domain-routing.schema.md",
@@ -25,8 +25,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge.md",
-      "bytes": 13161,
-      "sha256": "67f1e03b0c330fdd0b367f86c88742d4384f572c52280ae3a7186d88915df55a"
+      "bytes": 13180,
+      "sha256": "4a3ea0d7ad91a205b62faf441c6ee2ef75b421a65ba6b30d3976d6431bfe3c2e"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/ai-mcp-removal-what-the-harness-keeps.md",
@@ -45,8 +45,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/claude-mods-orch-board-pane.md",
-      "bytes": 3848,
-      "sha256": "054aa64a5f8d344368666016006ac0a3ae406b3f4ade438a3144438bde2f07dc"
+      "bytes": 3965,
+      "sha256": "c16db0eb6c5320dd0682a29a887851fa7476bf3e4270ce5f384900ef500002cd"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/coder-retained-survival.md",
@@ -195,8 +195,8 @@
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/provider-session-contracts-and-adapters.md",
-      "bytes": 4391,
-      "sha256": "a64c209d5c859c83b0a2e044b635ccde4d97a22c4daa7e9a2dad8984b0902920"
+      "bytes": 4632,
+      "sha256": "c351188ff78f850838689a3e22c3b9cfaecbfb7aae3cfee821d7c87c3a1cc30b"
     },
     {
       "path": ".agents/domains/domain-harness/knowledge/providers-roles-and-worktrees.md",
@@ -4590,23 +4590,23 @@
     },
     {
       "path": "AGENTS.md",
-      "bytes": 11123,
-      "sha256": "39a2b820523b9f0efcf42802d819aaf04c6c22a831ad2d0650aaed27e414973b"
+      "bytes": 11136,
+      "sha256": "6c3392aa22836864392fbf978a798d6afd8152bd340c3a3ef1e552370eb8cfc5"
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 2125,
-      "sha256": "e675898bd854d40b87c09ba09971fd3d0c123cc41572052eb52dcf9353a9bd90"
+      "bytes": 2858,
+      "sha256": "a3c7d341a013678de5ef63d61639b958d509311afa03e5d0a5dbf5b964695f49"
     },
     {
       "path": "CHANGELOG.ru.md",
-      "bytes": 3712,
-      "sha256": "77fa72a8393de4d6e17af9f729fadbebc48366c94914d711cbfe25fa355d49b6"
+      "bytes": 4893,
+      "sha256": "4982255faf10d10dc054af6c0b9b1bed6dd52e747218aa42dadf3de54ca59c9b"
     },
     {
       "path": "CLAUDE.md",
-      "bytes": 11123,
-      "sha256": "39a2b820523b9f0efcf42802d819aaf04c6c22a831ad2d0650aaed27e414973b"
+      "bytes": 11136,
+      "sha256": "6c3392aa22836864392fbf978a798d6afd8152bd340c3a3ef1e552370eb8cfc5"
     },
     {
       "path": "INSTALL-PROMPT.md",
@@ -5404,6 +5404,11 @@
       "sha256": "0ea21376e654d7031036be1d7b23bcf3dc81e26245dc574acea0957aab1e2ade"
     },
     {
+      "path": "ops/claude-mods/collision-guard/tsconfig.json",
+      "bytes": 56,
+      "sha256": "4087cf0ba92fde503ed0e7c56f37bcb26ad0c085873f10219d0336c0f19b5a8f"
+    },
+    {
       "path": "ops/claude-mods/delay-no-more/.claude-plugin/icon.png",
       "bytes": 27270,
       "sha256": "a9260b5a9089495bb01439ac7344cec2547f022a6e3e687254880d1e3648d2bf"
@@ -6005,8 +6010,8 @@
     },
     {
       "path": "ops/orchestrator/src/context.ts",
-      "bytes": 42634,
-      "sha256": "3e9b820610680616c7bf006837f4834c0cf1906528195ec3aab7899f63b8600d"
+      "bytes": 42619,
+      "sha256": "669b656a3967ffcadcac3d54ec6414fb5c504d5a137aa0b773ecb83e088ea679"
     },
     {
       "path": "ops/orchestrator/src/dashboard.ts",
@@ -6180,8 +6185,8 @@
     },
     {
       "path": "ops/orchestrator/src/providers/claude.ts",
-      "bytes": 16365,
-      "sha256": "188e64b899c5e6f99703d7a6b913451165602e739abd9139fbbc6bc8b2f4aa2f"
+      "bytes": 16636,
+      "sha256": "2279ebcf4daf7323a7b2dddf61f908faaf788c2c5538b73c41f71acfee363d49"
     },
     {
       "path": "ops/orchestrator/src/providers/codex.ts",

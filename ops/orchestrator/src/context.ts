@@ -182,7 +182,7 @@ export function instrumentsOffSection(off: readonly string[]): string {
 const SEAT_PRIME_ITEMS = [1, 3, 4, 5, 6, 9] as const;
 // Work contract 3 is left out: its `memoryctl task` step is a memory write, which seats are banned from.
 const SEAT_WORK_ITEMS = [2, 6] as const;
-const SEAT_PRODUCT_BULLETS = ['ChartPane/subcharts:', '**Modules (task 2409):**', 'Indicator subscription SSOT:', 'Files ≥1500 lines:',
+const SEAT_PRODUCT_BULLETS = ['ChartPane/subcharts:', '**Modules', 'Indicator subscription SSOT:', 'Files ≥1500 lines:',
   'Docs:', '`web/` legal copy:', 'MCP/plugins/skills'] as const;
 // The commit gate is the lead's step (seats never commit), so the seat copy of the checks drops it.
 const SEAT_CHECKS_STRIP = 'npm run check:commit -- <explicit paths>\n';

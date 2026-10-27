@@ -6,8 +6,11 @@ Claude stream JSON, Codex app-server and ACP (`ops/orchestrator/src/providers/cl
 Claude/GLM workers build a private MCP config from enabled installed codegraph/memoryctl
 entries, require the operator-only server list, pass `--strict-mcp-config` and deny those
 operator names plus orch. `system/init` must confirm precisely the expected connected
-servers. This isolates the MCP catalog, not shared settings, plugins, hooks, skills,
-memory or filesystem (`ops/orchestrator/src/providers/claude.ts`).
+servers. `--strict-mcp-config` isolates only the MCP catalog: mods from
+`CLAUDE_CODE_PLUGIN_DIRS` in `settings.json` env still loaded (task 3200), so the spawn env and
+`--settings '{"env":{"CLAUDE_CODE_PLUGIN_DIRS":""}}'` both clear it; one channel alone left the
+handover mod in. Shared settings, hooks, skills, memory and filesystem stay shared
+(`ops/orchestrator/src/providers/claude.ts`).
 
 Native qwen and mimo are coder-only ACP adapters; Pi remains their default harness.
 `nativeCoderArgs` refuses a non-coder `SEAT_POLICY_ROLE` or non-full access on start and

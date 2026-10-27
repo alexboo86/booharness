@@ -94,6 +94,9 @@ export function claudeArgs(spec: SessionSpec, session: { id: string; resume: boo
   denied.push(...SKILL_INSTALL_DENY);
   args.push('--disallowedTools', ...denied);
   if (mcp) args.push('--mcp-config', mcp.file, '--strict-mcp-config');
+  // Strict MCP config does not exclude plugin MCPs. Clear settings as well as
+  // the process env below: either source alone can still load operator mods.
+  args.push('--settings', JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_DIRS: '' } }));
   args.push(session.resume ? '--resume' : '--session-id', session.id);
   return args;
 }
@@ -310,7 +313,7 @@ export function claudeAdapter(family: Family, { env = () => ({}), defaultModel, 
     // glm runs this same CLI on the same home, so it gets the same isolation.
     const mcp = workerMcp(spec, operatorListPath);
     try {
-      const child = spawnProvider({ command: 'claude', args: claudeArgs(spec, { id, resume }, mcp), cwd: spec.cwd, env: { ...env(), ...spec.env }, unset: /^(ANTHROPIC_|ORCH_SEAT_TOKEN$|ORCH_SEAT_TOOL_URL$)/ });
+      const child = spawnProvider({ command: 'claude', args: claudeArgs(spec, { id, resume }, mcp), cwd: spec.cwd, env: { ...env(), ...spec.env, CLAUDE_CODE_PLUGIN_DIRS: '' }, unset: /^(ANTHROPIC_|ORCH_SEAT_TOKEN$|ORCH_SEAT_TOOL_URL$)/ });
       const cleanup = () => rmSync(mcp.dir, { recursive: true, force: true });
       child.once('exit', cleanup);
       child.once('error', cleanup);

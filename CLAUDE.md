@@ -83,7 +83,7 @@ npm run check:commit -- <explicit paths>
 ## Product and harness sensors
 
 - ChartPane/subcharts: not part of this harness home; a project that has such a component states its own rule in its own contract.
-- Feature/shell imports cross a module's public entry file only; never reach into another module's internals.
+- **Modules:** Feature/shell imports cross a module's public entry file only; never reach into another module's internals.
 - Indicator subscription SSOT: not part of this harness home; one registry per subscription kind where a project has them.
 - Files ≥1500 lines: extraction seam first.
 - Docs: keep links valid; a new document is linked from an index.

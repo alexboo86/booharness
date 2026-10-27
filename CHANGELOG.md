@@ -4,6 +4,14 @@
 
 Each publication of BooHarness to this repository adds an entry here, newest first.
 
+## 2026-10-27, fifth publication
+
+Three fixes from a user report.
+
+- orch seats no longer fail at start with `CLAUDE.md: missing product bullet **Modules (task 2409):**`. The kit's CLAUDE.md template now has the Modules bullet that the seat contract reads, and the kit build fails when orch cannot read the seat contract or the code-intel rules from the CLAUDE.md it ships.
+- Claude worker seats start without Claude Code mods. Before, a mod from `CLAUDE_CODE_PLUGIN_DIRS` (the handover mod) put its MCP server into the worker, and the MCP init check stopped the seat with `Claude worker MCP init mismatch`.
+- The collision-guard mod ships its `tsconfig.json`, so the mod runtime no longer leaves an untracked file in the checkout.
+
 ## 2026-10-27, fourth publication
 
 - orch board: each seat card has a `lessons` badge with the count of lessons delivered to the seat: `N full` (whole text in the brief) and `N on demand` (title only; the seat reads the lesson when it needs it).
