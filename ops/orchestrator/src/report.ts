@@ -24,6 +24,24 @@ export const FOR_LEAD_AIM = 400;
 export const TAIL_AIM = 300;
 export const ITEM_AIM = 150;
 export const MAX_FINDINGS = 8;
+export const TABLE_MAX = 60_000;
+
+/** Inventory data rows: omit a TSV header or a Markdown header/separator pair. */
+export function tableRows(table: string): number {
+  const lines = table.split(/\r?\n/).filter((line) => line.trim());
+  const separator = lines.findIndex((line) => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line));
+  return Math.max(0, lines.length - (separator === 1 ? 2 : lines[0]?.includes('\t') ? 1 : 0));
+}
+
+/** Keep the authored inventory, not a shortened or omitted correction; scope by the seat role. */
+export function preserveReportTable(original: string, corrected: string, role: ReportRole): string {
+  if (role !== 'scout' && role !== 'researcher') return corrected;
+  const from = refusedReport(original);
+  // Carry data only; never turn an invalid prose/framing reply into an accepted report.
+  const into = /^```json\r?\n[\s\S]*\r?\n```$/.test(corrected.trim()) ? refusedReport(corrected) : null;
+  if (!from || !into || typeof from.table !== 'string' || from.table.length > TABLE_MAX) return corrected;
+  return `\`\`\`json\n${JSON.stringify({ ...into, table: from.table })}\n\`\`\``;
+}
 
 export type ReportRole = 'coder' | 'tester' | 'designer' | 'copywriter' | 'legal' | 'security' | 'reviewer' | 'scout' | 'critic' | 'researcher' | 'debater' | 'bughunter';
 /** The roles with a report contract of their own; the specialist roles map onto one of these. */
@@ -88,6 +106,16 @@ export const LESSON_ROLES: ReadonlySet<ReportRole> = new Set(['coder', 'tester',
 /** A round-table turn's vote requirement (operator #19423): present only for a debater carrying options. */
 export type TableContract = { options: string[] };
 
+/** The schema key, guidance sentence and size phrasing an inventory role (scout/researcher) adds to the contract. */
+function inventoryTerms(role: ReportRole): { key: string; guidance: string; size: string } {
+  if (role !== 'scout' && role !== 'researcher') return { key: '', guidance: '', size: 'whole block' };
+  return {
+    key: ',table?:string',
+    guidance: 'An inventory or matrix answer goes in `table` (Markdown table or TSV, at most 60000 characters); findings hold conclusions with evidence. Table rows exclude headers and Markdown separator lines. Corrections keep the original table. ',
+    size: 'block without `table`',
+  };
+}
+
 /**
  * The contract as the seat reads it in its closing and in a repair turn. `lessons` are the ids
  * delivered in full in the turn's context (operator #12326): the report says, for each, whether the
@@ -103,16 +131,18 @@ export function reportContract(role: ReportRole, lessons: readonly string[] = []
     : '';
   const vote = table ? `,vote:{option:string (one of ${table.options.map((o) => JSON.stringify(o)).join('|')}),confidence:0..1,changedBy:string|null}` : '';
   const asked = LESSON_ROLES.has(role) && lessons.length > 0;
+  const inventory = inventoryTerms(role);
   return 'Final message: ONE fenced ```json block, nothing before or after it. '
     + `Schema: {role:"${role}",status:${STATUS.map((s) => JSON.stringify(s)).join('|')},findings:[${finding}] (at most ${MAX_FINDINGS}),`
-    + `checked:[string],notChecked:[string]${extra}${vote}${asked ? ',lessonsApplied:[{id:string,applied:boolean,why:string}]' : ''},forLead?:string,memory?:[{op:"append"|"supersede"|"retire",id?:number,kind:"lesson"|"decision"|"feedback"|"reference"|"project",title:string,body:string,links?:object,reason:string}]}. `
+    + `checked:[string],notChecked:[string]${extra}${vote}${inventory.key}${asked ? ',lessonsApplied:[{id:string,applied:boolean,why:string}]' : ''},forLead?:string,memory?:[{op:"append"|"supersede"|"retire",id?:number,kind:"lesson"|"decision"|"feedback"|"reference"|"project",title:string,body:string,links?:object,reason:string}]}. `
     + 'Memory proposals are data, never applied automatically. At most 12; title <=480, body <=4000, reason <=400, links <=1000 characters. supersede/retire need a positive id; retire is only for lessons. Lesson fields: title <=120, rule <=300, trigger/why/evidence <=400 characters each; lesson body needs separate lines `- rule: <text>`, `- why: <text>`, `- evidence: <text>` (optional `- trigger: <text>`); put trigger in links.trigger and domain/anchor/status (active for a new lesson after the capture gate) in links for append. For lesson supersede, only links.trigger may change; live domain/anchor/status/globs remain. For retire, body supplies evidence (<=400 characters) if the live lesson has none; reason supplies why. '
     + (asked ? `lessonsApplied holds exactly one entry per lesson delivered in full above (ids ${lessons.join(', ')}): applied true when your work followed it, false when it did not bear on the work or you departed from it, and why in one sentence. ` : '')
     + (klass === 'coder' ? 'A done report carries criteria: one entry per acceptance criterion of the brief, each in your words, `check` naming the exact command in checks (typecheck, lint, cargo check or reproduction, or a test name inside it) that would fail if the criterion were false, or `check: null` with a reason when no runnable check exists. The last entry of each command in checks decides: after a red-before-fix run, record the same command again after the fix, or leave the red run out of checks and cite it in findings. ' : '')
     + 'No other keys; arrays may be empty. Evidence names a concrete file:line, command or URL and what it showed. '
     + 'reproduced:true means observed THIS turn by a command/test run or a file:line read; a cited path or URL alone is not proof. reproduced:false means an inferred consequence, not an observation; use severity "note" for it. Inferred findings are suggestions, never blockers; reproduce to promote. '
     + 'Do not guess: a result, value or fact you did not observe goes to notChecked, never into checked, checks or evidence as an inference. '
-    + `Keep it tight: the whole block under ${REPORT_AIM} characters (a longer one is not graded), each claim under ${CLAIM_AIM}, evidence about ${EVIDENCE_AIM}, a tail about ${TAIL_AIM}, each checked or notChecked entry about ${ITEM_AIM}, forLead about ${FOR_LEAD_AIM} and not repeating the findings. `
+    + inventory.guidance
+    + `Keep it tight: the ${inventory.size} under ${REPORT_AIM} characters (a longer one is not graded), each claim under ${CLAIM_AIM}, evidence about ${EVIDENCE_AIM}, a tail about ${TAIL_AIM}, each checked or notChecked entry about ${ITEM_AIM}, forLead about ${FOR_LEAD_AIM} and not repeating the findings. `
     + `More than ${MAX_FINDINGS} findings: keep the most severe and count the rest in forLead. The lead reads nothing but this block.`
     + (table ? ' Both turns carry `vote`: round 1 is your initial position; round 2 is your final vote, and `changedBy` names the other member\'s new evidence or is null.' : '');
 }
@@ -221,6 +251,18 @@ function strings(value: unknown, name: string): string | null {
   return bad === -1 ? null : `${name}[${bad}] must be non-empty text`;
 }
 
+/** Keys a report may omit: the lesson list and, for inventory roles, the table. */
+function optionalKeys(role: ReportRole): string[] {
+  return ['forLead', 'memory', ...(LESSON_ROLES.has(role) ? ['lessonsApplied'] : []), ...(['scout', 'researcher'].includes(role) ? ['table'] : [])];
+}
+
+/** The inventory-table rule: text within TABLE_MAX, present only for scout/researcher reports. */
+function tableProblem(report: Record<string, unknown>, optional: readonly string[]): string | null {
+  if (!optional.includes('table') || !Object.hasOwn(report, 'table')) return null;
+  if (typeof report.table !== 'string') return 'table must be text';
+  return report.table.length > TABLE_MAX ? `table has ${report.table.length} characters > ${TABLE_MAX}` : null;
+}
+
 /**
  * Every violation, not the first: a repair turn told only "claim #1 is too long"
  * fixed that and then failed on forLead (live 2026-09-22), so it is told all of them.
@@ -234,7 +276,7 @@ function check(report: Record<string, any>, role: ReportRole, lessons: readonly 
   role = contractRole(role);
   const problems: string[] = [];
   const add = (problem: string | null) => { if (problem) problems.push(problem); };
-  const optional = ['forLead', 'memory', ...(LESSON_ROLES.has(role) ? ['lessonsApplied'] : [])];
+  const optional = optionalKeys(role);
   // A stored row can carry a retired role (closed history): total lookup, so its report parses without a crash.
   const allowed = ['role', 'status', 'findings', 'checked', 'notChecked', ...optional, ...(EXTRA_KEYS[klass] ?? []), ...(table ? ['vote'] : [])];
   for (const key of Object.keys(report)) if (!allowed.includes(key)) add(`unknown key '${key}'`);
@@ -263,6 +305,7 @@ function check(report: Record<string, any>, role: ReportRole, lessons: readonly 
   if (Object.hasOwn(report, 'checked')) add(strings(report.checked, 'checked'));
   if (Object.hasOwn(report, 'notChecked')) add(strings(report.notChecked, 'notChecked'));
   if (Object.hasOwn(report, 'forLead')) add(text(report.forLead, 'forLead'));
+  add(tableProblem(report, optional));
   if (Object.hasOwn(report, 'memory')) problems.push(...checkMemory(report.memory));
   if (table) {
     if (!Object.hasOwn(report, 'vote')) add("missing 'vote': {option, confidence 0..1, changedBy}");

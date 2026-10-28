@@ -84,6 +84,7 @@ Implements the local orchestration daemon's seat lifecycle, durable state, chat,
 | `openReadOnlyStore` | Read-only SQLite connection for metrics consumers. |
 | `openStore` | Opens/configures/migrates the durable orchestration store. |
 | `SeatManager` | `seats.ts` seat/turn lifecycle controller used by integrations. |
+| `formatDigest` | `digest-text.ts`: human report delivery; checks retain the seat's claimed results without rerun annotations. Inventory tables use private artifact paths, or exact inline text for scout-request callers. |
 | `TurnLiveLog` | `seats.ts` bounded per-turn live log served to the board (task 2883). |
 | `TurnLiveEntry` | One live-log entry: a merged text/thought run or one tool call. |
 | `TURN_LOG_MAX_ENTRIES` | Live-log entry cap per turn; oldest dropped and counted as trimmed. |
@@ -140,6 +141,7 @@ Implements the local orchestration daemon's seat lifecycle, durable state, chat,
 | `SEAT_MCP_PATH` | Seat tool HTTP endpoint path. |
 | `SEAT_MCP_SERVER` | Managed seat MCP server identity. |
 | `codexEditActive` | `codex-edit.ts` verified editor activation predicate. |
+| `processCwdFields` | `sweep-shared.ts`: bounded cwd query in lsof PID/path field format. Linux rejects unreadable entries by default; signalling callers may set the skipUnreadable option to skip EACCES/EPERM. Darwin returns lsof output as supplied, including any unreadable annotations or omissions even on exit 0; it does not certify completeness. |
 
 Process-output helpers, configuration, lead readers, language, guards, instruments, diagnostic spans, build shims, role policy and host MCP/editor helpers now belong to `ops-orchestrator-shared`; their rows above describe the relocated APIs, not runtime ownership. `seats-defs.ts` retains compatibility re-exports of role policy for existing daemon consumers.
 
@@ -161,6 +163,10 @@ and reporting/check scripts. `pi-extension.ts` also has an SDK-loaded default ex
 - `HIGH_LOAD` in `limits.ts` is the high-load threshold consumed by stand runs; the registry entry does not re-export it.
 
 ## Invariants
+- Local close stops cwd holders of its owned worktree after the provider stops (TERM, then KILL after a short grace); query failures are logged, not closure failures. Remote seats are excluded.
+- A current-format backed-up checkout-only removal may finish a gitless leftover without Git only at the seat's owned, non-linked worktree path. It unlinks only enumerated disposable leaves and uses non-recursive rmdir for every directory, so late entries cannot be swept away by recursive deletion. Non-disposable leaves and read/removal errors keep the remainder with a reason; backups are preserved.
+- Turn settlement never reruns or host-probes claimed report checks. Digest and handoff delivery ignore legacy `checkVerify` rows; reported failures and missing-check criteria still flag (task 3227, decision #20677). Command recognition for Pi returns only acceptance or refusal, not execution arguments, cost or offline handling; the reported-check entry type is private to its normalizer.
+- Scout/researcher reports may carry an optional inventory `table` up to 60,000 characters. Corrections retain the original; grading receives only a row count. The daemon atomically writes private `tables/<turn>.md` artifacts before publishing paths and recreates them from stored reports on delivery after restart. Seats remain read-only.
 - Host admission keeps instrument availability boolean and fail-closed; per-tool checks distinguish `ok`, `absent`, and `timed out` with the raw error. Checks run in parallel with 4-second deadlines inside the 10-second load probe. Creation retries once only when unavailable required checks all timed out, never an absent or unknown verdict; refusals include each cause.
 - Image capabilities and catalog exceptions come from the ops-orchestrator-model-input (`docs/contracts/modules/ops-orchestrator-model-input.md` not in this kit) module's data-only entry, `model-input.ts`.
 - Credential kicks leave refreshes and credential writes to vendor CLIs; Claude uses non-inference `doctor` with auto-updates disabled, closed stdin, a hard SIGKILL deadline and a persisted 30-minute cooldown. Missing/unreadable credentials never authorize a kick. Source: `token-kick.ts`; `scripts/test-orch-usage.mjs` (not in this kit).
@@ -173,11 +179,13 @@ and reporting/check scripts. `pi-extension.ts` also has an SDK-loaded default ex
 - Hot-path seat reads use bounded queries/pages rather than parsing all closed history. Source: `store.ts` (`SeatQuery`, `pruneCandidatesPage`); `scripts/test-orch-store-hot-paths.mjs` (not in this kit).
 - Sweep leases and daily stamps supplied by `sweep-shared.ts` serialize daemon and manual CLI passes; scoped host passes never publish the all-host daily stamp, and dry-run leaves gate state untouched. Sweep scheduling and candidate safety belong to `ops-orchestrator-surface`.
 - Checkout-owning roles (coder, tester, designer, copywriter, reviewer, legal, security and bughunter) are told to remove comparison worktrees before reporting; read-only roles receive no such instruction. Source: `context.ts`; `scripts/test-orch-context-wait.mjs` (not in this kit).
+- Seat report memory proposals remain visible in digests and never trigger automatic lesson capture, repair turns or recovery replay. The lead captures lessons with `node scripts/memory/capture-lesson.mjs`; historical application ledger rows remain readable.
+- Placement ranks this Mac with 6 cores and 12 GB taken off its free capacity (floored at zero) and gives an equal value to a host; a lead's `needs: mac` keeps its stated `needs_reason` in the placement reason (task 3288). Source: `placement.ts`, `seats-create.ts`; `scripts/test-orch-placement.mjs` (not in this kit).
 - Lesson application is recorded only for lessons actually delivered in full; full lead delivery cannot be downgraded by indexed delivery. Source: `store.ts` (delivery methods); `scripts/test-orch-core.mjs` (not in this kit).
 
 ## Dependencies
 
-- `ops-orchestrator-exec` — worktree/process execution, remote repository operations, locks, logging and check verification.
+- `ops-orchestrator-exec` — worktree/process execution, remote repository operations, locks, logging and check command recognition.
 - `ops-orchestrator-shared` — configuration, guards, instruments and shared launch policy.
 - `ops-orchestrator-model-input` — data-only image capabilities and catalog exceptions.
 - `ops-orchestrator-providers` — session types, routing and managed process launch.
@@ -207,3 +215,4 @@ and reporting/check scripts. `pi-extension.ts` also has an SDK-loaded default ex
 
 - Task 2409 slice C: document existing store entry and production integration seams; no daemon behavior change.
 - Task 3141 slice A: retain 40 runtime source files and this contract; split surface and execution ownership without moving files or changing code.
+- Task 3288: Mac placement reserve and the stored `needs_reason`; no Public API symbol change.

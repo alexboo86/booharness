@@ -1,5 +1,9 @@
 import type { SeatManager } from './seats.ts';
 import type { Seat } from './store.ts';
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { inside, processCwdFields } from './sweep-shared.ts';
 import { branchTip, checkoutInUse, coderRepo, clearCaches, DAY_MS, dropIdleSeatTargets, idleCloseCandidate, inspectIdleCoder, LeadRepoMissingError, ownedWorktree, pruneAgedMirror, pruneLanded, type PruneDecision } from './prune.ts';
 import { noteCodegraphDaemonStop, removeWorktree } from './worktrees.ts';
 import { hasWorktree, ROLE_POLICY, landable } from './seats-defs.ts';
@@ -24,7 +28,6 @@ export async function close(self: SeatManager, seatId: string): Promise<Seat> {
     // Wake queued waiters now, even if the running provider ignores cancellation or
     // provisioning has not completed. The chain later skips these ended turns.
     self.closing.add(seatId);
-    self.verifying.get(seatId)?.abort();
     for (const turn of self.store.listTurns(seatId)) {
       if (turn.status !== 'queued') continue;
       self.drainHeld.delete(turn.id);
@@ -100,6 +103,47 @@ export async function clearSeatCaches(self: SeatManager, seatId: string): Promis
     }
   }
 
+function cwdPids(fields: string, root: string): number[] {
+  const pids = new Set<number>();
+  let pid = 0;
+  for (const field of fields.split('\n')) {
+    if (/^p\d+$/.test(field)) pid = Number(field.slice(1));
+    if (field.startsWith('n') && pid > 0 && pid !== process.pid &&
+        path.isAbsolute(field.slice(1)) && inside(root, field.slice(1))) pids.add(pid);
+  }
+  return [...pids];
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals | 0): boolean {
+  try { process.kill(pid, signal); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function stopWorktreeProcesses(self: SeatManager, seat: Seat): Promise<void> {
+  if (typeof seat.data.host === 'string' || seat.data.provisionHeld === true) return;
+  try {
+    const worktree = ownedWorktree(self.options.stateDir, seat);
+    if (!worktree) return;
+    const root = await realpath(worktree);
+    const pids = cwdPids(await processCwdFields({ skipUnreadable: true }), root);
+    const errors: string[] = [];
+    const signal = (pid: number, kind: NodeJS.Signals | 0): boolean => {
+      try { return signalPid(pid, kind); }
+      catch (error) { errors.push((error as Error).message); return false; }
+    };
+    const sent = pids.filter((pid) => signal(pid, 'SIGTERM'));
+    if (sent.length) await delay(500);
+    const killed = sent.filter((pid) => signal(pid, 0) && signal(pid, 'SIGKILL'));
+    if (pids.length) self.store.appendEvent('seat.worktree_processes_stopped', { pids, killed, errors }, seat.id);
+    if (errors.length) self.options.log('warn', 'seat.worktree_process_stop_failed', { seat: seat.id, errors });
+  } catch (error) {
+    self.options.log('warn', 'seat.worktree_process_stop_failed', { seat: seat.id, message: (error as Error).message });
+  }
+}
+
 export async function closeNow(self: SeatManager, seatId: string, keepOnError = false): Promise<Seat> {
     self.store.appendEvent('seat.close_now_start', { seat: seatId }, seatId);
     self.options.log('info', 'seat.close_now_start', { seat: seatId });
@@ -112,8 +156,12 @@ export async function closeNow(self: SeatManager, seatId: string, keepOnError = 
     const held = seat.data.provisionHeld === true;
     const patch: Record<string, unknown> = { ...(data.closePending === true ? { closePending: false } : {}),
       ...(held ? { provisionHeld: false, worktreeRemoved: true } : {}) };
+    await stopWorktreeProcesses(self, seat);
+    // One instant for closedAt and remoteCleanupSince, so a coder's two dates never differ.
+    const closedAt = new Date().toISOString();
     // A verified host checkout is cleaned up after local closure; unowned paths are never touched.
-    if (self.remoteRemovalPending(seat)) patch.remoteCleanupPending = true;
+    // remoteCleanupSince dates the pending note for every role: only a coder records closedAt (task 3287).
+    if (self.remoteRemovalPending(seat)) Object.assign(patch, { remoteCleanupPending: true, remoteCleanupSince: closedAt });
     // A reviewer's checkout is disposable; a coder's branch and worktree stay for the lead to land.
     if (!held && seat.worktree && !data.worktreeRemoved && ROLE_POLICY[seat.role as SeatRole].worktree === 'detached') {
       try {
@@ -126,7 +174,7 @@ export async function closeNow(self: SeatManager, seatId: string, keepOnError = 
       }
     }
     if (landable(seat.role)) {
-      patch.closedAt = new Date().toISOString();
+      patch.closedAt = closedAt;
       if (keepOnError) patch.autoClosedIdle = true;
       const deferred = Object.keys((data.deferredReplacements as Record<string, DeferredReplacement> | undefined) ?? {});
       if (deferred.length) {

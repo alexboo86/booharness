@@ -142,6 +142,11 @@ export async function createIdempotent(self: SeatManager, input: CreateSeat, cho
     return result!;
   }
 
+/** The placement reason of a lead's needs mac, with the reason the lead stated (task 3288). */
+function macPinNote(stated: string | undefined): string {
+  return `needs mac${stated ? ` (${stated})` : ''}: this Mac, not probed (decision #12522)`;
+}
+
 function sameCheckout(left: string, right: string): boolean {
   if (existsSync(left) && existsSync(right)) {
     try { return realpathSync(left) === realpathSync(right); }
@@ -505,7 +510,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
       else if (hostName !== undefined) placement = { needs: (input.needs as PlatformNeed | undefined) ?? null, target: hostName, reason: 'explicit host from the lead' };
       else if (!probed) placement = { needs, target: 'local', reason: input.needs === undefined
             ? `needs omitted (default any; decision #12591): ${probing ? 'no registered hosts; this Mac' : `${input.family === 'claude' ? 'claude' : input.standArm !== undefined ? 'standArm' : 'native harness'} stays on this Mac`}, not probed`
-            : 'needs mac: this Mac, not probed (decision #12522)' };
+            : macPinNote(input.needsReason) };
       else {
         const active = self.activeByTarget();
         const candidate = (target: Target, platform: NodeJS.Platform): Candidate => ({ platform, probe: probed.get(target)!, activeSeats: active.get(target) ?? 0 });

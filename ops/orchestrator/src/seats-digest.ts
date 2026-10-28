@@ -1,14 +1,14 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, lstatSync, mkdtempSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import type { SeatManager } from './seats.ts';
 import type { Family, ProviderSession, SessionSpec, Usage } from './providers/types.ts';
 import { instrumentsOff, offEnv, seatInstruments } from './shared.entry.ts';
 import { isStandArm, standEnv } from './stand.ts';
 import { gradeFlags, SUPPORTED_P, type Finding, type Grade } from './grading.ts';
-import { deliveryReport, parseReport, WITHDRAWN } from './report.ts';
+import { deliveryReport, parseReport, tableRows, WITHDRAWN } from './report.ts';
 import { lessonApplications, type MemoryProposal } from './memory-proposals.ts';
 import { TERMINAL_TURN, drainWarning, type Seat, type Turn, type TurnEnd } from './store.ts';
-import { lastCheckResults, type VerifiedCheck } from './check-verify.ts';
+import { lastCheckResults } from './check-verify.ts';
 import { criteriaFlags, modelCallFlags } from './digest-text.ts';
 import { seatToolEnv } from './shared.entry.ts';
 import { worktreeChanges } from './worktrees.ts';
@@ -220,6 +220,35 @@ async function modifiedTrackedTestFlags(self: SeatManager, seat: Seat, checkout:
 }
 
 
+/** Rebuilt from the durable report on delivery too, so restart/missing artifacts cannot yield dead paths. */
+export function persistTable(self: SeatManager, turnId: string, report: Record<string, unknown>): Digest['table'] {
+  if (!['scout', 'researcher'].includes(String(report.role)) || typeof report.table !== 'string') return undefined;
+  if (!/^(?:scout|researcher)-[a-z][a-z0-9-]*-[0-9a-f]{6}\.[1-9]\d*$/.test(turnId)) throw new Error('invalid table turn id');
+  const dir = path.join(self.options.stateDir, 'tables');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!lstatSync(dir).isDirectory() || lstatSync(dir).isSymbolicLink()) throw new Error('table directory is not a real directory');
+  chmodSync(dir, 0o700);
+  const temp = mkdtempSync(path.join(dir, '.write-'));
+  const file = path.join(dir, `${turnId}.md`);
+  try {
+    const pending = path.join(temp, 'table.md');
+    writeFileSync(pending, report.table, { mode: 0o600, flag: 'wx' });
+    renameSync(pending, file);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+  return { rows: tableRows(report.table), path: file };
+}
+
+/** Digest fields for the turn's inventory table; a failed write becomes a flag, never a broken digest. */
+function tableFields(self: SeatManager, turnId: string, report: Pick<Digest, 'report' | 'flags'>): { table?: Digest['table'] } {
+  let table: Digest['table'] = undefined;
+  try {
+    if (report.report) table = persistTable(self, turnId, report.report);
+  } catch (error) {
+    report.flags.push(`table unavailable: ${(error as Error).message}`);
+  }
+  return table ? { table } : {};
+}
+
 export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
     const seat = self.store.getSeat(turn.seat_id)!;
     const data = seat.data as SeatData;
@@ -233,6 +262,7 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
         }
       : null;
     const report = self.reportOf(turn);
+    const table = tableFields(self, turn.id, report);
     const syncFailure = landable(seat.role) ? (data.remoteSyncFailures as Record<string, string> | undefined)?.[turn.id] : undefined;
     const leftOut = landable(seat.role) ? (data.remoteSyncInvalidPaths as Record<string, string[]> | undefined)?.[turn.id] : undefined;
     const circling = !syncFailure && seat.role === 'coder' && turn.seq >= 3 ? await self.circlingFlags(seat, turn, report.report) : [];
@@ -240,8 +270,6 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
     const checkout = changesCheckout(seat, syncFailure);
     const changes = checkout ? await worktreeChanges(checkout.worktree, checkout.base) : null;
     const testEditFlags = await modifiedTrackedTestFlags(self, seat, checkout);
-    const verified: VerifiedCheck[] = seat.role === 'coder' ? data.checkVerify?.[turn.id] ?? [] : [];
-    const verifiedFails = verified.filter((check) => check.result === 'fail').map((check) => `claimed pass failed on rerun${typeof data.host === 'string' ? ` on host ${data.host}` : ''}: ${check.command}`);
     const drain = turn.status === 'queued' ? self.store.drainStatus() : null;
     const language = languageFor(self, turn, report.report);
     // Historical support outcomes must read authored severity, not the delivery projection.
@@ -267,9 +295,10 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
       error: turn.error,
       ...(isStandArm(data.standArm) ? { sessionJsonl: typeof data.sessionId === 'string' && data.sessionId.startsWith(`${path.join(self.options.stateDir, 'ab-stand', 'arms', data.standArm, 'sessions')}${path.sep}`) ? data.sessionId : null } : data.harness === 'native' && (seat.family === 'claude' || seat.family === 'glm') ? { sessionJsonl: claudeTranscriptPath(self.options.home, seat.cwd!, typeof data.sessionId === 'string' ? data.sessionId : '') } : {}),
       ...report,
+      ...table,
       report: report.report ? deliveryReport(report.report) : null,
-      lessonApplications: lessonApplications(self.store, turn.id, (report.report?.memory ?? []) as MemoryProposal[], seat.role, self.afterTurnPending(turn.id, 'auto-apply')),
-      flags: [...modelCallFlags(usage?.raw, data.harness, seat.family), ...compactionFlags, ...(data.compactionFailuresByTurn?.[turn.id] ?? []).map((error: string) => `Pi compaction failed: ${error}`), ...(data.harness === 'pi' && data.toolsMissingByTurn?.[turn.id]?.length ? [`tools missing: ${data.toolsMissingByTurn[turn.id].join(', ')}`] : []), ...(drain ? [`held by drain: ${drainWarning(drain)}`] : []), ...(data.remoteProvisionNotes ?? []), ...(data.noFilesTurn === turn.id ? [NO_FILES_WARNING] : []), ...(seat.role === 'coder' && turn.duration_ms !== null && turn.duration_ms > 25 * 60_000 ? ['long turn: over 25 minutes'] : []), ...circling, ...regressed, ...(syncFailure ? [`remote turn sync failed: ${syncFailure}; mirror and recorded tree unavailable`] : []), ...(leftOut?.length ? [`remote turn sync left out invalid paths: ${leftOut.join(', ')}`] : []), ...testEditFlags, ...verifiedFails, ...criteriaFlags(report.report, verified), ...watchFlags(turn.watch), ...report.flags, ...inferredHints, ...(turn.status === 'done' && turn.tools === 0 && turn.seq === 1 && ['scout', 'critic', 'coder', 'tester', 'designer', 'copywriter', 'reviewer', 'legal', 'security', 'bughunter'].includes(seat.role) ? [`no tool calls: this ${seat.role} turn finished done without calling a tool`] : [])],
+      lessonApplications: lessonApplications(self.store, turn.id, (report.report?.memory ?? []) as MemoryProposal[]),
+      flags: [...modelCallFlags(usage?.raw, data.harness, seat.family), ...compactionFlags, ...(data.compactionFailuresByTurn?.[turn.id] ?? []).map((error: string) => `Pi compaction failed: ${error}`), ...(data.harness === 'pi' && data.toolsMissingByTurn?.[turn.id]?.length ? [`tools missing: ${data.toolsMissingByTurn[turn.id].join(', ')}`] : []), ...(drain ? [`held by drain: ${drainWarning(drain)}`] : []), ...(data.remoteProvisionNotes ?? []), ...(data.noFilesTurn === turn.id ? [NO_FILES_WARNING] : []), ...(seat.role === 'coder' && turn.duration_ms !== null && turn.duration_ms > 25 * 60_000 ? ['long turn: over 25 minutes'] : []), ...circling, ...regressed, ...(syncFailure ? [`remote turn sync failed: ${syncFailure}; mirror and recorded tree unavailable`] : []), ...(leftOut?.length ? [`remote turn sync left out invalid paths: ${leftOut.join(', ')}`] : []), ...testEditFlags, ...criteriaFlags(report.report), ...watchFlags(turn.watch), ...report.flags, ...inferredHints, ...(turn.status === 'done' && turn.tools === 0 && turn.seq === 1 && ['scout', 'critic', 'coder', 'tester', 'designer', 'copywriter', 'reviewer', 'legal', 'security', 'bughunter'].includes(seat.role) ? [`no tool calls: this ${seat.role} turn finished done without calling a tool`] : [])],
       watch: turn.watch,
       scope: turn.watch?.scope ?? null,
       worktree: changes && seat.worktree ? { path: seat.worktree, branch: data.branch, files: changes.files, stat: changes.stat } : null,
@@ -277,7 +306,6 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
       // Registered routing not yet recorded: say so rather than show no recheck (task 1620, memory #12411).
       recheckNotes: [...(data.recheckResults?.[turn.id]?.notes ?? []), ...(self.afterTurnPending(turn.id, 'rechecks') ? ['recheck routing pending: not settled yet; read the coder seat\'s recheckResults or seat.rechecks events'] : [])],
       support,
-      verified,
       ...(language ? { language } : {}),
     };
   }

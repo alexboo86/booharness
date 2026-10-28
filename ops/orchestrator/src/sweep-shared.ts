@@ -1,8 +1,10 @@
 // Task 2861 review: the one shared gate and traversal helpers of the four disk
 // sweeps (target, tmp, worktree, backup). The gate answers "may this pass run";
 // the helpers validate, walk and measure trees the same way everywhere.
-import { lstat, mkdir, open, opendir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, opendir, readFile, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import path from 'node:path';
 
 export const DAY = 24 * 60 * 60_000;
@@ -18,6 +20,35 @@ export const DROP_GRACE = HOUR;
 const LEASE_MAX_AGE = DAY;
 
 export function missing(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+
+async function processCwd(pid: string, skipUnreadable: boolean): Promise<string | null> {
+  try { return await readlink(`/proc/${pid}/cwd`); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH' || code === 'ENOENT') return null;
+    if (skipUnreadable && (code === 'EACCES' || code === 'EPERM')) return null;
+    throw error;
+  }
+}
+
+/** One bounded system-wide cwd query in lsof's PID/path field format.
+ * Linux rejects unreadable entries by default (deletion safety); signalling may
+ * skip permission-denied entries. Darwin returns lsof's possibly partial output. */
+export async function processCwdFields(options: { skipUnreadable?: boolean } = {}): Promise<string> {
+  if (process.platform === 'darwin')
+    return (await promisify(execFile)('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn'],
+      { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 })).stdout;
+  if (process.platform !== 'linux') throw new Error('cwd snapshot unsupported on this platform');
+  const deadline = Date.now() + 10_000;
+  let fields = '';
+  for await (const entry of await opendir('/proc')) {
+    if (Date.now() > deadline) throw new Error('cwd snapshot timed out');
+    if (!/^\d+$/.test(entry.name)) continue;
+    const cwd = await processCwd(entry.name, options.skipUnreadable === true);
+    if (cwd !== null) fields += `p${entry.name}\nn${cwd}\n`;
+  }
+  return fields;
+}
 
 export function inside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);

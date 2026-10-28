@@ -1,4 +1,4 @@
-import { checkCommand, type VerifiedCheck } from './check-verify.ts';
+import { checkCommand } from './check-verify.ts';
 import type { Digest } from './seats.ts';
 
 // Preserve backslashes and the entire text; continuation lines remain under their item.
@@ -24,12 +24,11 @@ export function modelCallFlags(raw: unknown, harness: unknown, family: unknown):
 
 /**
  * One flag per done-report criterion that nothing runnable proves: no check at all, a check that
- * names no command in checks, or a command orch's rerun did not pass (task 1641).
+ * names no command in checks (task 1641). Reported failures are flagged by reportOf.
  */
-export function criteriaFlags(report: Record<string, unknown> | null | undefined, verified: readonly VerifiedCheck[]): string[] {
+export function criteriaFlags(report: Record<string, unknown> | null | undefined): string[] {
   if (!report || report.status !== 'done' || !Array.isArray(report.criteria)) return [];
   const checks = (report.checks ?? []) as { command: string }[];
-  const reruns = new Map(verified.map((entry) => [entry.command, entry]));
   const flags: string[] = [];
   for (const [i, entry] of (report.criteria as CriterionEntry[]).entries()) {
     const label = `criterion ${i + 1} (${String(entry.criterion).slice(0, 80)})`;
@@ -37,10 +36,6 @@ export function criteriaFlags(report: Record<string, unknown> | null | undefined
     const named = String(entry.check);
     const hit = checks.find((check) => checkCommand(check.command) === checkCommand(named) || check.command.includes(named));
     if (!hit) { flags.push(`${label}: check names no command in checks: ${named}`); continue; }
-    const rerun = reruns.get(checkCommand(hit.command));
-    if (!rerun) flags.push(`${label}: check not verified by orch rerun: ${hit.command}`);
-    else if (rerun.result === 'fail') flags.push(`${label}: check failed on rerun: ${hit.command}`);
-    else if (rerun.result !== 'pass') flags.push(`${label}: check unverified (${rerun.reason ?? 'no reason'}): ${hit.command}`);
   }
   return flags;
 }
@@ -53,8 +48,15 @@ function languageLine(language: NonNullable<Digest['language']>): string {
   return `judged ${language.judgedWords}, violations ${language.violationsPer100Words} per 100 words, technical names ${language.technicalNameShare}%, long sentences ${language.longSentences}, rejected ${rejected}, unknown ${unknown}`;
 }
 
+/** The inventory-table digest row: inline text when asked for, else the persisted artifact's row count and path. */
+function tableLines(report: Record<string, unknown>, digest: Digest, inlineTable?: boolean): string[] {
+  if (inlineTable && typeof report.table === 'string') return [`table:\n${report.table}`];
+  if (digest.table) return [`table: ${digest.table.rows} rows -> ${digest.table.path}`];
+  return [];
+}
+
 /** Human delivery for wait and seat_wait. The raw digest remains available with --json / json: true. */
-export function formatDigest(digest: Digest): string {
+export function formatDigest(digest: Digest, options: { inlineTable?: boolean } = {}): string {
   const rows: string[] = [];
   for (const flag of digest.flags ?? []) rows.push(`FLAG: ${item(flag)}`);
   rows.push(`seat ${item(digest.seat)} · role ${item(digest.role)} · family ${item(digest.family)} · turn ${item(digest.turn)} · status ${item(digest.status)} · seconds ${digest.seconds ?? 'n/a'} · tokens ${digest.tokens?.total ?? 'n/a'} · tools ${digest.tools ?? 'n/a'} · error ${digest.error == null ? 'none' : item(digest.error)}`);
@@ -87,13 +89,14 @@ export function formatDigest(digest: Digest): string {
     return rows.join('\n');
   }
   rows.push(`report: ${item(report.status)}`);
+  rows.push(...tableLines(report, digest, options.inlineTable));
   const findings = (report.findings ?? []) as { severity: string; claim: string; evidence: string; reproduced: boolean }[];
   const active = findings.filter((finding) => finding.severity !== 'withdrawn');
   const advisory = report.verdict === 'REQUEST_CHANGES' && active.length > 0 && active.every((finding) => !finding.reproduced);
   if (report.verdict !== undefined) rows.push(`verdict: ${item(report.verdict)}${advisory ? ' (advisory; suggestions only)' : ''}`);
   const proposals = (report.memory ?? []) as { op: string; id?: number; title: string; reason: string; body: string; links?: Record<string, unknown> }[];
   if (proposals.length) {
-    rows.push(`memory proposals: ${proposals.length} (worker lesson appends auto-apply at completion; lesson supersede/retire and non-lessons require lead memory_apply ${item(digest.turn)})`);
+    rows.push(`memory proposals: ${proposals.length} (lessons require lead capture: node scripts/memory/capture-lesson.mjs; other proposals require lead memory_apply ${item(digest.turn)})`);
     for (const application of digest.lessonApplications ?? []) {
       rows.push(`lesson[${application.index}]: ${item(application.title)} · ${item(application.outcome)}`);
     }
@@ -109,13 +112,8 @@ export function formatDigest(digest: Digest): string {
     const label = !finding.reproduced && finding.severity !== 'withdrawn' ? 'suggestion' : finding.severity;
     rows.push(`[${item(label)}] ${item(finding.claim)} — ${item(finding.evidence)} (${finding.reproduced ? 'observed; reproduced' : 'inferred; not reproduced'})`);
   }
-  const verified = new Map((digest.verified ?? []).map((check) => [check.command, check]));
   for (const check of (report.checks ?? []) as { command: string; result: string; tail: string }[]) {
-    const rerun = check.result === 'pass' ? verified.get(checkCommand(check.command)) : undefined;
-    const location = rerun?.host ? ` on host ${item(rerun.host)}` : '';
-    const tag = !rerun ? '' : rerun.result === 'pass' ? ` [verified${location}]`
-      : rerun.result === 'fail' ? ` [VERIFIED FAIL${location}: ${item(rerun.line ?? 'no output')}]` : ` [unverified${location} (${item(rerun.reason ?? 'no reason')})]`;
-    rows.push(`${item(check.command)}: ${item(check.result)}${tag}${check.tail ? ` — ${item(check.tail)}` : ''}`);
+    rows.push(`${item(check.command)}: ${item(check.result)}${check.tail ? ` — ${item(check.tail)}` : ''}`);
   }
   if (report.changedFiles !== undefined) rows.push(`changedFiles: ${(report.changedFiles as string[]).map(item).join(', ') || '(none)'}`);
   for (const [i, criterion] of ((report.criteria ?? []) as CriterionEntry[]).entries()) {

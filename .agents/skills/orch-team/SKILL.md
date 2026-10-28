@@ -189,7 +189,7 @@ was last seen over 24 hours ago; a named post keeps every row (task 2305).
 
 | role | for | seat |
 |---|---|---|
-| scout | facts across 3+ files, logs, memory; one question; never a design or a "how to" | read-only, cheap families only, closes after one answer |
+| scout | facts across 3+ files, logs, memory; one question; never a design or a "how to"; never a measurement (a node, sqlite or timing run): a tester or the lead runs it (task 3227, operator #20706) | read-only (rg, codegraph, memoryctl search), cheap families only, closes after one answer |
 | researcher | the open web: versions, docs, prior art | read-only, one question, URL and date per claim; this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`) |
 | debater | a fork with two defensible answers; two seats, one side each | read-only; one answer, then one rebuttal of the other side |
 | coder | an agreed plan with a named check | own worktree, branch `orch/<seat>`, kept for landing |
@@ -283,11 +283,13 @@ A round table (operator #19423) is debaters on different families answering ONE 
   Override only on purpose.
 - **Leave `needs` out too.** Distribution exists to offload this Mac (operator
   #12590, #12591): orch probes the Mac and every host in `hosts.json` and places
-  the seat on the highest free capacity (free cores and free memory, task 2358);
+  the seat on the highest free capacity (free cores and free memory, task 2358;
+  this Mac counts 6 cores and 12 GB less, and a tie goes to a host, task 3288);
   claude, native harnesses and stand arms stay
   on the local machine by their configured runtime policy. Adapt project-specific placement rules before enabling remote work. Pass
-  `needs: mac` only when the seat must touch something that exists only on this
-  Mac: a project runtime installed only there, the orch store or other state under
+  `needs: mac`, with `needs_reason` naming the thing (orch refuses a bare pin
+  without a `<project-specific>/` file, task 3288), only when the seat must touch
+  something that exists only on this Mac: a project runtime installed only there, the orch store or other state under
   `~/.local/state`, a service on the Mac's loopback or credentials kept only on
   the Mac (a host's 127.0.0.1 is the host, and remote seats do not inherit the
   daemon's environment), uncommitted files a scout or researcher reads in place
@@ -605,8 +607,8 @@ Each line below was one or more refused calls in a single lead session.
   because the gates report one failure at a time:
   1. No commit needs a page edit or a lesson (operator #19505). When the change
      moves what a knowledge page maps, edit that page and run
-     `node scripts/stamp-knowledge-page.mjs <page> --amended "<what>"` (`scripts/stamp-knowledge-page.mjs` not in this kit); the history
-     gate judges the new lines. The size gate (`scripts/check-knowledge-size.mjs` (not in this kit),
+     `node scripts/stamp-knowledge-page.mjs <page> --amended "<what>"` (`scripts/stamp-knowledge-page.mjs` not in this kit). The page
+     holds the map; progress and history go to memoryctl. The size gate (`scripts/check-knowledge-size.mjs` (not in this kit),
      task 2398) refuses growth of a page part above 16,384 prose bytes and a new
      line above 2,048 bytes. A part is a `## ` section, or a file of a split page.
      Put new text in a new part with its `verified:` line and a proof (in a split
@@ -621,19 +623,16 @@ Each line below was one or more refused calls in a single lead session.
      `node ops/bootstrap/install-harness.mjs --only skills` and then
      `node scripts/check-skills-drift.mjs`.
   4. Commit with `git add -- <paths>` and `git commit -F - -- <paths>`, never `-A`.
-  5. The LAST gate of `check:commit` runs only the non-live orch tests whose own inputs
-     hold a path of the commit, and prints them (operator #16333, task 2384). A test's
-     inputs are the `scripts/test-orch-*.mjs` file itself, each file that it imports or
-     names in a string and, for a test that reads the skill map, the `SKILL.md` of each
-     role-default skill. An added test file selects by the same rule; a commit that
-     deletes a test file runs the whole suite, about 5 minutes. Give the Bash call a timeout of 10
-     minutes, or run it as a background task. The worktree needs the orch dependencies:
-     `npm ci --prefix ops/orchestrator`; the gate names that command when they are absent.
-     The tests run on the Mac only: on a different platform the gate refuses such a
-     change. The whole suite runs before an orch restart, not at a commit:
+  5. `check:commit` runs no orch test (operator #20673, task 3227). For a change under
+     `ops/orchestrator`, run the tests that cover it once, after the last edit:
+     `node scripts/check-orch-tests.mjs --commit-scope <paths>` (`scripts/check-orch-tests.mjs` not in this kit) runs the non-live orch
+     tests whose own inputs hold one of the paths (the test file, each file it imports
+     or names in a string, and the role-default `SKILL.md` files for a test that reads
+     the skill map). It needs `npm ci --prefix ops/orchestrator` and runs on the Mac
+     only. The whole suite runs before an orch restart, not at a commit:
      `npm run check:orch-tests` on the checkout that the daemon loads. A pass writes
-     `<stateDir>/orch-suite-pass.json` with the hash of the suite inputs, and this also
-     covers a clean merge, which passes no gate.
+     `<stateDir>/orch-suite-pass.json` with the hash of the suite inputs; a restart
+     without it is refused.
 - **Lesson size:** the budgets (title 120, rule 300, why/evidence 400) are hard
   ceilings unless `--long` explains why; the targets are advice: title ~40
   characters, rule one sentence ~110, why ~120, evidence ~70 (a seat/turn id or sha).

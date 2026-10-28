@@ -6,23 +6,10 @@ import { readHost, readHosts } from './config.ts';
 import { dirExistsOnHost, dropGoneRegistration, HostTimeout, removeCheckout, type DirProbe } from './remote-repo.ts';
 import { listRemoteCheckouts, removeOrphanMirror } from './remote-worktree.ts';
 import { ROLE_POLICY, landable, remoteCheckoutGone } from './seats-defs.ts';
-import { LESSON_ROLES } from './report.ts';
 import type { SeatRole, SeatData } from './seats-defs.ts';
 import { armRebuttalClose, REBUTTAL_IDLE_MS } from './seats-close.ts';
 
 export async function recover(self: SeatManager): Promise<void> {
-    // A turn can be committed before auto-apply begins, or the daemon can die
-    // during the gate. Replay only missing/gate/retryable phases; the ledger
-    // guards an append that may already have reached memoryd.
-    const lessonRoles = [...LESSON_ROLES].map((role) => `'${role}'`).join(', ');
-    const pending = self.store.db.prepare(`SELECT t.id FROM turns t JOIN seats s ON s.id = t.seat_id
-      WHERE t.status = 'done' AND t.text IS NOT NULL AND s.role IN (${lessonRoles})
-        AND t.ended_at >= (SELECT applied_at FROM schema_version WHERE version = 5)
-      ORDER BY t.ended_at, t.id`).all() as { id: string }[];
-    for (const { id } of pending) {
-      try { await self.options.autoLessons(self.store, id, undefined, undefined, true); }
-      catch (error) { self.options.log('warn', 'seat.lesson_recovery_failed', { turn: id, message: (error as Error).message }); }
-    }
     const rows = self.store.listSeats();
     // Only names orch creates, immediately beneath its own roots. An absent row
     // cannot be handled by the per-seat recovery loop below.

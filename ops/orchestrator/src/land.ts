@@ -7,7 +7,6 @@ import path from 'node:path';
 import type { Store } from './store.ts';
 import { parseNumstat } from './review-plan.ts';
 import { copyIndex } from './worktrees.ts';
-import { landLessons } from './memory-proposals.ts';
 import { landable, pathInWriteScope, remoteCheckoutGone, TEST_FILE_GLOBS, writeScopeOf } from './seats-defs.ts';
 
 const exec = promisify(execFile);
@@ -197,16 +196,9 @@ async function locked<T>(target: string, action: () => Promise<T>): Promise<T> {
   }
 }
 
-/** A landing with a full store also reports deferred lessons; a landed change never fails on that report. */
-export async function land(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSeat'> & Partial<Store>, seatId: string, into?: string, lessonOptions: Parameters<typeof landLessons>[2] = {}, overrideReason?: string) {
-  const result = await landPatch(store, seatId, into, overrideReason);
-  if (!store.db) return result;
-  try {
-    const lessons = await landLessons(store as Store, seatId, lessonOptions);
-    return lessons ? { ...result, lessons } : result;
-  } catch (error) {
-    return { ...result, lessons: { error: `deferred lesson report failed: ${(error as Error).message}` } };
-  }
+/** Land code only. The retired lesson-options slot stays reserved for existing callers. */
+export async function land(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSeat'> & Partial<Store>, seatId: string, into?: string, _lessonOptions: unknown = {}, overrideReason?: string) {
+  return landPatch(store, seatId, into, overrideReason);
 }
 async function landPatch(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSeat'> & Partial<Store>, seatId: string, into?: string, overrideReason?: string) {
   const seat = store.getSeat(seatId);
@@ -221,7 +213,8 @@ async function landPatch(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSea
   if (cleanupOutstanding) {
     const refuse = (why: string, detail = ''): never => { throw new Error(`seat '${seatId}' has not safely mirrored its remote checkout: ${why}; retry seat_close before landing${detail}`); };
     if (seat.data.remoteCleanupPending !== false) {
-      const began = typeof seat.data.closedAt === 'string' ? ` began at ${seat.data.closedAt}` : ' (start time was not recorded)';
+      const since = [seat.data.remoteCleanupSince, seat.data.closedAt].find((at) => typeof at === 'string');
+      const began = since ? ` began at ${since}` : ' (start time was not recorded)';
       refuse('remote close has not finished recording its mirror and cleanup outcome', `; pending remote close${began}; repeated seat_close does not hurry it`);
     }
     recorded = seat.data.remoteSnapshot as typeof recorded;

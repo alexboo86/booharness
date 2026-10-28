@@ -6,19 +6,23 @@ branches; `.githooks/pre-push` distinguishes LAN sync from publication.
 outside worktrees (`scripts/check-push-safety.mjs`).
 
 `scripts/check-commit.mjs` (not in this kit) checks domain-page coverage or reasoned source exceptions,
-runs the Jev ledger guard from repository root, paths-mode large-file/module-boundary
-checks, and knowledge anchors/size/history. Docs-only entries select no lint gate.
+paths-mode large-file/module-boundary checks, and knowledge anchors/size; every
+gate child runs at niceness 10. Commit entries select the whole-corpus gates: legal
+copy (web/**, ledger), i18n (src/**), duplicate constants and runtime cycles (src/**, root resolver configs, baselines), module cycles (code,
+contracts, docs/architecture/**), the Jev ledger guard from repository root (.mjs/.js/.ts
+outside web/); a gate's own script or import selects it, an unreadable tree selects all.
+Docs-only entries select no lint gate.
 Commit-tree entries, not pathspec spelling, select lint: eslint config/package/lock
 changes run the ratchet; other lintable files compare HEAD and commit-tree counts,
-using old paths on rename. Growth fails, equal/lower passes. Lint-script changes run
-their unit suites (`scripts/check-lint-ratchet.mjs` (not in this kit), `scripts/check-lint-growth.mjs` (not in this kit),
-`scripts/check-lint-script-tests.mjs` (not in this kit)). Boundary checks require TypeScript installed;
+using old paths on rename. Growth fails, equal/lower passes (`scripts/check-lint-ratchet.mjs` (not in this kit),
+`scripts/check-lint-growth.mjs` (not in this kit)). Boundary checks require TypeScript installed;
 the rules live in `docs/architecture/module-boundaries.md` (not in this kit).
 
-The last gate, only with paths and no earlier failure, runs
-`scripts/check-orch-tests.mjs --commit-scope <paths>` (`scripts/check-orch-tests.mjs` not in this kit). It selects tests whose input sets
-contain a staged named path, including added tests; deleted tests select all. Merges
-select both sides' names when both changed suite inputs since merge base. Inputs include
+check:commit runs no orch test, contract script or kit build; by hand,
+`scripts/check-orch-tests.mjs --commit-scope <paths>` (`scripts/check-orch-tests.mjs` not in this kit) selects tests whose input sets
+contain a staged named path, including added tests; deleted tests select all. A merge
+selects a test only when both sides changed its inputs since a merge base, or an input
+differs from HEAD and every MERGE_HEAD (resolution); task 3216. Inputs include
 non-live test-orch files, their import/existing-file-literal closure and roleDefaults
 skills; non-named dirty inputs use HEAD bytes. Segment-built paths/other templates are
 outside the walk. No inputs passes; missing dependencies fail, suite-requiring changes
@@ -59,8 +63,9 @@ numeric anchors/short tails, including Markdown paths; TSV rows remain allowed
 (`scripts/lib/anchor-grammar.mjs`). Stale citations use a shrink-only multiset baseline:
 listed occurrences warn, excess fails, surplus warns to trim.
 
-`scripts/check-knowledge-history.mjs` (not in this kit) compares frozen-tree page-line identity across all
-parents, replacing citations with placeholders but judging backtick changes. Jev scores
+`scripts/check-knowledge-history.mjs` (not in this kit), run by hand outside check:commit, compares
+frozen-tree page-line identity across all parents, replacing citations with
+placeholders but judging backtick changes. Jev scores
 new prose for narrated history/progress; >= 0.6 fails, unanswered batches skip and count.
 `lineIdentity`, shared with size checking, takes maximum parent multiplicity, not sum;
 numeric-anchor cleanup grants no replacement credit. Semantic fact-check is separate

@@ -1,4 +1,4 @@
-// Verify coder checks and trees, route rechecks, and compare retained reports.
+// Record coder trees, route rechecks, and compare retained reports.
 import { existsSync } from 'node:fs';
 import { copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
@@ -10,42 +10,10 @@ import { parseReport } from './report.ts';
 import { tableContractOf } from './seats-scope.ts';
 import { parseNumstat, testPath } from './review-plan.ts';
 import type { Seat, Turn, TurnWatchRecord } from './store.ts';
-import { readHost } from './config.ts';
 import { PLATFORM_NEEDS, type PlatformNeed } from './placement.ts';
-import { lastCheckResults, type ClaimedCheck, type VerifiedCheck } from './check-verify.ts';
 import { snapshotCommit } from './worktrees.ts';
 import { FRESH_CONTEXT, EARLIER_REPORTS, EARLIER_CHARS, KEPT_TREES, CORRECTION_PATHS_CAP, MAX_SIBLINGS, gitAsync, reviewRepo, reviewRoles, validGrade } from './seats-defs.ts';
 import type { SeatRole, CreateSeat, Recheck, DeferredReplacement, CoderTree, SeatData } from './seats-defs.ts';
-
-export async function verifyTurn(self: SeatManager, seatId: string, turnId: string, report: Record<string, unknown>): Promise<void> {
-    const seat = self.store.getSeat(seatId)!;
-    const checks = (report.checks ?? []) as ClaimedCheck[];
-    if (!['done', 'partial'].includes(String(report.status)) || !checks.some((check) => check.result === 'pass')) return;
-    const host = typeof seat.data.host === 'string' ? seat.data.host : undefined;
-    if (!seat.worktree || self.closing.has(seatId) || !existsSync(seat.worktree) ||
-        (seat.data.remoteSyncFailures as Record<string, string> | undefined)?.[turnId] ||
-        (host && seat.data.remoteSyncState !== 'ready')) return;
-    const abort = new AbortController();
-    self.verifying.set(seatId, abort);
-    const keep = (results: VerifiedCheck[]) => {
-      // The latest KEPT_TREES turns, the bound the coder's trees keep: seat data must not grow per turn forever.
-      const kept = { ...(self.store.getSeat(seatId)!.data.checkVerify ?? {}) as Record<string, VerifiedCheck[]>, [turnId]: results };
-      self.store.updateSeat(seatId, { data: { checkVerify: Object.fromEntries(Object.entries(kept).slice(-KEPT_TREES)) } }, 'seat.checks_verified', { turn: turnId, results });
-    };
-    try {
-      const results = await self.options.verifyChecks({ worktree: host ? seat.data.remoteDir as string : seat.worktree, checks,
-        ...(host ? { host, platform: readHost(host, self.options.stateDir).platform } : {}), signal: abort.signal });
-      keep(host ? results.map((result) => ({ ...result, host })) : results);
-    } catch (error) {
-      const message = (error as Error).message;
-      self.options.log('warn', 'seat.check_verify_failed', { seat: seatId, turn: turnId, message });
-      // A failed verification is unverified, never silently absent.
-      const claimed = [...lastCheckResults(report)].filter(([, result]) => result === 'pass');
-      try { keep(claimed.map(([command]) => ({ command, claimed: 'pass', result: 'unverified', ...(host ? { host } : {}), reason: `verification failed: ${message}` }))); } catch { /* logged above */ }
-    } finally {
-      self.verifying.delete(seatId);
-    }
-  }
 
 export async function recordTree(self: SeatManager, coder: Seat, turnId: string): Promise<void> {
     if (!coder.worktree || self.closing.has(coder.id) || !existsSync(coder.worktree) ||

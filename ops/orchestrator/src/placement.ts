@@ -362,6 +362,32 @@ export function probeDisk(target: Target, path: string, timeoutMs = PROBE_TIMEOU
   });
 }
 
+/**
+ * What this Mac keeps for the operator, the leads and the desktop app before it ranks as a seat machine
+ * (operator 2026-10-28, task 3288): ranked as an equal peer it took 97 of 305 non-scout seats in a day and
+ * ran loud all day. A host wins whenever its share beats what the Mac has left; the Mac still takes seats
+ * when the hosts are fuller.
+ */
+const MAC_RESERVE = { cores: 6, memGb: 12 } as const;
+
+/** A target's load as placement ranks it: on this Mac, MAC_RESERVE taken off its free cores and free memory, floored at zero. */
+function rankedLoad(target: Target, load: Load): Load {
+  if (target !== 'local') return load;
+  const freeCores = Math.max(0, load.cpus * (1 - load.cpuBusyPct / 100) - MAC_RESERVE.cores);
+  return { ...load, cpuBusyPct: 100 * (1 - freeCores / load.cpus), freeMemGb: Math.max(0, load.freeMemGb - MAC_RESERVE.memGb) };
+}
+
+/** One ranking entry as the placement reason prints it; this Mac's names its reserve. */
+function rankDetail(target: Target, value: number, load: Load, activeSeats: number): string {
+  const freeCores = load.cpus * (1 - load.cpuBusyPct / 100);
+  const kept = target === 'local' ? `; ${MAC_RESERVE.cores} cores and ${MAC_RESERVE.memGb} GB kept for the Mac` : '';
+  return `${target} ${value.toFixed(1)} (free cores ${freeCores.toFixed(1)} of ${load.cpus}, free mem ${load.freeMemGb.toFixed(1)} of ${load.totalMemGb.toFixed(1)} GB, ${activeSeats} active${kept})`;
+}
+
+/** Higher value first; an equal value goes to a host, not this Mac (task 3288); equal hosts keep their name order. */
+const byValueHostFirst = (a: { target: Target; value: number }, b: { target: Target; value: number }) =>
+  b.value - a.value || Number(a.target === 'local') - Number(b.target === 'local');
+
 /** Free-capacity share relative to the ranked maxima, minus one point per active seat; higher wins. */
 export function pressure(load: Load, activeSeats: number, maxFreeCores: number, maxFreeGb: number): number {
   const freeCores = load.cpus * (1 - load.cpuBusyPct / 100);
@@ -414,20 +440,18 @@ export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles:
     }
     const missing = target !== 'local' ? missingHostInstruments(probe, instruments) : [];
     if (missing.length) { skipped.push(`${target} missing instrument: ${hostInstrumentCauses(probe, missing)}`); continue; }
-    const load = probe.load;
+    const load = rankedLoad(target, probe.load);
     maxFreeCores = Math.max(maxFreeCores, load.cpus * (1 - load.cpuBusyPct / 100));
     maxFreeGb = Math.max(maxFreeGb, load.freeMemGb);
     measured.push({ target, load, activeSeats: candidate.activeSeats });
   }
   const ranked = measured.map(({ target, load, activeSeats }) => {
-    const freeCores = load.cpus * (1 - load.cpuBusyPct / 100);
     const value = pressure(load, activeSeats, maxFreeCores, maxFreeGb);
-    return { target, value, detail: `${target} ${value.toFixed(1)} (free cores ${freeCores.toFixed(1)} of ${load.cpus}, free mem ${load.freeMemGb.toFixed(1)} of ${load.totalMemGb.toFixed(1)} GB, ${activeSeats} active)` };
+    return { target, value, detail: rankDetail(target, value, load, activeSeats) };
   });
   const skipText = skipped.length ? `; skipped: ${skipped.join('; ')}` : '';
   if (!ranked.length) throw new Error(`no placement target is eligible for a ${family} ${role} that needs ${need}${skipText}`);
-  // Stable sort over local-first candidates: an equal value keeps local.
-  ranked.sort((a, b) => b.value - a.value);
+  ranked.sort(byValueHostFirst);
   const ranking = ranked.map((row) => row.detail).join('; ');
   const desktopNote = desktopFile ? `this Mac's desktop runtime (${desktopFile}); ` : '';
   return { target: ranked[0].target, reason: `${desktopNote}highest free capacity: ${ranked[0].target}; ranking: ${ranking}${skipText}` };

@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKeyedQueue } from './keyed-queue.ts';
+import { seedCodegraph, type ProvisionStep } from './codegraph-seed.ts';
+export { seedCodegraph, codegraphIndexNote, type ProvisionStep, type SeedCodegraphDeps } from './codegraph-seed.ts';
 
 const exec = promisify(execFile);
 const gitOutput = async (cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> =>
@@ -515,8 +517,6 @@ async function bashExecutable(): Promise<string> {
   return hit;
 }
 
-export type ProvisionStep = { command: string; code: number | null; ms: number; tail: string };
-
 /**
  * The heavy setup steps (npm ci, codegraph init) run inside a slot of the
  * machine-local build gate (ops/orchestrator/build-gate.mjs), so parallel seat
@@ -618,6 +618,12 @@ function runStep(command: string, args: string[], cwd: string, env: NodeJS.Proce
   });
 }
 
+function runProvisionCommand(command: string, args: string[], dir: string, env: NodeJS.ProcessEnv, timeoutMs: number, gated: boolean): Promise<ProvisionStep> {
+  return gated
+    ? runStep(process.execPath, [buildGateScript, '--exec', command, ...args], dir, env, timeoutMs, true)
+    : runStep(command, args, dir, env, timeoutMs);
+}
+
 /**
  * Run orch's worktree setup inside `dir`. A step that exits non-zero
  * stops provisioning and fails the seat: a coder without node_modules cannot
@@ -643,10 +649,15 @@ export async function provisionWorktree(main: string, dir: string, timeoutMs = 2
   const bash = await bashExecutable();
   const env = { ...process.env, ORCH_SOURCE_CHECKOUT_PATH: main };
   const steps: ProvisionStep[] = [];
-  for (const line of setup) {
-    const step = gatedSetupLine(line, gateMarkers)
-      ? await runStep(process.execPath, [buildGateScript, '--exec', bash, '-c', line], dir, env, timeoutMs, true)
-      : await runStep(bash, ['-c', line], dir, env, timeoutMs);
+  const seedAt = setup.findIndex(line => line.includes('codegraph init'));
+  for (const [index, line] of setup.entries()) {
+    if (index === seedAt) {
+      steps.push(...await seedCodegraph(main, dir, {
+        run: (command, args, gated) => runProvisionCommand(command, args, dir, env, timeoutMs, gated),
+        stopDaemon: stopCodegraphDaemon,
+      }));
+    }
+    const step = await runProvisionCommand(bash, ['-c', line], dir, env, timeoutMs, gatedSetupLine(line, gateMarkers));
     step.command = `[${source} ${config}] ${line}`;
     steps.push(step);
     if (step.code !== 0) return { ok: false, steps };

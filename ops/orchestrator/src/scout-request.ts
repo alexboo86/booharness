@@ -116,7 +116,7 @@ export class ScoutGate {
       const turn = await seats.promptScoped(scout.id, question, SCOUT_TIMEOUT_MS, { files: files as string[] | undefined });
       let ended = turn;
       while (!TERMINAL_TURN.has(ended.status)) ended = await seats.wait(turn.id, 60_000);
-      return formatDigest(await seats.digest(ended));
+      return formatDigest(await seats.digest(ended), { inlineTable: true });
     } finally {
       this.inFlight.delete(seatId);
       if (scoutId) await seats.close(scoutId).catch((error) => log('warn', 'seat.scout_close_failed', { seat: seatId, scout: scoutId, message: (error as Error).message }));

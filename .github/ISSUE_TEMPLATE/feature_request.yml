@@ -1,0 +1,15 @@
+name: Feature request
+description: A change you want in a future release
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is a generated build and is replaced on each publication.
+        A request is a proposal. The maintainer ports an accepted change into the source and closes it with a link to the release.
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change
+      description: The problem and the change you want.
+    validations:
+      required: true

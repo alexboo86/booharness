@@ -3,12 +3,12 @@
 // the bytes. Only names this harness owns (TMP_PREFIXES), never a symlink,
 // quiet for over 24 h, and held by no live process. All I/O is async.
 import { execFile } from 'node:child_process';
-import { lstat, opendir, readlink, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, opendir, realpath, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { LivenessUnproved } from './target-sweep.ts';
-import { DAY, DROP_GRACE, acquireSweepGate, missing, newestMtime, treeBytes } from './sweep-shared.ts';
+import { DAY, DROP_GRACE, acquireSweepGate, missing, newestMtime, processCwdFields, treeBytes } from './sweep-shared.ts';
 
 const exec = promisify(execFile);
 
@@ -49,26 +49,9 @@ async function processPaths(): Promise<string> {
   // the snapshot unproved exactly as a live EACCES would.
   const injected = process.env.ORCH_TEST_UNREADABLE_PID ?? '';
   if (injected) throw new LivenessUnproved(injected, 'readlink /proc/<pid>/cwd', 'EACCES');
-  let cwd = '';
-  if (process.platform === 'darwin') {
-    // One bounded system-wide cwd query is cheap on the Mac; never run lsof per pid.
-    cwd = (await exec('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn'], { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 })
-      .catch((error: { code: string | number }) => {
-        throw new LivenessUnproved(String(process.pid), '/usr/sbin/lsof', typeof error.code === 'number' ? `exit ${error.code}` : error.code);
-      })).stdout;
-  } else if (process.platform === 'linux') {
-    const processes = await opendir('/proc');
-    for await (const process of processes) {
-      if (!/^\d+$/.test(process.name)) continue;
-      try { cwd += `\nn${await readlink(`/proc/${process.name}/cwd`)}`; }
-      catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        // Gone is fine; an unreadable entry of ANY uid (task 2861 review r4)
-        // makes liveness unproved — never a partial skip, never a deletion.
-        if (code !== 'ESRCH' && code !== 'ENOENT') throw new LivenessUnproved(process.name, 'readlink /proc/<pid>/cwd', String(code));
-      }
-    }
-  }
+  const cwd = await processCwdFields().catch((error: NodeJS.ErrnoException) => {
+    throw new LivenessUnproved(String(process.pid), 'cwd snapshot', String(error.code ?? error.message));
+  });
   return `${argv}\n${cwd}`;
 }
 

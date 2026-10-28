@@ -139,6 +139,8 @@ export async function firstRecordedLanding(repo: string, at: string, paths: stri
   // %cI has whole seconds; `at` has milliseconds, so compare from the start of the land's second.
   const since = Math.floor(Date.parse(at) / 1000) * 1000;
   if (!Number.isFinite(since) || !paths.length) return null;
+  // The whole walk, not --since: git stops --since at the first older commit, so a commit dated out of
+  // order (dates 1, 4, 2, 5 with the land at 3) loses its true answer 4 (task 3261 review).
   const log = await git(repo, ['log', '--reverse', '--format=%H%x00%cI', '-z', 'HEAD', '--', ...paths.map((file) => `:(literal)${file}`)]);
   const fields = log.split('\0');
   for (let i = 0; i + 1 < fields.length; i += 2) {

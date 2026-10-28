@@ -11,10 +11,9 @@ import { seatInstruments } from './shared.entry.ts';
 import { type CodexEdit } from './codex-edit.ts';
 import { type HashlineEdit } from './hashline-edit.ts';
 import { gradeReport, unsupportedFindings, type Finding, type Grade, type Sibling } from './grading.ts';
-import { LESSON_ROLES, accountCorrection, accountRepair, appliedLessons, parseReport, REPAIR_QUOTE_CHARS, repairPrompt, reportedChecks, supportPrompt, type ReportRole } from './report.ts';
+import { accountCorrection, accountRepair, appliedLessons, parseReport, preserveReportTable, REPAIR_QUOTE_CHARS, repairPrompt, reportedChecks, supportPrompt } from './report.ts';
 import { chatPostTable } from './chat.ts';
 import { memberLabel, tallyTable } from './table.ts';
-import { autoApplyLessons, brevityFields, recordLessonRepair, type MemoryProposal } from './memory-proposals.ts';
 import { type Seat, type Store, type Turn, type TurnEnd, type TurnWatchRecord, type BypassScope, TERMINAL_TURN } from './store.ts';
 import { steerMessage, TurnWatch, type WatchAction } from './watch.ts';
 import { countTool, rtkHookRewrites, rtkMissed } from './toolkinds.ts';
@@ -22,11 +21,10 @@ import { type AccountingRole, type Load, type ProfileRole, type Reservation } fr
 import type { QualityAnswer } from './role-quality.ts';
 import { probeLoad, type LoadProbe, type Target } from './placement.ts';
 import { moveCheckout } from './remote-repo.ts';
-import { verifyChecks } from './check-verify.ts';
 import { type SeatTool } from './shared.entry.ts';
 import type { PruneDecision } from './prune.ts';
 import {
-  ROLE_POLICY, roleTurnLimit, landable, reviewRights, MAX_QUEUED_TURNS, REPAIR, SUPPORT, MAX_REPAIRS, SUPPORT_MIN_LEFT, LESSON_HOLD_MS, TREE_HOLD_MS,
+  ROLE_POLICY, roleTurnLimit, landable, reviewRights, REPAIR, SUPPORT, MAX_REPAIRS, supportRoundFits, TREE_HOLD_MS,
   gitAsync, reviewRepo, currentScope, withEarlier, addUsage, SeatClosed,
 } from './seats-defs.ts';
 import type { SeatRole, CreateSeat, Digest, Options, SeatOverlap, Choose, PromptOptions, ScopeDecision } from './seats-defs.ts';
@@ -43,7 +41,7 @@ import * as createMethods from './seats-create.ts';
 // Re-exports: the names below lived here before seats-defs.ts existed (task 2143 slice 1);
 // importers keep importing them from seats.ts.
 export {
-  ROLE_POLICY, claudeTranscriptPath, NO_FILES_WARNING, BRIEF_WORDS, WIDE_BRIEF_P, MAX_QUEUED_TURNS, REPAIR, SUPPORT, MAX_REPAIRS, SUPPORT_MIN_LEFT, FRESH_CONTEXT, EARLIER_REPORTS, LESSON_HOLD_MS, TREE_HOLD_MS, MAX_SIBLINGS,
+  ROLE_POLICY, claudeTranscriptPath, NO_FILES_WARNING, BRIEF_WORDS, WIDE_BRIEF_P, MAX_QUEUED_TURNS, REPAIR, SUPPORT, MAX_REPAIRS, SUPPORT_MIN_LEFT, FRESH_CONTEXT, EARLIER_REPORTS, TREE_HOLD_MS, MAX_SIBLINGS,
 } from './seats-defs.ts';
 export type { SeatRole, CreateSeat, Digest, SeatOverlap, Recheck, Choose, PromptOptions, ScopeDecision } from './seats-defs.ts';
 
@@ -232,12 +230,9 @@ export class SeatManager {
   liveTools = new Map<string, { count: number; kinds: Record<string, number> }>();
   /** Each turn's bounded live log (task 2883): volatile, lost on restart; http.ts serves it to the board. */
   turnLogs = new Map<string, TurnLiveLog>();
-  /** The check verification running for a seat's ended turn: close() aborts it rather than wait out its cap. */
-  verifying = new Map<string, AbortController>();
-
   constructor(store: Store, options: Options) {
     this.store = store;
-    this.options = { snapshotRemoteMaxBytes: createMethods.SNAPSHOT_REMOTE_MAX_BYTES, turnTimeoutMs: 30 * 60_000, remoteTurnSyncMs: 120_000, home: os.homedir(), verifyChecks, probeLoad, recheckHoldMs: 90_000, lessonHoldMs: LESSON_HOLD_MS, treeHoldMs: TREE_HOLD_MS, afterTurnCapMs: 10 * 60_000, autoLessons: autoApplyLessons, ...options };
+    this.options = { snapshotRemoteMaxBytes: createMethods.SNAPSHOT_REMOTE_MAX_BYTES, turnTimeoutMs: 30 * 60_000, remoteTurnSyncMs: 120_000, home: os.homedir(), probeLoad, recheckHoldMs: 90_000, treeHoldMs: TREE_HOLD_MS, afterTurnCapMs: 10 * 60_000, ...options };
   }
 
   useChooser(choose: () => Choose | Promise<Choose>): void {
@@ -774,6 +769,7 @@ export class SeatManager {
       // Preserve the final stop/error/usage and surface its checks even when its text is refused.
       const prior = result.earlier?.findLast((text) => parseReport(text, role, lessons, { table }).ok);
       if (prior !== undefined) {
+        result = { ...result, text: preserveReportTable(prior, result.text, role) };
         const last = parseReport(result.text, role, lessons, { table });
         const problem = last.ok === false ? last.error : accountRepair(prior, result.text);
         if (problem) {
@@ -794,6 +790,7 @@ export class SeatManager {
         this.options.log('info', 'seat.report_repair', { seat: seatId, turn: turnId, attempt: attempt + 1, reason: parsed.error });
         try {
           const repair = await session.prompt(`${REPAIR} ${repairPrompt(parsed.error, role, lessons, refused, table)}`, { timeoutMs: left, onEvent });
+          repair.text = preserveReportTable(refused, repair.text, role);
           if (attempt === 0 && refused.length > REPAIR_QUOTE_CHARS) reportRepairFlags.push(`schema repair quote truncated: ${refused.length} characters, first ${REPAIR_QUOTE_CHARS} quoted; preservation guard uses the full original`);
           const usage = addUsage(result.usage, repair.usage);
           const durationMs = result.durationMs + repair.durationMs;
@@ -823,12 +820,12 @@ export class SeatManager {
       // correction): unasked ones re-emitted unchanged, asked ones kept (settle re-grades), downgraded,
       // or withdrawn in place and named in forLead — a correction that drops or silently changes a
       // finding is rejected and the original report plus its flags stand. Skipped on a
-      // cancelled/error/interrupted turn and when less than SUPPORT_MIN_LEFT of the budget is left; a
+      // cancelled/error/interrupted turn, for a NO_SUPPORT_ROUND role and when less than SUPPORT_MIN_LEFT of the budget is left; a
       // session that cannot answer (a throw) drops the seat like a failed repair and keeps the report.
       {
         const candidate = !tokenCapped && result.error === null && result.stopReason !== 'cancelled' && !interrupted && !this.closing.has(seatId) ? parseReport(result.text, role, lessons, { table }) : null;
         const left = timeoutMs - (Date.now() - started);
-        if (candidate?.ok && left >= timeoutMs * SUPPORT_MIN_LEFT) {
+        if (candidate?.ok && supportRoundFits(role, left, timeoutMs)) {
           const siblings = reviewRights(role) ? this.siblings(seat) : [];
           const detection = await Promise.resolve().then(() => (this.options.grade ?? gradeReport)(candidate.report, siblings)).catch((error: Error): Grade => ({ status: 'ungraded', reason: error.message }));
           const unsupported = unsupportedFindings(candidate.report, detection);
@@ -920,7 +917,6 @@ export class SeatManager {
     let recheckDone: { release: () => void } | undefined;
     let treeDone: { release: () => void } | undefined;
     const settle = async () => {
-      let verified: Promise<void> = Promise.resolve();
       if (end.status === 'done' && end.text !== null) {
         try {
           const parsed = parseReport(end.text, role, lessons, { table });
@@ -932,10 +928,7 @@ export class SeatManager {
             }
           }
           if (parsed.ok) {
-            // A landable role's claimed passes are rerun alongside grading, so a waiter reads them
-            // with the report (task 1561; task 2802: every landable role answers with the coder
-            // report, and an unrerun check would flag its criteria 'not verified by orch rerun').
-            if (landable(role)) verified = this.verifyTurn(seatId, turnId, parsed.report);
+            digestMethods.persistTable(this, turnId, parsed.report);
             const siblings = reviewRights(role) ? this.siblings(seat) : [];
             const reuse = pregraded && JSON.stringify(pregradedSiblings) === JSON.stringify(siblings) ? pregraded : null;
             const grade = reuse ?? await Promise.resolve().then(() => (this.options.grade ?? gradeReport)(parsed.report, siblings)).catch((error: Error): Grade => ({ status: 'ungraded', reason: error.message }));
@@ -958,8 +951,6 @@ export class SeatManager {
           this.options.log('warn', 'seat.grade_failed', { seat: seatId, turn: turnId, message: (error as Error).message });
         }
       }
-      // verifyTurn records its own failure; this catch only keeps a throw from holding the turn open.
-      await verified.catch((error: Error) => this.options.log('warn', 'seat.check_verify_failed', { seat: seatId, turn: turnId, message: error.message }));
       this.liveTools.delete(turnId);
       this.turnLogEnd(turnId);
       // Registered before the turn is marked ended: a wait() that sees it ended still waits for its
@@ -967,43 +958,13 @@ export class SeatManager {
       // not held. An unreadable seat list holds: routing then records its own failure and releases.
       // The seats_author bound (task 2640) keeps this off the closed history: it runs at every coder turn end.
       const reviewed = () => { try { return this.store.listSeats({ role: 'reviewer', author: seatId }).length > 0; } catch { return true; } };
-      let lessonsDone: { release: () => void } | undefined;
       if (role === 'coder' && ((end.status === 'done' && this.store.getTurn(turnId)!.seq > 1 && !this.recheckOptOut.has(turnId) && reviewed()) || this.deferredDue(seatId, turnId))) {
         recheckDone = this.afterTurn(turnId, 'rechecks', this.options.recheckHoldMs);
       }
-      const autoLessons = end.status === 'done' && LESSON_ROLES.has(role as ReportRole);
-      if (autoLessons) lessonsDone = this.afterTurn(turnId, 'auto-apply', this.options.lessonHoldMs);
       // recordTree runs after finishTurn too: regressionFlags/circlingFlags read the trees, so a
       // waiter holds until the tree is recorded (reviewer-codex-8ab808.1).
       if (role === 'coder') treeDone = this.afterTurn(turnId, 'tree', this.options.treeHoldMs);
       this.store.finishTurn(turnId, end);
-      try {
-        if (autoLessons) {
-          const results = await this.options.autoLessons(this.store, turnId);
-          // This is a separate FIFO turn, not a report-schema retry. One round only:
-          // a repair turn's own refusals remain visible to the lead, never requeued.
-          if (!turn.prompt.startsWith('[orch:lesson-repair]') && !this.closing.has(seatId) && this.store.getSeat(seatId)?.status === 'working') {
-            const parsed = end.text ? parseReport(end.text, role, lessons, { table }) : null;
-            if (parsed?.ok) {
-              const proposals = (parsed.report.memory ?? []) as MemoryProposal[];
-              const refused = results.flatMap((result) => {
-                const proposal = proposals[result.index];
-                const fields = result.status === 'refused' ? brevityFields(result.text) : [];
-                return proposal?.op === 'append' && proposal.kind === 'lesson' && fields.length ? [{ result, proposal, fields }] : [];
-              });
-              if (refused.length && this.store.listTurns(seatId).filter((item) => item.status === 'queued').length < MAX_QUEUED_TURNS) {
-                const prompt = `[orch:lesson-repair] Rewrite ONLY these refused lesson append proposals in your report's memory array. No other work. Keep each lesson's meaning, anchor and route; obey the targets below. Use the normal full report contract.\n${refused.map(({ proposal, fields }, i) => `\nLesson ${i + 1}:\nTitle: ${proposal.title}\nBody:\n${proposal.body}\nObjected fields: ${fields.map(({ field, length, limit, target, ceiling }) => `${field} ${length} chars, ${ceiling ? `ceiling ${limit}${target < limit ? `, target ~${target}` : ''}` : `target ~${target}`}`).join('; ')}\nOriginal proposal: ${JSON.stringify(proposal)}`).join('\n')}`;
-                const repair = this.prompt(seatId, prompt, undefined, { longBrief: 'The refused lesson bodies and objected field measurements must be included verbatim.', recheck: false });
-                for (const { result } of refused) recordLessonRepair(this.store, turnId, result.index, result, repair.id);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        this.options.log('warn', 'seat.lesson_auto_apply_failed', { seat: seatId, turn: turnId, message: (error as Error).message });
-      } finally {
-        lessonsDone?.release();
-      }
     };
     // Sibling reviewers settle one at a time: two that finish together would otherwise each grade
     // while the other is still running, and neither would be compared (qwen review, 2026-09-22).
@@ -1040,14 +1001,6 @@ export class SeatManager {
       this.wake(turnId);
     }
     this.maybeDrainExit();
-  }
-
-  /**
-   * Reruns a done or partial coder report's claimed-pass checks in the seat's worktree (task 1561) and
-   * keeps the result with the turn for the digest. verifyChecks caps its own time; this never throws.
-   */
-  private async verifyTurn(seatId: string, turnId: string, report: Record<string, unknown>): Promise<void> {
-    return verifyMethods.verifyTurn(this, seatId, turnId, report);
   }
 
   /**

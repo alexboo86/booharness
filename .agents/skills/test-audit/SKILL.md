@@ -1,90 +1,86 @@
 ---
 name: test-audit
-description: "Invoke whenever writing, changing, or reviewing tests. Authoring gate for new or changed tests: the behavior a test protects, the regression it catches, why existing checks miss it, and the junk patterns that fail it."
+description: "Invoke whenever writing, changing, running or reviewing tests. Decides whether a test is written at all, how small it is, which tests run and how often, and which tests are deleted. Default: no new test and no extra run."
 ---
 
 # Test Audit
 
-One value bar, applied at write time: the authoring gate checks every new or
-changed test before it lands.
+A test is paid for on every commit, review and orch restart for as long as it
+lives: CPU, wall time and reading. It pays back only when it catches a
+regression that no cheaper check catches. The default answer is **no new test
+and no extra run** (operator 2026-10-28).
 
-## Authoring gate
+## 1. Write a test only when all three hold
 
-Before adding any test, answer four questions; a missing answer means do not
-add it yet:
+1. It protects observable behaviour where a mistake loses or corrupts data or
+   money, opens a security hole, or breaks a user path — or it reproduces a
+   reported defect (Test 0).
+2. A credible change breaks it, and typecheck, lint, an existing test or a
+   commit gate does not already catch that change.
+3. It runs at the real boundary; no production seam (export, flag, wrapper,
+   hook) exists only for it.
 
-1. What observable behavior, invariant, or independent contract does it protect?
-2. What credible regression makes it fail?
-3. Why does existing coverage not already catch that failure? Each contract has
-   one primary test owner at the strongest boundary; another layer needs its
-   own distinct risk, such as a transport or lifecycle failure the owner cannot
-   reach. Prefer extending a table-driven case or shared fixture over a
-   near-duplicate test; consolidate duplicated setup in the same change.
-4. Does it need a production seam (export, flag, wrapper, injection hook) that no
-   production caller needs? If yes, move the test to the real boundary instead.
+Never write a test for: wiring, a gate's or a runner's file list, docs, skill,
+contract or knowledge prose, config tables, a rename or move, log or report
+wording, instruction text, or a fix that typecheck already covers.
 
-Then check the test against every [junk pattern](#junk-patterns); a match fails
-the gate unless the [retention bar](#retention-bar) names the contract it
-independently guards. A test that would break under behavior-preserving
-refactoring is asserting implementation, not behavior; rewrite it at the
-owning boundary before landing it.
+An acceptance criterion with no runnable check gets `check: null` and one
+reason. Name an existing check that fails without the change before you write
+a new one.
 
-Bug regression tests must fail on the pre-fix code for the intended reason and
-pass after the owner-boundary repair. A regression test that never demonstrably
-failed proves the mock, not the fix. The intended reason is the test's own
-behaviour assertion: a red run that stops on a typo, an import or missing-symbol
-error, or fixture setup proves nothing (operator #19762, SlimSpec study). One regression at the owner boundary
-covers the bug; do not replay the same scenario at every layer it crosses.
+A defect regression test fails on the pre-fix code for its own assertion — not
+on a typo, import or fixture error (operator #19762) — and passes after the
+fix. One such test at the owner boundary covers the defect; do not replay it at
+every layer.
 
-To prove it, run the narrowest relevant check from CLAUDE.md "Tree and checks".
+## 2. Keep it small
 
-## Junk patterns
+- Add a case to an existing table or test before you add a test; a new test
+  file needs one sentence on why no existing file fits.
+- No fixture git repository, child process, sleep or real timer unless the
+  contract itself is git, process or timing behaviour.
+- One test file per change is the norm; more needs a reason in the report.
 
-The authoring gate rejects a new test that matches one:
+## 3. Junk: reject when new, delete when touched
 
-- assertion-free coverage probes;
-- self-comparisons and identity copiers;
-- copied fixtures, inventories, manifests, or export lists;
-- exact source, import, or string greps;
-- private predicate or call-shape tests duplicated at real boundaries;
-- duplicate invocations of the same contract;
-- provider-local replays of shared helpers;
-- tests whose only purpose is preserving test-only exports, globals, or wrappers;
-- dead production code whose only callers are tests;
-- expected values produced by the helper or renderer under test;
-- mocks that implement the asserted behavior, or one identical mock standing in
-  for different APIs;
-- fixtures that supply the receipt, admission, or callback ordering the owner
-  should produce, or persistence asserted against a store the path never writes;
-- capability tests that restate declared flags instead of exercising the
-  delivery or acknowledgement the flag promises;
-- negative controls that pass for an unrelated reason, such as a denial from a
-  different guard or a rejection the production path never reaches;
-- names or fixtures that promise more than the input exercises, such as a
-  "retires the window" test asserting the window was not cleared.
+- no assertion, or an assertion the code under test computes for itself;
+- source, import or string greps; copied inventories, manifests, schemas or
+  export lists;
+- private predicate or call-shape tests of something a boundary test owns;
+- a second test of a contract another test owns;
+- a mock or fixture that implements the behaviour, receipt or ordering it
+  asserts;
+- a negative control that passes for an unrelated reason;
+- a test that exists only to keep a test-only export, global or wrapper alive.
 
-## Value bar
+## 4. Running tests
 
-Tests justify their maintenance cost by protecting behavior, a credible
-regression, or an independently meaningful contract. An existing test that
-must change for behavior-preserving source reorganization is suspect, not
-automatically deletable; the authoring gate still rejects new ones.
+- Run only the test files that cover the changed code, once, after the last
+  edit. Run again only after a code change, with one exception: a check that
+  fails on the branch runs once on master to tell pre-existing from ours
+  (CLAUDE.md work contract 2).
+- Never a whole suite for a scoped change. A whole suite runs only when the
+  lead asks for it (orch restart proof) and on the registered Linux host, not
+  on this Mac.
+- On this Mac at most 2 workers: `node --test --test-concurrency=2`,
+  `npx vitest run --maxWorkers=2 <file>`.
+- A reviewer does not repeat the coder's runs: it reads the reported tails and
+  runs a test only to prove its own finding.
+- No retries to turn a flaky test green: a flaky test is a finding.
 
-## Retention bar
+## 5. Deleting tests
 
-Keep a test when it independently enforces a public API, plugin SDK, protocol,
-config, migration, storage, security, platform, default, prompt-byte, generated
-cross-language, package, release, or architecture contract. Also keep:
+Delete, do not repair: a test that matches §3, a duplicate, a test whose target
+is gone, a test that pins wiring, wording or a file list. Removing a tracked
+file still needs what CLAUDE.md work contract 6 asks: a search of the whole
+tree for references, `npm run check:deletions` and `cargo check`.
 
-- call ordering when order is observable behavior;
-- regressions with a credible failure mode;
-- source inspection when it is the cheapest independent guard: it fails when
-  the contract changes (the user-facing key, byte, or path) and survives an
-  identifier-only refactor;
-- a retained test that fails on the baseline: treat it as a possible product
-  bug, reproduce it, and repair the owner rather than deleting it.
+Keep: the curated money/data set (it changes only by operator decision), a
+regression test of a real defect, and a security or data-integrity contract.
 
-Static or slow is not a deletion reason. A test that resembles implementation
-may still be the independent contract; prove otherwise before removing it.
+## 6. Changing an existing assertion
 
-Adapted from openclaw/openclaw .agents/skills/test-audit/SKILL.md at 80930af4 (MIT, Copyright (c) 2026 OpenClaw Foundation), 2026-09-28.
+Only when the behaviour changed on purpose and the commit names that change
+(operator #14245).
+
+Adapted from openclaw/openclaw .agents/skills/test-audit/SKILL.md at 80930af4 (MIT, Copyright (c) 2026 OpenClaw Foundation), 2026-09-28; rewritten for operator decision #20673, 2026-10-28.

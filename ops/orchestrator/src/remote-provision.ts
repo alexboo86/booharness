@@ -16,6 +16,8 @@ import { spawnProvider } from './providers/spawn.ts';
 import { gatedSetupLine, type ProvisionStep, SLOT_ACQUIRED_MARKER, slotWaitMs } from './worktrees.ts';
 import { withHostClone } from './remote-repo.ts';
 import { createKeyedQueue } from './keyed-queue.ts';
+import { codegraphIndexNote } from './codegraph-seed.ts';
+export { codegraphIndexNote } from './codegraph-seed.ts';
 
 const CONFIG = 'ops/orchestrator/worktree-setup.json';
 const withPyToolsInstall = createKeyedQueue();
@@ -167,26 +169,6 @@ async function readSetup(host: string, dir: string): Promise<{ setup: string[]; 
   }
   const own = JSON.parse(await readFile(new URL('../worktree-setup.json', import.meta.url), 'utf8'));
   return { setup: own?.setup ?? [], gate: Array.isArray(own?.gate) ? own.gate : undefined, source: 'orch' };
-}
-
-/**
- * Run orch's worktree setup inside the host checkout `dir`. Same semantics as
- * provisionWorktree: optional parts guard themselves with `|| true`, any other
- * non-zero step stops provisioning with its output tail.
- */
-export function codegraphIndexNote(run: { code: number | null; output: string }, dir: string): string | null {
-  if (run.code !== 0) return `codegraph index unavailable: status failed (${run.output.trim().slice(-300) || `exit ${run.code}`})`;
-  try {
-    const status = JSON.parse(run.output);
-    const win = /^[a-z]:[\\/]/i.test(dir);
-    const normalized = (value: string) => {
-      const path = value.replace(/^\\\\\?\\/, '').replaceAll('\\', '/').replace(/\/$/, '');
-      return win ? path.toLowerCase() : path;
-    };
-    if (normalized(status.projectPath) === normalized(dir) && status.initialized === true &&
-        status.index?.state === 'complete' && status.fileCount > 0 && status.nodeCount > 0 && status.dbSizeBytes > 0) return null;
-  } catch { /* Missing or malformed status is a nonfatal provisioning warning. */ }
-  return 'codegraph index unavailable: checkout has no complete, non-empty index';
 }
 
 const CODEGRAPH_TAIL = 400;

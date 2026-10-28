@@ -52,7 +52,7 @@ export async function setJevBalance(usd, dir = jevStateDir(), at = new Date().to
   return { usd, at };
 }
 
-/** Read only months from the balance entry (or the last seven days). Legacy
+/** Read months covering both the balance entry and the last seven days. Legacy
  * usage.jsonl is included for continuity with callers running the old version.
  * Skipped rows are explicit: the resulting sums are lower bounds, not exact. */
 export async function readJevEstimate(dir = jevStateDir(), now = Date.now()) {
@@ -70,7 +70,7 @@ export async function readJevEstimate(dir = jevStateDir(), now = Date.now()) {
   catch (error) { if (error.code !== 'ENOENT') return null; names = []; }
   const allLedgers = names.filter((name) => name === 'usage.jsonl' || /^usage-\d{4}-\d{2}\.jsonl$/.test(name));
   if (!allLedgers.length && !balance) return null;
-  const fromMonth = new Date(start).toISOString().slice(0, 7);
+  const fromMonth = new Date(Math.min(start, weekStart)).toISOString().slice(0, 7);
   const toMonth = new Date(end).toISOString().slice(0, 7);
   const selected = allLedgers.filter((name) => name === 'usage.jsonl' || (name.slice(6, 13) >= fromMonth && name.slice(6, 13) <= toMonth));
   let texts;
@@ -86,9 +86,8 @@ export async function readJevEstimate(dir = jevStateDir(), now = Date.now()) {
     const time = typeof item?.at === 'string' ? Date.parse(item.at) : NaN;
     if (!Number.isSafeInteger(item?.input_tokens) || item.input_tokens < 0 || !Number.isFinite(time)
       || time > end || typeof item.model !== 'string' || !JEV_MODEL_ID.test(item.model)) { skippedRows++; continue; }
-    if (time < start) continue;
     if (new Date(time).toDateString() === today) todayTokens += item.input_tokens;
-    if (balance) sinceTokens += item.input_tokens;
+    if (balance && time >= start) sinceTokens += item.input_tokens;
     if (time >= weekStart) weekTokens += item.input_tokens;
   }
   const price = (tokens) => tokens * JEV_INPUT_USD_PER_MILLION / 1_000_000;

@@ -175,7 +175,23 @@ export function syncAll(host: string, signal?: AbortSignal): Promise<void> {
 
 async function fetchAll(host: string | undefined, repo: string, signal?: AbortSignal): Promise<void> {
   await remote(host, repo, ['fetch', '--prune', 'origin', '+refs/heads/*:refs/remotes/origin/*'], undefined, signal);
+  await hostScript(host, repo, advanceMaster, [], signal);
 }
+// Readers name the branch (a scout's `git ls-tree master`) while the fetch moves only origin/*
+// (task 3263). Fast-forward only: a checkout holding master, commits origin lacks, or a symbolic
+// master (it would move the branch it names, possibly checked out) keep it.
+const advanceMaster = String.raw`
+const cp=require('node:child_process');
+const git=(ok,...a)=>{const r=cp.spawnSync('git',a,{encoding:'utf8',timeout:30000});
+  if(!ok.includes(r.status))throw new Error('git '+a.join(' ')+': '+(r.error?.message||r.stderr.trim()));return r};
+const ref=name=>git([0,1],'rev-parse','--verify','-q',name).stdout.trim();
+const tip=ref('refs/remotes/origin/master'),old=ref('refs/heads/master');
+if(!tip||tip===old)process.exit(0);
+if(git([0,1],'symbolic-ref','-q','refs/heads/master').status===0)process.exit(0);
+if(git([0],'worktree','list','--porcelain','-z').stdout.split('\0').includes('branch refs/heads/master'))process.exit(0);
+if(old&&git([0,1],'merge-base','--is-ancestor',old,tip).status===1)process.exit(0);
+git([0],'update-ref','--no-deref','refs/heads/master',tip,old||'0'.repeat(tip.length));
+`;
 
 /** Create a bundle for an arbitrary commit (including an unreferenced snapshot) without moving the lead's branch. */
 async function bundleCommit(localRepo: string, sha: string, prerequisites: string[], signal?: AbortSignal): Promise<Buffer> {
@@ -684,6 +700,9 @@ export function removeSweptWorktree(host: string | undefined, repo: string, dir:
   return removeWorktree(host, repo, dir, AbortSignal.timeout(120_000), true, allowedRoot);
 }
 
+// A sweep never forces: git refuses a checkout that gained edits after the scan (task 3266).
+const removeArgs = (dir: string, sweep: boolean) => ['worktree', 'remove', ...(sweep ? [] : ['--force']), dir];
+
 async function removeWorktree(host: string | undefined, repo: string, dir: string, signal?: AbortSignal, allowDeadLeftover = false, allowedRoot?: string): Promise<void> {
   const platform = host ? hostConfig(host).platform : process.platform;
   if (allowedRoot === undefined) seatCheckoutDir(dir, repo, platform);
@@ -720,7 +739,7 @@ async function removeWorktree(host: string | undefined, repo: string, dir: strin
       return;
     }
     try {
-      await remote(host, repo, ['worktree', 'remove', '--force', dir], undefined, signal);
+      await remote(host, repo, removeArgs(dir, allowedRoot !== undefined), undefined, signal);
       return;
     } catch (error) {
       const message = (error as Error).message;

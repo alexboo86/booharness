@@ -16,7 +16,7 @@ import type { Seat, TurnEnd, TurnWatchRecord, ScopeFeatures } from './store.ts';
 import type { Ask } from './watch.ts';
 import type { AccountingRole, Load } from './profiles.ts';
 import type { Target, LoadProbe } from './placement.ts';
-import type { autoApplyLessons, LessonApplication } from './memory-proposals.ts';
+import type { LessonApplication } from './memory-proposals.ts';
 import type { LanguageSummary } from './ste.ts';
 import type { provisionWorktree } from './worktrees.ts';
 import type { prepareCheckout, syncHostRuntime, moveCheckout, removeCheckout, dropGoneRegistration, dirExistsOnHost } from './remote-repo.ts';
@@ -24,7 +24,6 @@ import type { HashlineEdit } from './hashline-edit.ts';
 import type { CodexEdit } from './codex-edit.ts';
 import type { provisionRemote as setupRemote } from './remote-provision.ts';
 import type { snapshotBack, syncMirror, removeMirror, listRemoteCheckouts, removeOrphanMirror } from './remote-worktree.ts';
-import type { verifyChecks, VerifiedCheck } from './check-verify.ts';
 import type { rtkMissed } from './toolkinds.ts';
 
 /**
@@ -116,6 +115,14 @@ export function roleTurnLimit(role: SeatRole): number {
   return 'turns' in policy ? policy.turns : 1;
 }
 
+/**
+ * A turn's limit when the lead names none. A glm coder at effort max gets 60 minutes (operator
+ * 2026-10-28, task 3279): at 30 it timed out in 22 of 84 scored turns. Every other seat keeps `fallback`.
+ */
+export function turnLimitMs(seat: Pick<Seat, 'role' | 'family' | 'data'>, fallback: number): number {
+  return seat.role === 'coder' && seat.family === 'glm' && seat.data.effort === 'max' ? 60 * 60_000 : fallback;
+}
+
 /** The role's write-scope globs, or unrestricted when the policy has no list. */
 export function writeScopeOf(role: string): readonly string[] | undefined {
   if (!(role in ROLE_POLICY)) return undefined;
@@ -155,6 +162,8 @@ export type CreateSeat = {
    * An explicit `host` wins unless the role requires this Mac.
    */
   needs?: string;
+  /** What on this Mac a lead's needs mac must touch (task 3288); http.ts requires it, the placement reason carries it. */
+  needsReason?: string;
   /** Repo-relative files the task is about, supplied at creation for placement. */
   files?: string[];
   model?: string;
@@ -217,8 +226,10 @@ export type Digest = {
    * then `reportError` says why and the lead may read the raw message with seat_report.
    */
   report: Record<string, unknown> | null;
+  /** Daemon-owned inventory artifact; published only after its atomic write succeeds. */
+  table?: { rows: number; path: string };
   reportError: string | null;
-  /** Durable outcomes of this worker turn's automatically applied lesson appends. */
+  /** Lesson proposals awaiting lead capture, with any historical ledger outcomes. */
   lessonApplications: LessonApplication[];
   /** Jev's grade of the report (phase 3); null when there is no report. */
   grade: Grade | null;
@@ -239,8 +250,6 @@ export type Digest = {
   recheckNotes: string[];
   /** What became of the one support round (task 1447): per finding, withdrawn/downgraded/now supported/still unsupported. */
   support: string[];
-  /** A coder turn's claimed-pass checks as orch reran them in its worktree (task 1561); empty when none ran. */
-  verified: VerifiedCheck[];
   /** STE summary of the report's claims and forLead while the language switch is not off. Absent when off, when the dictionary is missing, or when the turn is not a done report. */
   language?: LanguageSummary;
 };
@@ -273,7 +282,6 @@ export type SeatData = {
   remoteProvisionNotes?: string[];
   remoteSyncFailures?: Record<string, string>;
   remoteSyncInvalidPaths?: Record<string, string[]>;
-  checkVerify?: Record<string, VerifiedCheck[]>;
   compactionsByTurn?: Record<string, number | null>;
   compactionFailuresByTurn?: Record<string, string[]>;
   toolsMissingByTurn?: Record<string, string[]>;
@@ -348,20 +356,14 @@ export type Options = {
   onTurnEnd?: (seat: Seat, end: TurnEnd) => void;
   /** Fired once when a drain is armed and nothing is running or still provisioning. */
   onDrainIdle?: () => void;
-  /** Injectable lesson capture for tests; production uses the gate-backed path. */
-  autoLessons?: typeof autoApplyLessons;
   /** Builds a seat's first message around the lead's brief (tests pass a stub). */
   context?: (input: ContextInput) => Promise<string>;
   /** Reverse-applies a coder's seat diff against lead HEAD (tests pass a stub). */
   landedCheck?: (seat: Seat, overallDeadline: number) => Promise<string>;
   /** Jev, for first-coder scope questions (tests pass a stub). */
   ask?: Ask;
-  /** Reruns a coder's claimed-pass checks at turn end (check-verify.ts; tests pass a stub). */
-  verifyChecks?: typeof verifyChecks;
   /** How long a done coder correction's waiters wait for its recheck routing to settle (task 1620). */
   recheckHoldMs?: number;
-  /** Bound on a turn's lesson auto-apply hold after the turn ends (memory #12411). */
-  lessonHoldMs?: number;
   /** Bound on a coder turn's recordTree hold after the turn ends (default TREE_HOLD_MS). */
   treeHoldMs?: number;
   /** Hard cap past a post-finish hold: an entry whose work never settles is dropped at hold + cap. */
@@ -477,6 +479,16 @@ export const MAX_REPAIRS = 2;
 /** A support round is skipped when less of the turn's budget is left than this share (task 1447). */
 export const SUPPORT_MIN_LEFT = 0.2;
 /**
+ * Roles that report facts, not defects, get no support round: the digest still flags an unsupported
+ * blocker/major finding. Measured 2026-10-20..28: 260 of 598 rounds were theirs, and 98 of those
+ * left a finding unsupported (task 3227, operator #20706).
+ */
+export const NO_SUPPORT_ROUND: ReadonlySet<string> = new Set(['scout', 'researcher']);
+/** A support round may run: the role gets one and at least SUPPORT_MIN_LEFT of the turn budget is left. */
+export function supportRoundFits(role: string, leftMs: number, timeoutMs: number): boolean {
+  return !NO_SUPPORT_ROUND.has(role) && leftMs >= timeoutMs * SUPPORT_MIN_LEFT;
+}
+/**
  * Continue or fresh (decision #12435): a seat's next turn starts a fresh provider session when the
  * context is this full. Brief content never resets a seat's conversation.
  * A fresh session gets the role context and the reports of the seat's last EARLIER_REPORTS turns.
@@ -486,7 +498,6 @@ export const EARLIER_REPORTS = 3;
 export const EARLIER_CHARS = 12_000;
 
 /** Bound on the post-finish hold for a turn's automatic lesson application (memory #12411). */
-export const LESSON_HOLD_MS = 90_000;
 /** Bound on the recordTree hold: the write is fast, so a coder without reviewers never waits long. */
 export const TREE_HOLD_MS = 10_000;
 /** Trees kept per coder seat for the correction delta. */

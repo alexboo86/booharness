@@ -43,11 +43,11 @@ Installation selects families, proves logins, configures memory and optional ser
 1. **Adopt a repository.** `node ops/kit/adopt-project.mjs /abs/path/to/project` links lead skills and builds its codegraph index. The project's instructions and verification commands are adapted after the harness installation works.
 2. **Write a bounded brief.** The lead chooses a role, names the repository and files, and states the expected result. A scout can first resolve an unknown flow; a coder receives an agreed implementation task.
 3. **Choose a family.** Without an explicit family, orch picks from the role matrix by quota pace. Usage is read periodically; unavailable families must be paused rather than left eligible for selection.
-4. **Start the seat.** orch supplies role duties, the brief, selected skills and relevant lessons. Coder, reviewer and bughunter seats get separate git worktrees. Read-only Pi roles have no edit tools and normally share the repository checkout.
-5. **Return a report.** The seat reports changes, checks, evidence and unfinished work as JSON. orch records and grades the report, then returns a digest to the lead. A grade is not proof that the code is correct.
-6. **Plan and run review.** `review_plan` determines the required review. Reviewer families differ from the author's and the lead's, with one exception: Claude may review another family's change even with a Claude lead. A blocking finding needs a reproduction.
-7. **Land and commit.** `seat_land` applies the accepted change to the lead checkout; it never commits. The lead commits explicit paths through `npm run check:commit`, with the owner's approval.
-8. **Keep the result.** Durable decisions and lessons go to memory, remaining work becomes tasks, and handoffs carry the state into the next session.
+4. **Start the seat.** orch supplies role duties, the brief, selected skills and relevant lessons. Coder, reviewer and bughunter seats get separate git worktrees. Read-only Pi roles have no edit tools and normally share the repository checkout. `seat_create` with `needs` set to `mac` requires `needs_reason` of at most 300 characters (`ops/orchestrator/src/http.ts`), unless the seat is Claude, a native harness, a stand arm, or a task file is a configured Mac-only path. `needs_reason` without that need is refused.
+5. **Return a report.** The seat reports changes, checks, evidence and unfinished work as JSON. orch records and grades the report without rerunning the seat's checks, then returns a digest to the lead. A grade is not proof that the code is correct.
+6. **Plan and run review.** `review_plan` determines the required review. Reviewer families differ from the author's and the lead's, with one exception: Claude may review another family's change even with a Claude lead. A reviewer runs a test only to prove a finding of its own, not to repeat a run the coder reported. A blocking finding needs a reproduction. When two reviewers cite overlapping lines of one file, the digest flags that one finding cites the same lines as the other; merge the findings only when they name one defect.
+7. **Land and commit.** `seat_land` applies the accepted change to the lead checkout; it never commits. The lead commits explicit paths through `npm run check:commit`, with the owner's approval. That check runs the commit-safety check and the gates those paths select; it does not run the orchestrator tests, the kit build or the knowledge-history judgement.
+8. **Keep the result.** Durable decisions go to memory when the lead records them. A seat's lesson proposal is shown in the digest and is stored only when the lead applies it. Remaining work becomes tasks, and handoffs carry the state into the next session.
 
 The delegation commands and family rules are in the [orch reference](ops/orchestrator/README.md) and [installation guide, §9](INSTALL.md#9-using-the-harness).
 
@@ -57,8 +57,7 @@ The delegation commands and family rules are in the [orch reference](ops/orchest
 
 orch creates and tracks seats, selects families, provisions worktrees, collects reports and serves the board. It runs locally as a background service. Its API is at `http://127.0.0.1:7760`, MCP at `/mcp`, and the board at `/`; state is stored under `~/.local/state/orch` in a SQLite WAL store.
 
-The lead uses MCP for delegation. The CLI, `node ops/orchestrator/src/main.ts`, provides service status, seat waits, host management, smoke tests and family-selection statistics. `wait <turn>` returns the completed turn's digest. Remote seat hosts are added over SSH; orch and the lead remain on the main machine.
-
+The lead uses MCP for delegation. The CLI, `node ops/orchestrator/src/main.ts`, provides service status, seat waits, host management, smoke tests and family-selection statistics. `wait <turn>` returns the completed turn's digest. Remote seat hosts are added over SSH; orch and the lead remain on the main machine. When several machines can run a seat, the machine that runs orch is ranked after a reserve of 6 cores and 12 GB of free memory, floored at zero (`ops/orchestrator/src/placement.ts`); a tie goes to a host. A fetch on a remote host fast-forwards that clone's master when the move is a fast-forward, no worktree has master checked out, master has no commits the remote lacks, and master is not a symbolic ref. A sweep of host checkouts keeps one that still has unlanded edits, including edits hidden by assume-unchanged or skip-worktree, and removes a checkout only with `git worktree remove` and without `--force`.
 ### Board and lead chat
 
 The web board shows leads and their context use, seats and their role/family/model, tools, skills, Pi extensions, and each family's quota window and pace. It makes pending and running work visible without opening every seat transcript.
@@ -75,13 +74,13 @@ Roles define a seat's job and available methods; families define which provider 
 
 | Role | Job |
 |---|---|
-| Scout | Locate code and answer a bounded question with source evidence |
+| Scout | Locate code and answer a bounded question with source evidence. A scout does not run a measurement |
 | Researcher | Investigate a subject and return sourced findings |
 | Coder | Implement an agreed task and run the relevant checks |
 | Tester | Reproduce defects with tests and verify user paths |
 | Designer | Design or redesign a surface within the project's UI rules |
 | Copywriter | Write user-facing copy, metadata and locale strings |
-| Reviewer | Inspect a change and reproduce blocking findings |
+| Reviewer | Inspect a change; run a test only to prove a finding of its own |
 | Legal | Review legal copy, payments, personal data and consent |
 | Security | Review security changes with threat models and reproduced PoCs |
 | Bughunter | Investigate and reproduce a defect |
@@ -127,17 +126,16 @@ Claude seats stay in Claude Code. The authors' Pi-to-Anthropic subscription prob
 
 Editing and inspection seats that need isolation work in `~/.local/state/orch/worktrees/<seat>`. Each worktree belongs to the target repository, not to a copy of the harness. Optional per-project setup commands can install the project's dependencies in a new worktree.
 
-Isolation keeps concurrent edits apart; it does not merge conflicting changes or validate them. Landing and committing remain separate operations. The stash is shared across a repository's worktrees, so seat hooks forbid `git stash`.
-
+Isolation keeps concurrent edits apart; it does not merge conflicting changes or validate them. Closing a seat stops processes whose working directory is that seat's worktree, after the provider stops. Landing and committing remain separate operations. The stash is shared across a repository's worktrees, so seat hooks forbid `git stash`.
 ### Reports, grading and review
 
-Reports separate observations, evidence, checks and open work. orch performs structural grading in code; optional Jev grading asks whether the result is a real completion report. Jev does **not** judge whether each evidence pair is true.
+Reports separate observations, evidence, checks and open work. orch performs structural grading in code and does not rerun checks a seat reports as passed: a reported failure is flagged, and a criterion with no command or result is flagged. A handoff draft marks every reported check as a hypothesis. Optional Jev grading asks whether the result is a real completion report. Jev does **not** judge whether each evidence pair is true. A report over the size cap is graded from a copy with every text field cut and the enumerated fields left whole; the seat's report is not refused for size. A scout or researcher may return an inventory as a `table` field (at most 60,000 characters, `ops/orchestrator/src/report.ts`); grading sees the row count, not the table text. Those two roles are not sent back for a support round; an unsupported blocker or major is still flagged on the digest.
 
-Review planning considers the seat's own diff and its risk. Depending on the plan, independent reviewer seats inspect the change. If Jev is unavailable, review does not silently disappear: the planner keeps a minimum review requirement, with stricter handling for security paths. The [Jev section](#jev) describes the data sent and the failure behaviour.
+Review planning considers the seat's own diff and its risk. Depending on the plan, independent reviewer seats inspect the change. A reviewer runs a test only to prove a finding of its own, not to repeat a run the coder reported. When two reviewers cite overlapping lines of one file, the digest flags that one finding cites the same lines as the other; that is not proof they found the same defect. If Jev is unavailable, review does not silently disappear: the planner keeps a minimum review requirement, with stricter handling for security paths. The [Jev section](#jev) describes the data sent and the failure behaviour.
 
 ### Commit gate
 
-The lead owns the final commit. The shipped `npm run check:commit` runs the kit's commit-safety check; it is not a substitute for the adopted project's typecheck, tests or build. Project-specific commands must be configured as part of adoption. The kit also supplies Git hook shims and a push check; it does not push automatically.
+The lead owns the final commit. The shipped `npm run check:commit` runs the kit's commit-safety check and the gates the committed files select. The whole-corpus gates (legal copy, translations, duplicate constants, import cycles and the Jev ledger) run only when a committed file is one of their inputs (`scripts/check-commit.mjs` (not in this kit)). It does not run the orchestrator test suite, the kit build, or the knowledge-history judgement; those stay separate commands. It is not a substitute for the adopted project's typecheck, tests or build. Project-specific commands must be configured as part of adoption. The kit also supplies Git hook shims and a push check; it does not push automatically.
 
 ### Memory, lessons, tasks, handoffs and knowledge pages
 
@@ -230,7 +228,7 @@ The authors use Claude as lead in the Claude Code desktop app. Claude Code termi
 | `qwen` | Pi `qwen-token-plan-individual` | Token-plan key through Pi `/login` |
 | `mimo` | Pi `xiaomi-token-plan-*` | Token-plan key through Pi `/login` |
 
-Not every family has every role: OpenCode is scout-only in the default matrix; Claude has researcher, coder, reviewer and plan-critic assignments. The full role/model matrix and login requirements are in [INSTALL.md, §2](INSTALL.md#2-supported-ai-families).
+Not every family has every role. OpenCode is scout-only in the default matrix. Claude has researcher, coder, tester, designer, copywriter, reviewer, plan-critic and legal assignments, and not scout, debater, bughunter or security. Codex, glm, qwen and mimo cover every role; kimi has every role except scout; grok has every role except bughunter and security. A glm coder whose effort is max gets 60 minutes when the lead names no time limit; every other seat keeps the 30-minute default (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). The full role/model matrix and login requirements are in [INSTALL.md, §2](INSTALL.md#2-supported-ai-families).
 
 ## Requirements
 

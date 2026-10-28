@@ -22,6 +22,7 @@ import {
   taskRowDomain,
   titleWords,
   titlesAlike,
+  unknownKind,
 } from './task-pure.mjs';
 
 // Exported since 2026-08-14: the macOS transfer verifier refuses a database
@@ -1774,7 +1775,7 @@ function lessonSupersedeProblem(oldEncoded, newEncoded, routingMap) {
 function validateEntry(input, forcedKind = null) {
   const kind = forcedKind || input.kind;
   if (typeof kind !== 'string' || !KINDS.has(kind)) {
-    throw new HttpError(400, `unknown kind: ${String(kind)}`);
+    throw new HttpError(400, unknownKind(kind));
   }
   if (typeof input.title !== 'string' || !input.title.trim()) {
     throw new HttpError(400, 'missing title');
@@ -2752,7 +2753,7 @@ WHERE id = ?`);
   function search(url, queryVector) {
     const query = url.searchParams.get('q');
     const kind = url.searchParams.get('kind');
-    if (kind !== null && !KINDS.has(kind)) throw new HttpError(400, `unknown kind: ${kind}`);
+    if (kind !== null && !KINDS.has(kind)) throw new HttpError(400, unknownKind(kind));
 
     // A SESSION is an exact identity, not a phrase, so it is answered by the
     // session index rather than by full-text search - and it is the one lookup

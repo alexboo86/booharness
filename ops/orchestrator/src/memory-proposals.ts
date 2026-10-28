@@ -1,21 +1,19 @@
-// Lesson proposals from worker reports auto-apply; other proposals require the lead.
+// Report proposals are data for the lead; lesson capture is a manual decision.
 // The validated final text is the durable proposal snapshot across restarts.
 import { execFile } from 'node:child_process';
-import { lstatSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { Store } from './store.ts';
-import { LESSON_ROLES, parseReport, type ReportRole } from './report.ts';
+import { parseReport, type ReportRole } from './report.ts';
 import { reviewRights } from './seats-defs.ts';
 import { tableContractOf } from './seats-scope.ts';
 import { refusalReasons, withoutRefusalLogEnvelopes } from './lesson-stats.ts';
-import { isGlobAnchor, resolveMemoryctl, spawnPlan } from '../../../scripts/memory/lesson-lib.mjs';
-import { canonicalAnchorFile, gateNewLesson } from '../../../scripts/memory/capture-gate.mjs';
+import { resolveMemoryctl, spawnPlan } from '../../../scripts/memory/lesson-lib.mjs';
+import { gateNewLesson } from '../../../scripts/memory/capture-gate.mjs';
 import { lessonFields } from '../../../scripts/memory/lesson-quality.mjs';
-import { scrubbedGitEnv } from '../../../scripts/git-env.mjs';
 
 const exec = promisify(execFile);
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -62,56 +60,6 @@ const NOT_SENT = /curl:\s*\(7\)|\bECONNREFUSED\b|\bconnection refused\b|\bcould 
 
 export type ApplyResult = { index: number; status: 'applied' | 'refused' | 'already_applied' | 'uncertain' | 'deferred'; id?: number; text: string; substitution?: string; repairTurn?: string; deferred?: { file: string; at: string } };
 
-// The gate reads git refs only (capture-gate.mjs anchorInRefs); a file the seat created is in none
-// until the lead commits it. Only this exact, sole reason is deferred, never another refusal.
-const ANCHOR_NOT_IN_REFS = /^lesson refused: anchor (.+) exists in no HEAD, local branch or origin\/\* ref; correct the anchor or add its file$/;
-const DEFER_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** The plain file a sole not-in-refs refusal names as its anchor. */
-function refusedAnchorCandidate(text: string, anchor: unknown): string | null {
-  const match = ANCHOR_NOT_IN_REFS.exec(withoutRefusalLogEnvelopes(text).trim());
-  if (!match || match[1] !== anchor) return null;
-  let file: string;
-  try { file = canonicalAnchorFile(anchor) as string; } catch { return null; }
-  return isGlobAnchor(file) ? null : file;
-}
-
-type SeatCheckout = { worktree: string | null; data: Record<string, unknown> };
-
-/** Whether the seat's checkout holds the file: the local worktree, or — a remote reviewer has none
- * (seats.ts leaves worktree null) — its stored base commit, which names the checkout's content and
- * (for uncommitted work under review, a snapshotCommit object) lives in the local repo even though
- * no ref points at it. Only a regular tree entry (mode 100644/100755) counts, exactly what
- * lstatSync().isFile() accepts locally: a symlink blob (120000) is not a file, nor is a tree.
- * `why` names a presence that could not be decided; the caller does not defer. */
-async function anchorInSeatCheckout(seat: SeatCheckout, file: string): Promise<{ present: boolean; why?: string }> {
-  if (seat.worktree) {
-    try { return { present: lstatSync(path.join(seat.worktree, file)).isFile() }; } catch { return { present: false }; }
-  }
-  const commit = seat.data.base;
-  const repo = typeof seat.data.repo === 'string' && seat.data.repo ? seat.data.repo : ROOT;
-  const git = (args: string[]) => exec('git', args, { cwd: repo, env: scrubbedGitEnv(), maxBuffer: 1024 * 1024, timeout: 60000 });
-  if (typeof commit !== 'string' || !commit) return { present: false, why: 'not deferred: remote seat has no worktree and no stored base commit; the anchor file\'s presence in its checkout could not be verified' };
-  try { await git(['cat-file', '-e', `${commit}^{commit}`]); } catch { return { present: false, why: `not deferred: remote seat has no worktree and its base commit ${commit} is unavailable in the local repo; the anchor file's presence in its checkout could not be verified` }; }
-  try {
-    const listed = await git(['ls-tree', '-z', commit, '--', file]);
-    const mode = listed.stdout.split('\0').find((entry) => entry.endsWith(`\t${file}`))?.split(' ')[0];
-    return { present: mode === '100644' || mode === '100755' };
-  } catch { return { present: false }; }
-}
-
-/** The gate's ref set (HEAD, refs/heads, refs/remotes/origin), read without blocking the daemon loop. */
-export async function fileInRefs(cwd: string, file: string): Promise<boolean> {
-  const git = async (args: string[]) => (await exec('git', args, { cwd, env: scrubbedGitEnv(), maxBuffer: 16 * 1024 * 1024, timeout: 60000 })).stdout;
-  const refs = ['HEAD', ...(await git(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes/origin'])).split('\n').filter(Boolean)];
-  const trees = new Set((await git(['rev-parse', ...refs.map((ref) => `${ref}^{tree}`)])).split('\n').filter(Boolean));
-  // One cat-file process for every tree: a checkout with ~1000 branches took 12 s with one ls-tree per tree.
-  const run = exec('git', ['cat-file', '--batch-check=%(objecttype)'], { cwd, env: scrubbedGitEnv(), maxBuffer: 16 * 1024 * 1024, timeout: 60000 });
-  run.child.stdin!.on('error', () => {}); // an early git exit rejects the run itself
-  run.child.stdin!.end([...trees].map((tree) => `${tree}:${file}\n`).join(''));
-  return (await run).stdout.split('\n').includes('blob');
-}
-
 export type BrevityField = { field: string; length: number; limit: number; target: number; ceiling: boolean };
 
 /** Only a refusal made entirely of field brevity objections may be sent back to its author. */
@@ -136,16 +84,10 @@ export function brevityFields(text: string): BrevityField[] {
   return fields;
 }
 
-/** Persist the queue link with the refusal; later digests (including after restart) read the ledger. */
-export function recordLessonRepair(store: Store, turnId: string, index: number, result: ApplyResult, repairTurn: string): void {
-  store.db.prepare("UPDATE memory_proposal_applications SET output = ? WHERE turn_id = ? AND idx = ? AND state = 'refused'")
-    .run(JSON.stringify({ ...result, repairTurn }), turnId, index);
-}
 export type LessonApplication = { index: number; title: string; outcome: string };
 
-/** Read the durable ledger, not the ephemeral auto-apply return: wait --json and later
- * digest requests must agree, including after daemon restart. */
-export function lessonApplications(store: Store, turnId: string, proposals: MemoryProposal[], role: string, autoApplyInProgress: boolean): LessonApplication[] {
+/** Preserve durable historical outcomes while new proposals await the lead's decision. */
+export function lessonApplications(store: Store, turnId: string, proposals: MemoryProposal[]): LessonApplication[] {
   const rows = store.db.prepare('SELECT idx, state, output FROM memory_proposal_applications WHERE turn_id = ?')
     .all(turnId) as { idx: number; state: string; output: string }[];
   const byIndex = new Map(rows.map((row) => [row.idx, row]));
@@ -153,19 +95,17 @@ export function lessonApplications(store: Store, turnId: string, proposals: Memo
     if (proposal.op !== 'append' || proposal.kind !== 'lesson') return [];
     const row = byIndex.get(index);
     let outcome: string;
-    if (!LESSON_ROLES.has(role as ReportRole)) outcome = 'not auto-applied (lead memory_apply)';
-    else if (autoApplyInProgress && (!row || row.state === 'gate' || row.state === 'running')) outcome = 'pending (auto-apply in progress)';
-    else if (!row) outcome = 'pending';
+    if (!row) outcome = 'proposed (lead capture: node scripts/memory/capture-lesson.mjs)';
     else if (row.state === 'applied') {
       const saved = JSON.parse(row.output) as ApplyResult;
       outcome = saved.id === undefined ? 'applied (id not recorded; check memory)' : `applied #${saved.id}`;
       if (saved.substitution) outcome += ` · ${saved.substitution}`;
     } else if (row.state === 'deferred') {
-      outcome = `deferred: awaiting commit of ${(JSON.parse(row.output) as ApplyResult).deferred?.file} (anchor is new in the seat checkout; retried once it is in a ref)`;
+      outcome = `deferred: awaiting commit of ${(JSON.parse(row.output) as ApplyResult).deferred?.file} (legacy proposal; lead capture required)`;
     } else if (row.state === 'refused') {
       const saved = JSON.parse(row.output) as ApplyResult;
       outcome = saved.repairTurn ? `refused (brevity) — repair queued ${saved.repairTurn}` : `refused: ${refusalReasons(saved.text)[0]} · rewrite with node scripts/memory/capture-lesson.mjs`;
-    } else if (row.state === 'retryable' || row.state === 'gate') outcome = 'retryable (replays at restart)';
+    } else if (row.state === 'retryable' || row.state === 'gate') outcome = 'retryable (lead action required)';
     else outcome = 'uncertain (check memory before re-applying)';
     return [{ index, title: proposal.title, outcome }];
   });
@@ -211,7 +151,7 @@ function field(text: string): string { return text.trim().replace(/\r?\n/g, '\n 
 
 const inFlight = new WeakMap<Store, Map<string, Promise<void>>>();
 
-export async function applyMemory(store: Store, turnId: string, pick?: number[], confirm = false, gate: typeof gateNewLesson = runLessonGate, client: typeof memoryctl = memoryctl, automatic = false, recovering = false): Promise<{ turn: string; results: ApplyResult[] } | { turn: string; preview: Preview[] }> {
+export async function applyMemory(store: Store, turnId: string, pick?: number[], confirm = false, gate: typeof gateNewLesson = runLessonGate, client: typeof memoryctl = memoryctl): Promise<{ turn: string; results: ApplyResult[] } | { turn: string; preview: Preview[] }> {
   const turn = store.getTurn(turnId);
   if (!turn || turn.status !== 'done' || !turn.text) throw new Error(`turn '${turnId}' has no completed report`);
   const seat = store.getSeat(turn.seat_id);
@@ -247,8 +187,7 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
   if (!inFlight.has(store)) inFlight.set(store, new Map());
   const flights = inFlight.get(store)!;
   for (const index of indexes) {
-    // One writer per proposal row in this daemon: sweep, turn-end apply, recovery replay and the
-    // lead's memory_apply wait here, then read the row the finished writer left.
+    // Concurrent explicit applications serialize before reading the previous writer's row.
     const key = `${turnId}\0${index}`;
     for (let flight = flights.get(key); flight; flight = flights.get(key)) await flight;
     let release!: () => void;
@@ -260,15 +199,9 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
         results.push({ ...saved, status: 'already_applied' });
         continue;
       }
-      if (prior?.state === 'running' || prior?.state === 'uncertain' || (prior?.state === 'gate' && !recovering)) {
+      if (prior?.state === 'running' || prior?.state === 'uncertain' || prior?.state === 'gate') {
         results.push({ index, status: 'uncertain', text: 'Previous attempt may have written memory; inspect memory before retrying.' });
         break;
-      }
-      // Only the deferred sweep retries a deferred row, and it does so as a non-automatic apply.
-      if (automatic && prior?.state === 'deferred') { results.push(JSON.parse(prior.output) as ApplyResult); continue; }
-      if (automatic && prior?.state === 'refused') {
-        const saved = JSON.parse(prior.output) as ApplyResult;
-        if (!gateOutage(saved.text)) { results.push(saved); continue; }
       }
       // 'gate' and 'retryable' never reached the memoryctl append. The legacy
       // 'running' state has no such proof and must remain uncertain.
@@ -357,12 +290,6 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
         // A connect failure is not proof either: memoryctl's append makes more than one request (task 1484).
         const uncertain = writeStarted && !definiteRefusal;
         result = { index, status: uncertain ? 'uncertain' : 'refused', text: uncertain ? text.slice(0, 2000) : text };
-        const deferredCandidate = automatic && !writeStarted && !uncertain ? refusedAnchorCandidate(text, proposal.links?.anchor) : null;
-        if (deferredCandidate) {
-          const { present, why } = await anchorInSeatCheckout(seat, deferredCandidate);
-          if (present) result = { index, status: 'deferred', text, deferred: { file: deferredCandidate, at: new Date().toISOString() } };
-          else if (why) result = { ...result, text: `${text}\n${why}` };
-        }
       }
       const state = result.status === 'refused' && (!writeStarted && (gateOutage(result.text) || !withoutRefusalLogEnvelopes(result.text).trimStart().startsWith('lesson refused:')))
         ? 'retryable' : result.status;
@@ -380,97 +307,6 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
 
 function gateOutage(text: string): boolean {
   return /lesson refused: (?:Jev unavailable|cannot compare active lessons)/i.test(text);
-}
-
-/** Only worker lesson appends enter this automatic path. A crashed append
- * remains uncertain; a gate-only attempt can safely be replayed. */
-export async function autoApplyLessons(store: Store, turnId: string, gate: typeof gateNewLesson = runLessonGate, client: typeof memoryctl = memoryctl, recovering = false): Promise<ApplyResult[]> {
-  const results = await applyTurnLessons(store, turnId, gate, client, recovering);
-  // Turn end and recovery both pass here; a failed sweep must not fail the turn's own apply.
-  try { await sweepDeferredLessons(store, { gate, client, throttled: true }); }
-  catch (error) { console.warn(`deferred lesson sweep failed: ${(error as Error).message}`); }
-  return results;
-}
-
-export type SweptLesson = ApplyResult & { turn: string; file: string };
-const lastSweep = new WeakMap<Store, number>();
-const SWEEP_INTERVAL_MS = 10_000;
-
-/** Apply each deferred lesson once its anchor file is in a ref, through the normal gate path
- * (non-automatic, so a second refusal is terminal); expire one older than seven days. */
-export async function sweepDeferredLessons(store: Store, { gate = runLessonGate, client = memoryctl, inRefs = (file: string) => fileInRefs(ROOT, file), now = Date.now, throttled = false }: {
-  gate?: typeof gateNewLesson; client?: typeof memoryctl; inRefs?: (file: string) => Promise<boolean>; now?: () => number; throttled?: boolean;
-} = {}): Promise<SweptLesson[]> {
-  ledger(store);
-  const rows = store.db.prepare("SELECT turn_id, idx, output FROM memory_proposal_applications WHERE state = 'deferred' ORDER BY turn_id, idx").all() as { turn_id: string; idx: number; output: string }[];
-  if (!rows.length) return [];
-  // Recovery replays every turn through autoApplyLessons: bound it to one ref walk per interval.
-  if (throttled && now() - (lastSweep.get(store) ?? -Infinity) < SWEEP_INTERVAL_MS) return [];
-  lastSweep.set(store, now());
-  const swept: SweptLesson[] = [];
-  const still = (row: { turn_id: string; idx: number }) => (store.db.prepare('SELECT state FROM memory_proposal_applications WHERE turn_id = ? AND idx = ?').get(row.turn_id, row.idx) as { state: string } | undefined)?.state === 'deferred';
-  for (const row of rows) {
-    const saved = JSON.parse(row.output) as ApplyResult;
-    const file = saved.deferred?.file;
-    if (!file) continue;
-    let result: ApplyResult;
-    // Expiry is decided first: a row past seven days never reaches the gate, even if its file is now committed.
-    if (now() - Date.parse(saved.deferred!.at) > DEFER_MS) {
-      result = { index: row.idx, status: 'refused', text: `lesson refused: anchor never committed: ${file} entered no HEAD, local branch or origin/* ref within 7 days of deferral (${saved.deferred!.at})` };
-      const expired = store.db.prepare("UPDATE memory_proposal_applications SET state = 'refused', output = ? WHERE turn_id = ? AND idx = ? AND state = 'deferred'")
-        .run(JSON.stringify(result), row.turn_id, row.idx);
-      if (!expired.changes) continue;
-    } else if (await inRefs(file)) {
-      if (!still(row)) continue; // another sweep took it during the ref read
-      const applied = await applyMemory(store, row.turn_id, [row.idx], true, gate, client);
-      if (!('results' in applied)) throw new Error('deferred lesson application returned a preview');
-      result = applied.results[0];
-    } else continue;
-    swept.push({ ...result, turn: row.turn_id, file });
-  }
-  return swept;
-}
-
-export type LandLessons = { deferred: { turn: string; index: number; title: string; file: string; outcome: string }[]; swept: SweptLesson[] };
-
-/** seat_land: sweep first, then name every lesson of this seat still waiting for its anchor's commit. */
-export async function landLessons(store: Store, seatId: string, options: Parameters<typeof sweepDeferredLessons>[1] = {}): Promise<LandLessons | null> {
-  const swept = await sweepDeferredLessons(store, options);
-  const rows = store.db.prepare(`SELECT a.turn_id, a.idx, a.output FROM memory_proposal_applications a JOIN turns t ON t.id = a.turn_id
-    WHERE t.seat_id = ? AND a.state = 'deferred' ORDER BY t.ended_at, a.turn_id, a.idx`).all(seatId) as { turn_id: string; idx: number; output: string }[];
-  const deferred = rows.map((row) => {
-    const turn = store.getTurn(row.turn_id);
-    const seat = turn && store.getSeat(turn.seat_id);
-    const parsed = turn?.text && seat ? parseReport(turn.text, seat.role as ReportRole, store.lessonDeliveries(turn.id).filter((d) => d.mode === 'full').map((d) => d.lesson_id), { stored: true, table: tableContractOf(seat) }) : null;
-    const title = parsed?.ok ? String((parsed.report.memory as MemoryProposal[] | undefined)?.[row.idx]?.title ?? '') : '';
-    const file = (JSON.parse(row.output) as ApplyResult).deferred?.file ?? '';
-    return { turn: row.turn_id, index: row.idx, title, file, outcome: `awaiting commit of ${file}` };
-  });
-  return deferred.length || swept.length ? { deferred, swept } : null;
-}
-
-async function applyTurnLessons(store: Store, turnId: string, gate: typeof gateNewLesson, client: typeof memoryctl, recovering: boolean): Promise<ApplyResult[]> {
-  const turn = store.getTurn(turnId);
-  if (!turn || turn.status !== 'done' || !turn.text) return [];
-  const seat = store.getSeat(turn.seat_id);
-  if (!seat || !LESSON_ROLES.has(seat.role as ReportRole)) return [];
-  const lessons = store.lessonDeliveries(turnId).filter((row) => row.mode === 'full').map((row) => row.lesson_id);
-  const parsed = parseReport(turn.text, seat.role as ReportRole, lessons, { stored: true, table: tableContractOf(seat) });
-  if (!parsed.ok) return [];
-  const proposals = (parsed.report.memory ?? []) as MemoryProposal[];
-  const results: ApplyResult[] = [];
-  for (const [index, proposal] of proposals.entries()) {
-    if (proposal.kind !== 'lesson' || proposal.op !== 'append') continue;
-    const applied = await applyMemory(store, turnId, [index], true, gate, client, true, recovering);
-    if (!('results' in applied)) throw new Error('automatic lesson application returned a preview');
-    const result = applied.results[0];
-    results.push(result);
-    // A duplicate repeats an earlier delivery, including a full lesson delivered to a reviewer's author.
-    const match = result.status === 'refused' && /duplicate of #(\d+)\b/.exec(result.text);
-    if (!match) continue;
-    await recordLessonRepeat(store, turnId, index, match[1], client);
-  }
-  return results;
 }
 
 /** The daemon owns repeat writes; a confirmed duplicate uses the same path as legacy refusals. */

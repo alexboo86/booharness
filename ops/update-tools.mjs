@@ -2,11 +2,12 @@
 //
 // ops/update-tools.mjs — keeps the agent toolset current, mechanically.
 //
-// Runs daily from launchd on the Mac (`--install-schedule` writes the plist) and
+// Runs daily from launchd on the Mac (`--install-schedule` writes the plist),
 // from Task Scheduler on Windows (`--install-schedule` writes the
-// <prefix>-update-tools job), updates every tool the harness depends on WHERE
-// IT ACTUALLY LIVES, and leaves one durable memory entry so the next agent
-// session knows what moved under it.
+// <prefix>-update-tools job) and from the user crontab on Linux
+// (`--install-schedule` rewrites exactly one tagged line), updates every tool
+// the harness depends on WHERE IT ACTUALLY LIVES, and leaves one durable memory
+// entry so the next agent session knows what moved under it.
 //
 // PROVENANCE IS DISCOVERED, NEVER ASSUMED. Measured 2026-08-22 on the operator's
 // mac: codegraph, ast-grep, claude and codex all resolve through /opt/homebrew/bin,
@@ -37,7 +38,9 @@
 //                                          # (also flags a plist whose WorkingDirectory
 //                                          # or script path does not exist)
 //   node ops/update-tools.mjs --no-memory      # skip the memory entry
-//   node ops/update-tools.mjs --install-schedule   # write + load the launchd job
+//   node ops/update-tools.mjs --install-schedule   # write + load the daily job
+//                                          # (launchd plist / Task Scheduler job /
+//                                          #  one tagged crontab line on Linux)
 //   node ops/update-tools.mjs --remove-schedule
 //
 import { spawnSync } from 'node:child_process';
@@ -118,6 +121,8 @@ function run(cmd, args, { stdin = '', timeout = 300_000, cwd = REPO } = {}) {
     ok: r.status === 0 && !r.error,
     code: r.status,
     out,
+    // Untrimmed and without stderr: a caller that rewrites what it read (the crontab) needs every byte.
+    stdout: r.stdout ?? '',
     timedOut: r.error?.code === 'ETIMEDOUT',
     missing: r.error?.code === 'ENOENT',
   };
@@ -798,6 +803,16 @@ function tail(text, n) {
 // report
 // ---------------------------------------------------------------------------
 
+// The scheduler a daily run names in its report: the machine's own mechanism,
+// never "launchd" on a Linux host.
+function scheduleDescription() {
+  return platform() === 'win32'
+    ? `Task Scheduler (${TASK_NAME}, раз в сутки)`
+    : platform() === 'linux'
+      ? `crontab (${crontabTag()}, раз в сутки)`
+      : `launchd (${PLIST_ID}, раз в сутки)`;
+}
+
 function renderReport(results, stamp) {
   const changed = results.filter((r) => r.status === 'updated');
   const broken = results.filter((r) => ['failed', 'timeout', 'missing', 'held', 'would-hold', 'would-defer'].includes(r.status)
@@ -833,9 +848,7 @@ function renderReport(results, stamp) {
     }
   }
   lines.push('');
-  const scheduler = platform() === 'win32'
-    ? `Task Scheduler (${TASK_NAME}, раз в сутки)`
-    : `launchd (${PLIST_ID}, раз в сутки)`;
+  const scheduler = scheduleDescription();
   lines.push('Обновляет `ops/update-tools.mjs` по расписанию '
     + `${scheduler}. Лог: ${LOG_FILE}. `
     + 'Зависимости продукта (npm/cargo) в этот механизм НЕ входят по решению оператора от 2026-08-22.');
@@ -852,17 +865,17 @@ function renderReport(results, stamp) {
 // `superseded_by IS NULL` allows exactly one live entry per key, so the entry is
 // created once and superseded forever after.
 
-function readState() {
+function readState(file = STATE_FILE) {
   try {
-    return JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    return JSON.parse(readFileSync(file, 'utf8'));
   } catch {
     return {};
   }
 }
 
-function writeState(state) {
-  mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
+function writeState(state, file = STATE_FILE) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 // The id lives in a state file, but a state file can be deleted and the entry
@@ -873,8 +886,8 @@ function writeState(state) {
 // step append a second entry under a unique key — or, worse, skip the
 // supersede of the live one. Abort loudly; the write must never run on an
 // unknown store state (build slice B2c, decision #12123).
-export function findLiveEntryId() {
-  const r = run('memoryctl', ['search', MEMORY_TITLE, '--kind', 'reference', '--limit', '5'], { timeout: 60_000 });
+export function findLiveEntryId(runMemory = (args, options) => run('memoryctl', args, options)) {
+  const r = runMemory(['search', MEMORY_TITLE, '--kind', 'reference', '--limit', '5'], { timeout: 60_000 });
   if (!r.ok) {
     throw new Error(`memory search for "${MEMORY_TITLE}" failed — refusing to write on an unknown store state: ${r.out}`);
   }
@@ -883,13 +896,19 @@ export function findLiveEntryId() {
   return id ? Number(id) : null;
 }
 
-function recordToMemory(body) {
-  const bodyFile = path.join(STATE_DIR, 'memory-body.md');
-  mkdirSync(STATE_DIR, { recursive: true });
+export function recordToMemory(
+  body,
+  {
+    runMemory = (args, options) => run('memoryctl', args, options),
+    stateFile = STATE_FILE,
+    bodyFile = path.join(STATE_DIR, 'memory-body.md'),
+  } = {},
+) {
+  mkdirSync(path.dirname(bodyFile), { recursive: true });
   writeFileSync(bodyFile, `${body}\n`);
 
-  const state = readState();
-  let existing = state.memoryId ?? findLiveEntryId();
+  const state = readState(stateFile);
+  let existing = state.memoryId ?? findLiveEntryId(runMemory);
 
   // `--pinned` is what makes this reach the agents, and it was not optional:
   // measured 2026-08-22, the unpinned entry was live, unique and findable by
@@ -897,36 +916,45 @@ function recordToMemory(body) {
   // of 1203 and omitted the rest. An entry nobody reads at session start does
   // not do the job this script exists for.
   const write = (id) => (id
-    ? run('memoryctl', ['supersede', '--id', String(id),
+    ? runMemory(['supersede', '--id', String(id),
         '--title', MEMORY_TITLE, '--body-file', bodyFile, '--pinned'], { timeout: 60_000 })
-    : run('memoryctl', ['append', '--kind', 'reference', '--key', MEMORY_KEY,
+    : runMemory(['append', '--kind', 'reference', '--key', MEMORY_KEY,
         '--title', MEMORY_TITLE, '--body-file', bodyFile, '--pinned'], { timeout: 60_000 }));
 
   let r = write(existing);
-
-  // The state file goes STALE, not just missing: anyone superseding this entry
-  // by hand moves the live id and leaves ours pointing at a closed row. Measured
-  // 2026-08-22 — the run answered
-  // `409 {"error":"... already superseded","current_id":4333}`.
-  //
-  // That refusal NAMES its own fix, which is the memoryctl contract's rule, so
-  // the retry supplies it instead of repeating the same call. Recovering by id
-  // rather than by appending a fresh entry matters: the unique index over `key`
-  // allows one live row, so a blind append would fail too — and if it did not,
-  // it would fork the history this entry exists to keep in one place.
-  if (!r.ok) {
-    const named = r.out.match(/"current_id"\s*:\s*(\d+)/)?.[1];
-    const recovered = named ? Number(named) : findLiveEntryId();
-    if (recovered && recovered !== existing) {
-      existing = recovered;
-      r = write(existing);
-    }
+  const recovered = recoverFromRefusal(r, existing, runMemory);
+  if (recovered) {
+    existing = recovered;
+    r = write(existing);
   }
 
   if (!r.ok) return { ok: false, out: tail(r.out, 300) };
   const id = r.out.match(/"id"\s*:\s*(\d+)/)?.[1];
-  if (id) writeState({ ...state, memoryId: Number(id), lastRun: new Date().toISOString() });
+  if (id) writeState({ ...state, memoryId: Number(id), lastRun: new Date().toISOString() }, stateFile);
   return { ok: true, out: `memory entry ${id ?? existing}` };
+}
+
+// The state file goes STALE, not just missing: anyone superseding this entry
+// by hand moves the live id and leaves ours pointing at a closed row. Measured
+// 2026-08-22 — the run answered
+// `409 {"error":"... already superseded","current_id":4333}`.
+//
+// And the FIRST run on a host with no state file can lose the search too
+// (a Linux host, 2026-10-28: the title is Russian and the search is semantic, not a
+// key lookup) — the append then answers the store's own key conflict,
+// `409 {"error":"live key '...' already belongs to memory entry 20699"}`
+// (scripts/memory/store.mjs, getLiveByKey): no current_id, the id rides in
+// the message. Both refusals NAME their own fix, which is the memoryctl
+// contract's rule, so the recovery below supplies the named id instead of
+// repeating the same call — the unique index over `key` allows one live row,
+// so a blind append would fail too, and if it did not, it would fork the
+// history this entry exists to keep in one place.
+function recoverFromRefusal(r, existing, runMemory) {
+  if (r.ok) return null;
+  const named = r.out.match(/"current_id"\s*:\s*(\d+)/)?.[1]
+    ?? r.out.match(/already belongs to memory entry (\d+)/)?.[1];
+  const recovered = named ? Number(named) : findLiveEntryId(runMemory);
+  return recovered && recovered !== existing ? recovered : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +965,11 @@ function recordToMemory(body) {
 // mechanism, and the repo already installs one job this way
 // (ops/bootstrap/install-memory.mjs → a prefix-named memoryctl plist). Copying an
 // established pattern beats inventing a second scheduling story.
+//
+// Linux hosts are the exception: launchd does not exist there, and the user
+// crontab is the mechanism the host already runs (a Linux host has carried a
+// dryer-weekly line for years, Linger=yes), so the linux branch below owns
+// exactly ONE tagged line of that table instead of a second scheduler story.
 //
 // StartCalendarInterval rather than StartInterval: a machine that was asleep at
 // 04:00 runs the job when it wakes, and a laptop that is never awake at a fixed
@@ -1088,6 +1121,143 @@ function renderTaskSchedule(info) {
   return lines.join('\n');
 }
 
+// The linux twin of the plist/schtasks pair: the user crontab. Exactly one
+// line of that table is ours, tagged `# <PREFIX>-update-tools`, so install
+// replaces only ours and leaves every foreign line byte-for-byte — a blind
+// rewrite of the table would eat the operator's own lines.
+export function crontabTag(prefix = PREFIX) {
+  return `${prefix}-update-tools`;
+}
+
+// cron hands the command to /bin/sh and turns an unescaped % into a newline:
+// each path is one single-quoted word, and its % is escaped for cron.
+function cronWord(value) {
+  return `'${value.replaceAll("'", `'\\''`)}'`.replaceAll('%', '\\%');
+}
+
+export function crontabLine(checkout, { node = process.execPath, logFile = LOG_FILE, prefix = PREFIX } = {}) {
+  const script = path.join(checkout, 'ops', 'update-tools.mjs');
+  return `30 4 * * * ${cronWord(node)} ${cronWord(script)} >> ${cronWord(logFile)} 2>&1 # ${crontabTag(prefix)}`;
+}
+
+// The script path of a tagged line: our quoted word undone, or a bare token in a hand-written line.
+function cronScript(line) {
+  const quoted = line.match(/'((?:[^']|'\\'')*update-tools\.mjs)'/);
+  if (quoted) return quoted[1].replaceAll(`'\\''`, "'").replaceAll('\\%', '%');
+  return line.match(/[^\s"']*update-tools\.mjs/)?.[0] ?? null;
+}
+
+const defaultCrontabRun = (args, options = {}) => run('crontab', args, { timeout: 30_000, ...options });
+
+// `crontab -l` exit 1 with "no crontab for <user>" is an EMPTY table (a fresh
+// host), not a failure; any other refusal means the table is unknown, and a
+// write on top of an unknown table could eat foreign lines, so it throws.
+export function readCrontabTable(runCrontab = defaultCrontabRun) {
+  const r = runCrontab(['-l']);
+  if (r.ok) return r.stdout ?? r.out;
+  if (/no crontab for/i.test(r.out)) return '';
+  throw new Error(`crontab -l refused: ${tail(r.out, 300)}`);
+}
+
+function isOurCrontabLine(line) {
+  return line.trimEnd().endsWith(`# ${crontabTag()}`);
+}
+
+// Split a table into lines keeping every byte except the trailing empty piece
+// the final newline produces: comments, blanks and env lines survive verbatim.
+function crontabLines(table) {
+  if (!table) return [];
+  const lines = table.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+export function installCrontab(checkout, { runCrontab = defaultCrontabRun, node, logFile } = {}) {
+  const kept = crontabLines(readCrontabTable(runCrontab)).filter((line) => !isOurCrontabLine(line));
+  const table = `${[...kept, crontabLine(checkout, { node, logFile })].join('\n')}\n`;
+  return runCrontab(['-'], { stdin: table });
+}
+
+export function removeCrontab({ runCrontab = defaultCrontabRun } = {}) {
+  const lines = crontabLines(readCrontabTable(runCrontab));
+  const kept = lines.filter((line) => !isOurCrontabLine(line));
+  if (kept.length === lines.length) return { ok: true, removed: 0 };
+  const write = runCrontab(['-'], { stdin: kept.length ? `${kept.join('\n')}\n` : '' });
+  return { ok: write.ok, removed: lines.length - kept.length, out: write.out };
+}
+
+function crontabMissing() {
+  return {
+    status: 'missing',
+    workingDirectory: null,
+    script: null,
+    problems: [`crontab line not installed: # ${crontabTag()}`],
+  };
+}
+
+// A failed `crontab -l` is never an empty table: "no crontab for" is missing,
+// any other refusal is broken (reported, so --check exits 1).
+function crontabQueryAnswer(query) {
+  if (query.ok) return null;
+  return /no crontab for/i.test(query.out)
+    ? crontabMissing()
+    : {
+        status: 'broken',
+        workingDirectory: null,
+        script: null,
+        problems: [`crontab -l refused: ${tail(query.out, 300)}`],
+      };
+}
+
+// The linux counterpart of inspectScheduleTask, same seam shape: `runQuery`
+// answers for `crontab -l` so a test never touches a real table.
+export function inspectCrontab({ platform: plat = platform(), runQuery } = {}) {
+  if (plat !== 'linux') {
+    return {
+      status: 'missing',
+      workingDirectory: null,
+      script: null,
+      problems: ['the user crontab is the linux mechanism; this machine is not linux'],
+    };
+  }
+  const query = (runQuery || (() => run('crontab', ['-l'], { timeout: 30_000 })))();
+  const answer = crontabQueryAnswer(query);
+  if (answer) return answer;
+  const tagged = query.out.split('\n').filter((l) => isOurCrontabLine(l));
+  // A commented-out line of ours is a disabled daily job, not a working schedule.
+  const line = tagged.find((l) => !l.trimStart().startsWith('#'));
+  if (!line) {
+    return tagged.length
+      ? { status: 'broken', workingDirectory: null, script: null, problems: [`crontab line # ${crontabTag()} is commented out`] }
+      : crontabMissing();
+  }
+  const script = cronScript(line);
+  const problems = [];
+  if (!script) problems.push(`crontab line # ${crontabTag()} names no ops/update-tools.mjs`);
+  else if (!existsSync(script)) problems.push(`script path does not exist: ${script}`);
+  return {
+    status: problems.length ? 'broken' : 'ok',
+    workingDirectory: null,
+    script,
+    problems,
+  };
+}
+
+function renderCrontabSchedule(info) {
+  const lines = ['## Расписание crontab', ''];
+  if (info.status === 'ok') {
+    lines.push(`- ${crontabTag()}: ок`);
+    lines.push(`- script: ${info.script}`);
+  } else if (info.status === 'missing') {
+    lines.push(`- ${crontabTag()}: не установлен`);
+    for (const p of info.problems) lines.push(`- ${p}`);
+  } else {
+    lines.push(`- ${crontabTag()}: СЛОМАН`);
+    for (const p of info.problems) lines.push(`- ${p}`);
+  }
+  return lines.join('\n');
+}
+
 function renderSchedule(info) {
   const lines = ['## Расписание launchd', ''];
   if (info.status === 'ok') {
@@ -1104,12 +1274,20 @@ function renderSchedule(info) {
   return lines.join('\n');
 }
 
+// The mechanism name for the checkout-refusal text, per platform: never
+// "launchd" on a Linux host.
+function scheduleMechanism() {
+  return platform() === 'win32'
+    ? 'Task Scheduler job'
+    : platform() === 'linux' ? 'crontab line' : 'launchd job';
+}
+
 function installSchedule() {
   const checkout = resolveMainCheckout();
   const script = checkout ? path.join(checkout, 'ops', 'update-tools.mjs') : null;
   if (!checkout || !existsSync(checkout) || !script || !existsSync(script)) {
     console.error(
-      `cannot resolve the main checkout for the ${platform() === 'win32' ? 'Task Scheduler job' : 'launchd job'} `
+      `cannot resolve the main checkout for the ${scheduleMechanism()} `
       + '(git rev-parse --path-format=absolute --git-common-dir); '
       + `got ${checkout ?? '(none)'}`,
     );
@@ -1130,6 +1308,11 @@ function installSchedule() {
     return;
   }
 
+  if (platform() === 'linux') {
+    installLinuxSchedule(checkout);
+    return;
+  }
+
   mkdirSync(path.dirname(PLIST), { recursive: true });
   writeFileSync(PLIST, plistBody(checkout));
   run('launchctl', ['bootout', `gui/${process.getuid()}/${PLIST_ID}`], { timeout: 30_000 });
@@ -1145,10 +1328,38 @@ function installSchedule() {
   console.log(`  run now: launchctl kickstart -k gui/${process.getuid()}/${PLIST_ID}`);
 }
 
+function installLinuxSchedule(checkout) {
+  let install;
+  try {
+    install = installCrontab(checkout);
+  } catch (error) {
+    console.error(`could not install the crontab line: ${error.message}`);
+    process.exit(1);
+  }
+  if (!install.ok) {
+    console.error(`could not install the crontab line: ${install.out}`);
+    process.exit(1);
+  }
+  console.log(`installed ${crontabTag()} → daily at 04:30`);
+  console.log(`  line: ${crontabLine(checkout)}`);
+  console.log(`  checkout: ${checkout}`);
+  console.log(`  log:   ${LOG_FILE}`);
+}
+
 function removeSchedule() {
   if (platform() === 'win32') {
     const del = run('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { timeout: 30_000 });
     console.log(del.ok ? `removed ${TASK_NAME}` : `${TASK_NAME}: ${del.out}`);
+    return;
+  }
+  if (platform() === 'linux') {
+    try {
+      const r = removeCrontab();
+      if (!r.ok) console.error(`could not remove the crontab line: ${r.out}`);
+      else console.log(r.removed ? `removed ${crontabTag()}` : `${crontabTag()}: not installed`);
+    } catch (error) {
+      console.error(`could not remove the crontab line: ${error.message}`);
+    }
     return;
   }
   run('launchctl', ['bootout', `gui/${process.getuid()}/${PLIST_ID}`], { timeout: 30_000 });
@@ -1165,6 +1376,19 @@ function removeSchedule() {
 // then measures the machine it runs on instead of the function it names.
 // Everything above is exported for that reason.
 
+// The --check schedule report: one inspector+renderer pair per platform, and
+// the exit code goes red on the broken answer of whichever machine this is.
+function printScheduleCheck() {
+  const [info, render] = platform() === 'win32'
+    ? [inspectScheduleTask(), renderTaskSchedule]
+    : platform() === 'linux'
+      ? [inspectCrontab(), renderCrontabSchedule]
+      : [inspectSchedule(), renderSchedule];
+  console.log(render(info));
+  console.log('');
+  if (info.status === 'broken') process.exitCode = 1;
+}
+
 export async function main() {
   if (CHECK_ONLY && (ARGS.has('--install-schedule') || ARGS.has('--remove-schedule'))) {
     throw new Error('--check cannot be combined with schedule mutations');
@@ -1172,19 +1396,7 @@ export async function main() {
   if (ARGS.has('--install-schedule')) return installSchedule();
   if (ARGS.has('--remove-schedule')) return removeSchedule();
 
-  if (CHECK_ONLY) {
-    if (platform() === 'win32') {
-      const task = inspectScheduleTask();
-      console.log(renderTaskSchedule(task));
-      console.log('');
-      if (task.status === 'broken') process.exitCode = 1;
-    } else {
-      const schedule = inspectSchedule();
-      console.log(renderSchedule(schedule));
-      console.log('');
-      if (schedule.status === 'broken') process.exitCode = 1;
-    }
-  }
+  if (CHECK_ONLY) printScheduleCheck();
 
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const state = readState();

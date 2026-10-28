@@ -1,7 +1,7 @@
 {
   "name": "harness-home",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Agent harness home: orch, memoryctl, hooks, skills. Installed from the harness kit; see INSTALL.md.",
   "type": "module",
   "engines": {

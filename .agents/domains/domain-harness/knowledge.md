@@ -1,8 +1,8 @@
 # Knowledge: the agent harness
 
 fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
-amended: 2026-10-27 — claude/glm worker seats clear CLAUDE_CODE_PLUGIN_DIRS in spawn env and --settings env (task 3200) (NOT fact-checked)
-body-sha256: b40c4ced2d40
+amended: 2026-10-29 — 2026-10-29: orch-board pane part: Bright Data balance read every minute, not every 10 minutes (task 3303) (NOT fact-checked)
+body-sha256: 6d03af04ccbb
 
 Patterns:
 - Commit gates: `scripts/check-commit.mjs` (not in this kit)

@@ -60,7 +60,7 @@ export function brightdataCache({ home = homedir(), fetchImpl = globalThis.fetch
     if (Date.now() < expires) return Promise.resolve(value);
     inflight = read().then((next) => {
       value = next;
-      expires = Date.now() + 600_000;
+      expires = Date.now() + 60_000;
       inflight = null;
       return value;
     });

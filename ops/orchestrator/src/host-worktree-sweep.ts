@@ -93,6 +93,14 @@ const rows=git('worktree','list','--porcelain','-z').split('\0\0').filter(Boolea
     else if(norm(p.dirname(dir))===norm(worktreesRoot)){row.root=worktreesRoot;row.seatRoot=true}
     else if(below(dir,tmpRoot))row.root=tmpRoot;
     else row.reason='outside allowed roots';
+    // Unlanded edits have no backup here: keep the checkout (task 3266, policy #13349).
+    // Ignored build output does not count; a checkout whose .git is gone is a dead leftover.
+    if(!row.reason&&stat&&fs.existsSync(p.join(dir,'.git'))){
+      const wt=(...a)=>cp.execFileSync('git',['-C',dir,...a],{encoding:'utf8',timeout:30000,maxBuffer:64*1024*1024});
+      if(wt('status','--porcelain','-z','--untracked-files=normal'))row.reason='unlanded edits: tracked changes or untracked files';
+      // status reads a flagged entry as clean; ls-files -v tags assume-unchanged in lower case, skip-worktree as S.
+      else if(wt('ls-files','-v','-z').split('\0').some(x=>/^[a-zS] /.test(x)))row.reason='unlanded edits: assume-unchanged or skip-worktree entries';
+    }
   }catch(e){row.reason='inspection failed: '+e.message}
   return row;
 });

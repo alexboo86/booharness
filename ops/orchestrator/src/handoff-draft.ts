@@ -6,7 +6,6 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { contractRole, deliveryReport, parseReport, type ReportRole } from './report.ts';
-import { checkCommand, type VerifiedCheck } from './check-verify.ts';
 import { loadConfig } from './config.ts';
 import { formatPause, readPauseRecords } from './paused-families.ts';
 import type { Seat, Store, Turn } from './store.ts';
@@ -247,16 +246,10 @@ export async function handoffDraft(store: Store, options: { since?: string; repo
       for (const check of items(report?.checked)) notes.push(`- ${seat.id} [hypothesis] checked: ${line(check, 140)}`);
       findings.push(...notes.slice(0, MAX_NOTES_PER_SEAT));
       if (notes.length > MAX_NOTES_PER_SEAT) findings.push(`- ${seat.id}: +${notes.length - MAX_NOTES_PER_SEAT} more notes`);
-      // Verification belongs to the report's own turn, never a later report from this seat.
-      const byTurn = seat.data.checkVerify as Record<string, VerifiedCheck[]> | undefined;
-      const verified = new Map((source && Array.isArray(byTurn?.[source.turnId]) ? byTurn[source.turnId] : []).map((check) => [check.command, check]));
       if (Array.isArray(report?.checks)) {
         for (const check of report.checks) {
           if (!check || typeof check !== 'object') continue;
-          const rerun = check.result === 'pass' ? verified.get(checkCommand(check.command)) : undefined;
-          const tag = !rerun ? 'unverified (no rerun result)' : rerun.result === 'pass' ? 'verified'
-            : rerun.result === 'fail' ? `VERIFIED FAIL: ${line(rerun.line ?? 'no output', 80)}` : `unverified (${line(rerun.reason ?? 'no reason', 80)})`;
-          findings.push(`- ${seat.id} ${rerun?.result === 'pass' ? '[observed]' : '[hypothesis]'} check: ${line(check.command, 70)} · ${line(check.result, 20)} [${tag}] · ${line(check.tail, 80)}`);
+          findings.push(`- ${seat.id} [hypothesis] check: ${line(check.command, 70)} · ${line(check.result, 20)} · ${line(check.tail, 80)}`);
         }
       }
     }

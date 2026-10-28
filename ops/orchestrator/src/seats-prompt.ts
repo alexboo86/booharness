@@ -7,7 +7,7 @@ import type { Seat, Turn, TurnPending } from './store.ts';
 import { accountingRole, appliesToModel, DEFAULT_TURN_BURN, paceReading, roleMatrix, type AccountingRole, type Load, type ProfileRole, type Reservation } from './profiles.ts';
 import { tierOf, type QualityAnswer } from './role-quality.ts';
 import {
-  ROLE_POLICY, roleTurnLimit, landable, BRIEF_WORDS, WIDE_BRIEF_P, MAX_QUEUED_TURNS, FILES_ROLES, currentScope, normalizeFile, stringsOf, wordCount,
+  ROLE_POLICY, roleTurnLimit, turnLimitMs, landable, BRIEF_WORDS, WIDE_BRIEF_P, MAX_QUEUED_TURNS, FILES_ROLES, currentScope, normalizeFile, stringsOf, wordCount,
  } from './seats-defs.ts';
 import type { Choose, PromptOptions, SeatRole } from './seats-defs.ts';
 import { parseReport } from './report.ts';
@@ -233,9 +233,10 @@ export function prompt(self: SeatManager, seatId: string, text: string, timeoutM
     if (!turns.length && !context.length && (landable(seat.role) || seat.role === 'bughunter')) {
       throw new Error('files are required for a first coder, tester, designer, copywriter or bughunter brief; pass the repo-relative files of the area (for a bug with an unknown cause, the suspected area)');
     }
+    const limitMs = timeoutMs ?? turnLimitMs(seat, self.options.turnTimeoutMs);
     const pending: TurnPending = {
       files: context,
-      timeoutMs: timeoutMs ?? self.options.turnTimeoutMs,
+      timeoutMs: limitMs,
       recheck: !(seat.role === 'coder' && options.recheck === false),
       ...(options.tokenCap !== undefined ? { tokenCap: options.tokenCap } : {}),
     };
@@ -260,7 +261,7 @@ export function prompt(self: SeatManager, seatId: string, text: string, timeoutM
     }
     // Rechecks wait for restart or cancel during drain; a parent waiting for a scout must not hold the drain open forever.
     // A critic keeps the scout rule (plan 14746): its one question runs during a drain.
-    if (!self.draining || seat.role === 'scout' || seat.role === 'critic') self.chain(seatId, () => self.run(seatId, turn.id, timeoutMs ?? self.options.turnTimeoutMs));
-    else self.drainHeld.set(turn.id, timeoutMs ?? self.options.turnTimeoutMs);
+    if (!self.draining || seat.role === 'scout' || seat.role === 'critic') self.chain(seatId, () => self.run(seatId, turn.id, limitMs));
+    else self.drainHeld.set(turn.id, limitMs);
     return turn;
   }

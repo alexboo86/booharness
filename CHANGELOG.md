@@ -4,6 +4,26 @@
 
 Each publication of BooHarness to this repository adds an entry here, newest first.
 
+## 0.1.0 — 2026-10-29
+
+First versioned release. The package version is this number. Publishing a changed kit refuses a version whose tag already exists. A push tags that version and opens a release whose notes are this entry, with a link to the Russian changelog.
+
+The public repository now ships a code of conduct (Contributor Covenant 2.1), a contributing guide, a security policy, issue forms and a pull request template. The tree is a generated build and is replaced on each publication, so a pull request is a proposal: the maintainer ports an accepted change into the source and closes the proposal with a link to the release. Security and conduct reports go privately through the Security tab, **Report a vulnerability**. The supported version is the latest release.
+
+Since the previous publication:
+
+- Placement keeps a reserve on the machine that already runs the leads. A request for that machine includes a reason.
+- Closing a seat stops processes in its worktree. An aged resume finishes a gitless leftover without losing bytes.
+- A remote reviewer's close note names when the remote close began. A reviewer that cites the same lines as a sibling is flagged.
+- A glm coder at maximum effort gets a 60-minute turn. An oversized report is graded with every text cut.
+- Fetching a host fast-forwards that clone's own master. A worktree sweep keeps a checkout that still has unlanded edits.
+- Scout and researcher reports have no support round, and may carry an inventory table outside grading.
+- Seat lesson proposals are not applied automatically, and a check a seat already claimed is not run again. A reviewer runs a test only to prove its own finding.
+- A new local seat's code index starts from a copy of the nearest existing index instead of a full build.
+- The board reads the Bright Data balance every minute instead of every ten. After a Jev balance entry, today's spend and the daily rate still count the spend before the entry.
+- On Linux, `node ops/update-tools.mjs --install-schedule` adds one daily line to the user crontab and keeps the other lines. The tool report recovers when its memory entry already exists.
+- README and INSTALL describe the current placement, review, reports and commit gate.
+
 ## 2026-10-27, fifth publication
 
 Three fixes from a user report.

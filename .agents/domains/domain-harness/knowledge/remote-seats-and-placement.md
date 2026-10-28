@@ -6,9 +6,10 @@ without probes, as does a create with no registered hosts. `mac` pins local; exp
 probes fail; explicit any/win refuses (`ops/orchestrator/src/seats-create.ts`).
 `placeSeat` chooses highest free capacity: free cores = cpus * (1 - cpuBusyPct / 100),
 share = 100 * min(freeCores / largest freeCores, freeGb / largest freeGb), then subtracts
-one point per active seat. Only working/provisioning seats count; failed/timed-out/
-nonzero probes are ineligible and ties keep local first. No measured seat-footprint
-constant is used (`ops/orchestrator/src/placement.ts`).
+one point per active seat. This Mac ranks after `MAC_RESERVE` (6 cores, 12 GB) is taken
+off its free cores and memory, and an equal value goes to a host (task 3288). Only
+working/provisioning seats count; failed/timed-out/nonzero probes are ineligible. No
+measured seat-footprint constant is used (`ops/orchestrator/src/placement.ts`).
 
 Worker roles receive `scout-request` from `roleDefaults` in `.agents/domains/_skill-map.json`.
 Pi nudges on every eighth read-like result; counts reset on scout result and

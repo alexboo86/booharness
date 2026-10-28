@@ -646,6 +646,62 @@ export type RetainedRow = { family: string; linked: number; trailerLinked: numbe
 /** unknownSeats: trailer ids with no coder seat in the store; notes: repositories that could not be read. */
 export type Retained = { commits: number; rows: RetainedRow[]; seats: RetainedSeat[]; unknownSeats: string[]; notes: string[] };
 
+/** Seats measured at once (task 3261): ~20 000 git calls one at a time took 6 to 17 minutes. */
+const RETAINED_POOL = 8;
+
+/** `work` over `items` with at most `limit` running; results keep the input order. `work` must not throw. */
+async function mapPool<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await work(items[i]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const settle = <T>(promise: Promise<T>): Promise<{ value: T } | { error: Error }> => promise.then((value) => ({ value }), (error: Error) => ({ error }));
+
+/** A seat's landed snapshot, else its branch tip, else the tip recorded at close. */
+async function seatTip(repo: string, seat: string, data: Record<string, unknown>): Promise<{ snapshot: string | null; tip: string | null }> {
+  const landed = data.landed as { snapshot?: unknown } | undefined;
+  const explicit = typeof landed?.snapshot === 'string' ? landed.snapshot : null;
+  const snapshot = explicit ?? await commitOf(repo, `refs/orch/landed/${seat}`);
+  const branchTip = snapshot ? null : typeof data.branch === 'string' ? await commitOf(repo, `refs/heads/${data.branch}`) : null;
+  return { snapshot, tip: snapshot ?? branchTip ?? (typeof data.closedBranchTip === 'string' ? data.closedBranchTip : null) };
+}
+
+async function shareOf(repo: string, base: string | null, tip: string | null, commit: string): Promise<RetainedShare> {
+  if (!base) return { unmeasurable: 'no base recorded' };
+  if (!tip) return { unmeasurable: NOT_COMMITTED };
+  const [from, to] = [await commitOf(repo, base), await commitOf(repo, tip)];
+  return from && from === to ? { unmeasurable: NOT_COMMITTED } : retainedShare({ repo, seatBase: base, seatTip: tip, landingCommit: commit });
+}
+
+/** One linked seat's retained share and survival; a git failure is a note on the row, never a throw. */
+async function measureSeat(seat: string, { family, data }: { family: string; data: Record<string, unknown> }, repo: string, commit: string | null, link: RetainedSeat['link']): Promise<{ entry: RetainedSeat; notes: string[] }> {
+  if (!commit) return { entry: { seat, family, commit: null, link, notLandedYet: true }, notes: [] };
+  const notes: string[] = [];
+  const base = typeof data.base === 'string' ? data.base : null;
+  try {
+    const { snapshot, tip } = await seatTip(repo, seat, data);
+    const share = await shareOf(repo, base, tip, commit);
+    const entry: RetainedSeat = { seat, family, commit, link, ...share };
+    if (base && tip && 'share' in share) {
+      try {
+        entry.survival = await survivalShare({ repo, seatBase: base, seatTip: tip, snapshot, landingCommit: commit, days: SURVIVAL_DAYS });
+      } catch (error) {
+        const cause = (error as Error).message.split('\n')[0];
+        notes.push(`${repo} seat ${seat} survival: ${cause}`);
+        entry.survival = { unmeasurable: `git failure: ${cause}` };
+      }
+    }
+    return { entry, notes };
+  } catch (error) {
+    const detail = (error as Error).message.split('\n')[0];
+    notes.push(`${repo} seat ${seat}: ${detail}`);
+    return { entry: { seat, family, commit, link, unmeasurable: `git failure: ${detail}` }, notes };
+  }
+}
+
 /**
  * Retained share per coder family (task 1563): each coder seat named in a landing commit's
  * Author/Authors trailer on the HEAD of its main checkout, measured against the latest such
@@ -670,60 +726,36 @@ export async function readCoderRetained(file: string): Promise<Retained> {
   const unknown = new Set<string>();
   const notes: string[] = [];
   let commits = 0;
-  for (const repo of [...repos].sort()) {
-    let found: { commit: string; seats: string[] }[];
-    try { found = await landingCommits(repo); } catch (error) { notes.push(`${repo}: ${(error as Error).message.split('\n')[0]}`); continue; }
-    commits += found.length;
+  // Each step below runs its git calls in a pool and applies the results in the serial order.
+  const sorted = [...repos].sort();
+  const found = await mapPool(sorted, RETAINED_POOL, (repo) => settle(landingCommits(repo)));
+  sorted.forEach((repo, i) => {
+    const result = found[i];
+    if ('error' in result) { notes.push(`${repo}: ${result.error.message.split('\n')[0]}`); return; }
+    commits += result.value.length;
     // Newest first: the first commit naming a seat is the later one.
-    for (const { commit, seats } of found) for (const seat of seats) {
+    for (const { commit, seats } of result.value) for (const seat of seats) {
       if (!coders.has(seat)) unknown.add(seat);
       else if (!latest.has(seat)) latest.set(seat, { repo, commit, link: 'trailer' });
     }
-  }
-  for (const [seat, { data }] of coders) {
-    if (latest.has(seat)) continue; // An explicit Author(s) trailer always wins.
+  });
+  const recorded = [...coders].flatMap(([seat, { data }]) => {
+    if (latest.has(seat)) return []; // An explicit Author(s) trailer always wins.
     const landed = data.landed as { at?: unknown; into?: unknown; paths?: unknown } | undefined;
-    if (typeof landed?.into !== 'string' || typeof landed.at !== 'string' || !Array.isArray(landed.paths) || !landed.paths.every((path) => typeof path === 'string')) continue;
-    try {
-      const commit = await firstRecordedLanding(landed.into, landed.at, landed.paths as string[]);
-      latest.set(seat, { repo: landed.into, commit, link: commit ? 'record' : 'not landed yet' });
-    } catch (error) {
-      notes.push(`${landed.into} seat ${seat}: ${(error as Error).message.split('\n')[0]}`);
-    }
-  }
+    if (typeof landed?.into !== 'string' || typeof landed.at !== 'string' || !Array.isArray(landed.paths) || !landed.paths.every((path) => typeof path === 'string')) return [];
+    return [{ seat, into: landed.into, at: landed.at, paths: landed.paths as string[] }];
+  });
+  const records = await mapPool(recorded, RETAINED_POOL, ({ into, at, paths }) => settle(firstRecordedLanding(into, at, paths)));
+  recorded.forEach(({ seat, into }, i) => {
+    const result = records[i];
+    if ('error' in result) notes.push(`${into} seat ${seat}: ${result.error.message.split('\n')[0]}`);
+    else latest.set(seat, { repo: into, commit: result.value, link: result.value ? 'record' : 'not landed yet' });
+  });
+  const measured = await mapPool([...latest], RETAINED_POOL, ([seat, { repo, commit, link }]) => measureSeat(seat, coders.get(seat)!, repo, commit, link));
   const seats: RetainedSeat[] = [];
-  for (const [seat, { repo, commit, link }] of latest) {
-    const { family, data } = coders.get(seat)!;
-    if (!commit) { seats.push({ seat, family, commit: null, link, notLandedYet: true }); continue; }
-    const base = typeof data.base === 'string' ? data.base : null;
-    try {
-      const landed = data.landed as { snapshot?: unknown } | undefined;
-      const explicit = typeof landed?.snapshot === 'string' ? landed.snapshot : null;
-      const snapshot = explicit ?? await commitOf(repo, `refs/orch/landed/${seat}`);
-      const branchTip = snapshot ? null : typeof data.branch === 'string' ? await commitOf(repo, `refs/heads/${data.branch}`) : null;
-      const tip = snapshot ?? branchTip ?? (typeof data.closedBranchTip === 'string' ? data.closedBranchTip : null);
-      let share: RetainedShare;
-      if (!base) share = { unmeasurable: 'no base recorded' };
-      else if (!tip) share = { unmeasurable: NOT_COMMITTED };
-      else {
-        const [from, to] = [await commitOf(repo, base), await commitOf(repo, tip)];
-        share = from && from === to ? { unmeasurable: NOT_COMMITTED } : await retainedShare({ repo, seatBase: base, seatTip: tip, landingCommit: commit });
-      }
-      seats.push({ seat, family, commit, link, ...share });
-      if (base && tip && 'share' in share) {
-        try {
-          seats[seats.length - 1].survival = await survivalShare({ repo, seatBase: base, seatTip: tip, snapshot, landingCommit: commit, days: SURVIVAL_DAYS });
-        } catch (error) {
-          const cause = (error as Error).message.split('\n')[0];
-          notes.push(`${repo} seat ${seat} survival: ${cause}`);
-          seats[seats.length - 1].survival = { unmeasurable: `git failure: ${cause}` };
-        }
-      }
-    } catch (error) {
-      const detail = (error as Error).message.split('\n')[0];
-      notes.push(`${repo} seat ${seat}: ${detail}`);
-      seats.push({ seat, family, commit, link, unmeasurable: `git failure: ${detail}` });
-    }
+  for (const { entry, notes: seatNotes } of measured) {
+    seats.push(entry);
+    notes.push(...seatNotes);
   }
   seats.sort((a, b) => a.family.localeCompare(b.family) || a.seat.localeCompare(b.seat));
   const rows = [...new Set(seats.map((seat) => seat.family))].map((family) => {

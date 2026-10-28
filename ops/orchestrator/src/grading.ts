@@ -10,6 +10,7 @@
 // Jev is asked only whether the report is finished (REAL_REPORT). Only the
 // report goes out, never the seat's prose.
 import { ask as jevAsk } from '../../bootstrap/jev-client.mjs';
+import { tableRows } from './report.ts';
 
 /**
  * A sibling is another reviewer seat on the same task (same title, same repo) whose latest turn
@@ -223,12 +224,18 @@ async function askNoul(ask: Ask, text: string, questions: Record<string, unknown
   return { answers: Object.fromEntries(Object.keys(questions).map((key) => [key, answers[key].noul])), model: typeof response.model === 'string' ? response.model : null };
 }
 
+/** The prompt grades a row count, never a full inventory table. */
+function withTableRowCount(report: Record<string, unknown>): Record<string, unknown> {
+  return typeof report.table === 'string' ? { ...report, table: `${tableRows(report.table)} rows` } : report;
+}
+
 /**
  * Jev is asked only whether the report is finished. Evidence support is structural, so a finding
  * is never ungraded for its size (#10514 still applies to the finish question: a report over the
- * state cap is asked on a copy with evidence and forLead cut). Same-defect does not call Jev.
+ * state cap is asked on a copy with every text cut). Same-defect does not call Jev.
  */
 export async function gradeReport(report: Record<string, any>, siblings: Sibling[] = [], ask: Ask = jevAsk, roots: readonly string[] = []): Promise<Grade> {
+  report = withTableRowCount(report);
   const findings: Finding[] = Array.isArray(report.findings) ? report.findings : [];
   const whole = JSON.stringify({ report });
   let text = whole;
@@ -236,10 +243,10 @@ export async function gradeReport(report: Record<string, any>, siblings: Sibling
     let room = 400;
     let compact = '';
     do {
-      compact = JSON.stringify({ report: { ...report, findings: findings.map((finding) => ({ ...finding, evidence: cut(String(finding.evidence ?? ''), room) })), forLead: cut(String(report.forLead ?? ''), room) } });
+      compact = JSON.stringify({ report: cutTexts(report, room) });
       room = Math.floor(room / 2);
     } while (compact.length > STATE_LIMIT && room >= 25);
-    if (compact.length > STATE_LIMIT) return { status: 'ungraded', reason: `report too large to grade even with its evidence cut (${compact.length} characters > ${STATE_LIMIT}); read it yourself` };
+    if (compact.length > STATE_LIMIT) return { status: 'ungraded', reason: `report too large to grade even with every text cut (${compact.length} characters > ${STATE_LIMIT}); read it yourself` };
     text = compact;
   }
   const answers = await askNoul(ask, text, { real_report: REAL_REPORT });
@@ -255,6 +262,19 @@ export async function gradeReport(report: Record<string, any>, siblings: Sibling
 
 function cut(text: string, room: number): string {
   return text.length <= room ? text : `${text.slice(0, room)}…`;
+}
+
+/** The values that say what a report is; Jev reads them whole in an oversize copy. */
+const WHOLE_KEYS = new Set(['role', 'status', 'severity', 'verdict', 'result', 'op', 'kind', 'option']);
+/**
+ * Every other string is cut to `room` (task 3279): with only evidence and forLead cut, 134 of 222
+ * glm coder reports stayed over the cap on criteria, checks and changedFiles.
+ */
+function cutTexts(value: unknown, room: number, key = ''): unknown {
+  if (typeof value === 'string') return WHOLE_KEYS.has(key) ? value : cut(value, room);
+  if (Array.isArray(value)) return value.map((item) => cutTexts(item, room, key));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, cutTexts(item, room, name)]));
+  return value;
 }
 
 /**
@@ -292,11 +312,12 @@ export function gradeFlags(report: Record<string, any>, grade: Grade): string[] 
   }
   for (const sibling of grade.siblings) {
     if (sibling.status !== 'graded') {
-      flags.push(`same-defect check against ${sibling.seat} ungraded: ${sibling.reason}`);
+      flags.push(`cited-line check against ${sibling.seat} ungraded: ${sibling.reason}`);
       continue;
     }
+    // An overlap of cited lines, not a proven duplicate: two defects in one range stay two (task 3285).
     for (const pair of sibling.pairs) {
-      if (pair.probability >= 0.6) flags.push(`finding ${pair.finding + 1} is the same defect as ${sibling.seat} finding ${pair.siblingFinding + 1} (${pair.probability.toFixed(2)})`);
+      if (pair.probability >= 0.6) flags.push(`finding ${pair.finding + 1} cites the same lines as ${sibling.seat} finding ${pair.siblingFinding + 1} (${pair.probability.toFixed(2)})`);
     }
   }
   return flags;

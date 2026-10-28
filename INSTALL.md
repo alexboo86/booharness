@@ -175,14 +175,14 @@ pinned Pi runtime with that vendor's subscription route, `native` = the vendor's
 
 | Family | Roles in the matrix | Default model / effort | Harness | What must exist on the machine |
 |---|---|---|---|---|
-| **claude** | researcher, coder, reviewer, plan critic (not plain scout) | coder `claude-opus-5-5` high; reviewer/critic `claude-sonnet-5-5` high; researcher `claude-sonnet-5` high | native Claude Code | `claude` CLI signed in to a Claude subscription |
-| **codex** | scout, researcher, debater, coder, reviewer, critic, bughunter | `gpt-6.1-sol` (coder/reviewer/critic high, bughunter max, researcher/debater medium); scout `gpt-6-luna` high | pi (`openai-codex`) | Pi `/login` for `openai-codex` (ChatGPT subscription); the `codex-edit` Pi extension (phase 7.3) |
-| **glm** | scout, researcher, debater, coder, reviewer, critic, bughunter | `glm-5.3` (high; bughunter max; researcher low); scout `glm-5.3-flash` high | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
-| **kimi** | researcher, debater, coder, reviewer, critic, bughunter | `k3.1-pro` high in every role | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
-| grok | scout, researcher, debater, coder, reviewer, critic | `grok-4.7` | pi (`xai`) | Pi `/login` for `xai` |
+| **claude** | researcher, coder, tester, designer, copywriter, reviewer, plan critic, legal (not scout, debater, bughunter or security) | coder, tester, designer and copywriter `claude-opus-5-5` high; reviewer, critic and legal `claude-sonnet-5-5` high; researcher `claude-sonnet-5` high | native Claude Code | `claude` CLI signed in to a Claude subscription |
+| **codex** | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `gpt-6.1-sol` (coder, tester, designer, copywriter, reviewer, critic and legal high; researcher and debater medium; bughunter and security max); scout `gpt-6-luna` high | pi (`openai-codex`) | Pi `/login` for `openai-codex` (ChatGPT subscription); the `codex-edit` Pi extension (phase 7.3) |
+| **glm** | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `glm-5.3` (high; researcher low; bughunter and security max); scout `glm-5.3-flash` high | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
+| **kimi** | researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security (not scout) | `k3.1-pro` high in every role it has | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
+| grok | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal (not bughunter or security) | `grok-4.7` (scout low; researcher medium; other roles high) | pi (`xai`) | Pi `/login` for `xai` |
 | opencode | scout | `glm-5.3-flash` | pi (`opencode-go`) | Pi `/login` for `opencode-go` |
-| qwen | scout, researcher, debater, coder, reviewer, critic, bughunter | `qwen3.8-max` (coder/researcher medium, reviewer/critic high, bughunter max); scout `qwen3.8-flash` low | pi (`qwen-token-plan-individual`) | Pi `/login` with the Qwen token-plan key |
-| mimo | scout, researcher, debater, coder, reviewer, critic, bughunter | `mimo-v2.6-pro`, scout `mimo-v2.6-flash` | pi (`xiaomi-token-plan-*`) | Pi `/login` with the Xiaomi token-plan key |
+| qwen | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `qwen3.8-max` (researcher, coder, tester, designer and copywriter medium; debater, reviewer, critic and legal high; bughunter and security max); scout `qwen3.8-flash` low | pi (`qwen-token-plan-individual`) | Pi `/login` with the Qwen token-plan key |
+| mimo | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `mimo-v2.6-pro` (researcher medium; other roles high, including bughunter and security); scout `mimo-v2.6-flash` low | pi (`xiaomi-token-plan-*`) | Pi `/login` with the Xiaomi token-plan key |
 
 The screenshotter role was removed on 2026-10-21. A lead or a seat captures the screen or a window and reads the image itself, only when a picture is necessary; a log, test, DOM or accessibility read that proves the point comes first. Peekaboo runs on macOS and needs Screen Recording and Accessibility rights granted by the user; `npm run doctor` shows its state.
 
@@ -190,6 +190,8 @@ Source of truth: `ops/orchestrator/src/profiles.ts` (matrix) and
 `ops/orchestrator/src/providers/index.ts` (routes). The model ids are the kit's values on its
 build date; if a vendor renames a model, the seat start fails with the vendor's message and
 `seat_create` accepts an explicit `model`.
+
+A glm coder whose effort is max gets 60 minutes when the lead names no time limit; every other seat keeps the 30-minute default (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). The default glm coder cell is effort high, not max.
 
 **Example set (claude + codex + glm):** every role is covered.
 Scouts and bughunters come from codex and glm; an image-reading seat needs an image-capable model; review always has
@@ -1184,9 +1186,10 @@ The lead loads the `orch-team` skill and uses the orch MCP tools. Minimal round:
 1. `seat_create { role: "scout", title: "map the auth flow", repo: "<project>" }` (no `family`: orch picks by pace).
 2. `seat_prompt { seat, text: "<one question, at most 300 words>", files: ["src/auth.ts"] }` returns a turn id and a `wait` command.
 3. Run that `node .../main.ts wait <turn>` as a background shell job; its exit prints the digest.
-4. For edits: role `coder`, then `review_plan { seat }`, one `reviewer` seat per its answer, `seat_land { seat }` to apply the change to the lead checkout (never commits), then the lead commits with the user's approval.
-
+4. For edits: role `coder`, then `review_plan { seat }`, one `reviewer` seat per its answer, `seat_land { seat }` to apply the change to the lead checkout (never commits), then the lead commits explicit paths with `npm run check:commit` and the user's approval. That check runs the commit-safety check and the gates those paths select; it does not run the orchestrator tests, the kit build or the knowledge-history judgement. A reviewer runs a test only to prove a finding of its own.
+When several machines can run a seat, the machine that runs orch is ranked after a reserve of 6 cores and 12 GB of free memory, floored at zero (`ops/orchestrator/src/placement.ts`); a tie goes to a host. `seat_create` with `needs` set to `mac` requires `needs_reason` of at most 300 characters (`ops/orchestrator/src/http.ts`), unless the seat is Claude, a native harness, a stand arm, or a task file is a configured Mac-only path.
 Full rules: `.agents/skills/orch-team/SKILL.md` and `ops/orchestrator/README.md`.
+
 
 ### 9.3 Adapt these to the user's project (do it with the user, after the install works)
 
@@ -1428,6 +1431,7 @@ worktrees; an idle-auto-close delays that pruning. Idle closure defaults are 12 
 for landed coders, two days for unlanded coders and one day for other roles.
 `node ops/orchestrator/src/main.ts prune --dry-run`
 lists what a manual prune would remove; `prune --caches` frees build caches of closed seats.
+Closing a seat stops processes whose working directory is that seat's worktree, after the provider stops. A sweep of remote-host checkouts keeps one that still has unlanded edits, including edits hidden by assume-unchanged or skip-worktree, and removes a checkout only with `git worktree remove` and without `--force`.
 
 ### 11.5 Changing the reply language or the shared instructions
 

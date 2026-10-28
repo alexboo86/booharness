@@ -24,7 +24,7 @@ import { land } from './land.ts';
 import { hostRuntimeStates } from './remote-repo.ts';
 import { assertCheckHolder, prepareCheckOn, snapshotForCheck } from './check-on.ts';
 import { ALL_ON, seatInstruments } from './shared.entry.ts';
-import { missingHostInstruments, seatHost } from './placement.ts';
+import { missingHostInstruments, seatHost, touchesMacDesktop } from './placement.ts';
 import { machineLoads } from './machine-load.ts';
 import { STAND_ARMS } from './stand.ts';
 import { reviewPlan } from './review-plan.ts';
@@ -280,6 +280,7 @@ const TOOLS = [
         harness: { type: 'string', enum: ['pi', 'native'] },
         host: { type: 'string', description: 'Named remote host for a Pi seat; researcher, designer, copywriter and legal require brightdata-web (the host holds BRIGHTDATA_API_KEY). Claude, native harness and standArm cannot use a remote host.' },
         needs: { type: 'string', enum: ['mac', 'win', 'any'], description: 'Platform need: omitted defaults to any (decision #12591), probing this Mac and registered hosts and choosing the highest free capacity (free cores and free memory) for Pi seats of every role when hosts exist; with no registered hosts it stays on this Mac without probing, and if all probes fail it falls back to this Mac. mac pins this Mac without probing; win requires a win32 host. Claude, native harness and standArm seats stay on this Mac when needs is omitted; explicit non-mac needs with native harness or standArm are refused. Researcher, designer, copywriter and legal may use hosts offering brightdata-web (BRIGHTDATA_API_KEY); this Mac always offers it. No eligible target refuses creation. Explicit host chooses the machine instead of default placement. The seat row carries placement {needs, target, reason}.' },
+        needs_reason: { type: 'string', maxLength: 300, description: 'Required with needs mac unless a file is this Mac\'s desktop runtime or the seat is claude, native or a stand arm (task 3288): what on this Mac the seat must touch (the Tauri runtime, state under ~/.local/state, a loopback service, Mac-only credentials, uncommitted files read in place). Stored in the placement reason. Refused without needs mac.' },
         files: { type: 'array', maxItems: 200, items: { type: 'string', maxLength: 512 }, description: 'Repo-relative paths the task is about, used to apply configured placement rules. Omit if not known at creation.' },
         model: { type: 'string' },
         effort: { type: 'string' },
@@ -478,6 +479,34 @@ async function createAutoRole(rt: Runtime, args: Record<string, unknown>, files:
 /** In-flight role 'auto' creates by request_id: a concurrent twin shares the one work promise. */
 const autoCreating = new Map<string, { title: string; top: Promise<string>; work: Promise<unknown> }>();
 
+/**
+ * A lead's needs mac (task 3288): this Mac already carries the leads, the desktop app and the releases, and in
+ * one day 19 of its 27 coders were pinned there over backend work that a Linux host builds. The pin names what on this
+ * Mac the seat must touch, unless a file is this Mac's desktop runtime; claude, native and stand-arm seats stay
+ * on the Mac by themselves. Internal creates (scout_request, the tasks agent) do not pass through here.
+ */
+function macNeedReason(args: Record<string, unknown>, files: string[] | undefined): string | undefined {
+  if (args.needs !== 'mac') {
+    if (args.needs_reason !== undefined) throw new Error('needs_reason goes with needs mac only');
+    return undefined;
+  }
+  const reason = statedReason(args);
+  if (reason || macPinExempt(args, files)) return reason;
+  throw new Error('needs mac pins this Mac, which already carries the leads, the desktop app and the releases (operator 2026-10-28, task 3288): pass needs_reason naming what on this Mac the seat must touch (the Tauri runtime, state under ~/.local/state, a loopback service, Mac-only credentials, uncommitted files read in place), or omit needs and let load place it (decision #12591)');
+}
+
+/** The trimmed needs_reason, refused over 300 characters; undefined when absent or blank. */
+function statedReason(args: Record<string, unknown>): string | undefined {
+  const reason = optStr(args.needs_reason, 'needs_reason')?.trim();
+  if (reason && reason.length > 300) throw new Error(`needs_reason is ${reason.length} characters; at most 300`);
+  return reason || undefined;
+}
+
+/** Seats that stay on this Mac by themselves: claude, native harnesses, stand arms and this Mac's desktop runtime files. */
+function macPinExempt(args: Record<string, unknown>, files: string[] | undefined): boolean {
+  return args.family === 'claude' || args.harness === 'native' || args.standArm !== undefined || files?.some(touchesMacDesktop) === true;
+}
+
 /** The pick, create and first-turn queue of a role 'auto' create whose validations already passed. */
 async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, files: string[], session: string | undefined, leadHandle: string | null, brief: string, wideBrief: string | undefined, title: string, requestId: string | undefined) {
   let pick = pickRole(files, null);
@@ -497,7 +526,7 @@ async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, fi
   const jev = { wide: decision?.status === 'scored' ? decision.score : null, defect: features?.defect ?? null, tests_only: features?.tests_only ?? null, look: features?.look ?? null, logic: features?.logic ?? null };
   const seat = await rt.seats.create({
     role: pick.role, family: optStr(args.family, 'family'), author: optStr(args.author, 'author'), coauthors: args.coauthors as string[] | undefined, title, repo: str(args.repo, 'repo'),
-    base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot'), harness: optStr(args.harness, 'harness'), host: optStr(args.host, 'host'), needs: optStr(args.needs, 'needs'), files, model: optStr(args.model, 'model'), effort: optStr(args.effort, 'effort'),
+    base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot'), harness: optStr(args.harness, 'harness'), host: optStr(args.host, 'host'), needs: optStr(args.needs, 'needs'), needsReason: macNeedReason(args, files), files, model: optStr(args.model, 'model'), effort: optStr(args.effort, 'effort'),
     instruments: args.instruments, standArm: args.standArm, request_id: requestId, images: optBool(args.images, 'images'), leadHandle,
   }, await choose(rt, session));
   // The pick evidence lands on the seat and in the event log in one write.
@@ -602,6 +631,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
           }
           case 'seat_create': {
             const files = parseTaskFiles(args.files);
+            macNeedReason(args, files);
             const session = optStr(args.session, 'session');
             const leadHandle = chatLiveHandle(rt.store, session);
             if (args.role === 'auto') {
@@ -623,7 +653,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
             if (args.wide_brief !== undefined) throw new Error("wide_brief is for role 'auto' only");
             const seat = await rt.seats.create({
               role: str(args.role, 'role'), family: optStr(args.family, 'family'), author: optStr(args.author, 'author'), coauthors: args.coauthors as string[] | undefined, title: str(args.title, 'title'), repo: str(args.repo, 'repo'),
-              base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot'), harness: optStr(args.harness, 'harness'), host: optStr(args.host, 'host'), needs: optStr(args.needs, 'needs'), files, model: optStr(args.model, 'model'), effort: optStr(args.effort, 'effort'),
+              base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot'), harness: optStr(args.harness, 'harness'), host: optStr(args.host, 'host'), needs: optStr(args.needs, 'needs'), needsReason: macNeedReason(args, files), files, model: optStr(args.model, 'model'), effort: optStr(args.effort, 'effort'),
               instruments: args.instruments, standArm: args.standArm, request_id: optStr(args.request_id, 'request_id'), critic: optBool(args.critic, 'critic'), images: optBool(args.images, 'images'), options: args.options as string[] | undefined, leadHandle,
             }, await choose(rt, session));
             const drain = seat.role === 'scout' || seat.role === 'critic' ? null : rt.store.drainStatus();
@@ -710,7 +740,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
               // still pending and when it began, mirroring the land refusal's wording.
               ...(seat.data.remoteCleanupPending === true ? {
                 remoteCleanupPending: true,
-                note: `pending remote close began at ${typeof seat.data.closedAt === 'string' ? seat.data.closedAt : '(start time was not recorded)'}`,
+                note: `pending remote close began at ${[seat.data.remoteCleanupSince, seat.data.closedAt].find((at) => typeof at === 'string') ?? '(start time was not recorded)'}`,
               } : {}),
             };
             break;

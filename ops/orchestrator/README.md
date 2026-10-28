@@ -491,8 +491,9 @@ whose latest one gave a valid report Jev did not grade as unfinished (at most 3,
 first). Same defect is a code rule, not a Jev call: both evidences name the same
 repo file at the same line or an overlapping range (`path:line`, `path:a-b`;
 `./`, an absolute path whose suffix is the repo-relative path, and `<root>/worktrees/<seat>/` stripped so two reviewer checkouts match). No file:line
-on either side is not the same. A match is a flag (`finding 1 is the same defect as <seat> finding 2`),
-so the lead merges the two instead of fixing one defect twice. The first reviewer
+on either side is not the same. A match is a flag (`finding 1 cites the same lines as <seat> finding 2`):
+the lead reads both and merges them only when they name one defect, so one defect is not fixed twice.
+Two defects in one cited range stay two (task 3285). The first reviewer
 to finish has no settled sibling, so the comparison shows on the later report.
 Sibling reviewers settle one at a time (grade, then end the turn): two that finished
 together would otherwise each grade while the other was still running, and neither

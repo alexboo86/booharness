@@ -4,7 +4,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, writeFileSync, realpathSync, renameSync, rmSync, unlinkSync } from 'node:fs';
-import { lstat, readdir, rm } from 'node:fs/promises';
+import { lstat, readdir, rm, rmdir, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -987,14 +987,24 @@ function memoAgedKeep(store: Store, seat: Seat, reason: string): void {
  * marker and returns null: the caller takes the full aged path again (fresh
  * backup) or keeps the seat.
  */
+function agedBackupFilesPresent(marker: AutoPruned): boolean {
+  return typeof marker.patch === 'string' && existsSync(marker.patch) &&
+    (marker.untracked === undefined || existsSync(marker.untracked));
+}
+
+function gitlessAgedLeftover(seat: Seat, marker: AutoPruned, files: boolean, surviving: boolean): boolean {
+  return surviving && marker.checkoutOnly === true && files &&
+    !lstatSync(path.join(seat.worktree!, '.git'), { throwIfNoEntry: false });
+}
+
 async function resumeAged(store: Store, stateDir: string, seat: Seat, marker: AutoPruned): Promise<PruneDecision | null> {
   const refused = notOwned(stateDir, seat);
   if (refused) return { seat: seat.id, worktree: seat.worktree, branch: seat.data.branch as string | null, reason: refused, remove: false, lost: [] };
   const legacyLoss = Array.isArray(marker.lost) && marker.lost.length > 0 && marker.capRule !== 2;
   const legacyIdentity = typeof marker.identity !== 'string' || marker.identity.split('\0')[2] !== 'sha256-v1';
-  const files = typeof marker.patch === 'string' && existsSync(marker.patch) &&
-    (marker.untracked === undefined || existsSync(marker.untracked));
+  const files = agedBackupFilesPresent(marker);
   const surviving = lstatSync(seat.worktree!, { throwIfNoEntry: false })?.isDirectory() === true;
+  if (gitlessAgedLeftover(seat, marker, files, surviving)) return removeAgedLeftover(store, stateDir, seat, marker);
   // Once removal finished, the backup is the only surviving copy of the work.
   let verified = files && (!surviving || (!legacyLoss && !legacyIdentity));
   if (verified && surviving)
@@ -1019,6 +1029,67 @@ async function resumeAged(store: Store, stateDir: string, seat: Seat, marker: Au
   if (existsSync(seat.worktree!)) noteCodegraphDaemonStop(await removeWorktree(repo, seat.worktree!), seat.id, seat.worktree!, store);
   store.updateSeat(seat.id, { data: { worktreeRemoved: true } }, 'seat.pruned', { reason });
   return { seat: seat.id, worktree: seat.worktree, branch: seat.data.branch as string | null, reason, remove: true, lost: Array.isArray(marker.lost) ? marker.lost : [] };
+}
+
+function agedMarkerLegacyReason(marker: AutoPruned): string | null {
+  if (Array.isArray(marker.lost) && marker.lost.length > 0 && marker.capRule !== 2)
+    return 'backup marker predates cap rule 2';
+  if (typeof marker.identity !== 'string' || marker.identity.split('\0')[2] !== 'sha256-v1')
+    return 'backup marker predates sha256 identity';
+  return null;
+}
+
+function agedLeftoverScopeReason(stateDir: string, seat: Seat, marker: AutoPruned): string | null {
+  const root = path.join(stateDir, 'worktrees');
+  const backups = path.join(stateDir, 'worktree-backups');
+  if (marker.patch !== path.join(backups, `${seat.id}.patch`) ||
+      (marker.untracked !== undefined && marker.untracked !== path.join(backups, `${seat.id}.untracked.tgz`)))
+    return 'backup paths are not owned by orch';
+  if (lstatSync(root).isSymbolicLink() || realpathSync(root) !== path.join(realpathSync(stateDir), 'worktrees'))
+    return 'leftover parent is redirected';
+  return null;
+}
+
+/** Remove only enumerated disposable leaves; never recursively delete a tree
+ * based on a stale scan. rmdir atomically refuses late entries, including writes
+ * through a process-held cwd. Every read/removal error keeps the remainder. */
+async function unarchivedLeftover(worktree: string, relative = ''): Promise<string | null> {
+  try {
+    for (const entry of await readdir(path.join(worktree, relative), { withFileTypes: true })) {
+      const name = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        const kept = await unarchivedLeftover(worktree, name);
+        if (kept !== null) return kept;
+      } else {
+        if (!disposable(worktree, name))
+          return `gitless leftover has non-disposable content not verified against backup: ${name}`;
+        await unlink(path.join(worktree, name));
+      }
+    }
+    await rmdir(path.join(worktree, relative));
+    return null;
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException;
+    return `gitless leftover kept at ${relative || '.'}: ${failure.code ?? failure.message}`;
+  }
+}
+
+/** A recorded backup authorizes finishing a partially completed Git removal,
+ * not deleting unarchived work, an arbitrary directory or a redirected parent. */
+async function removeAgedLeftover(store: Store, stateDir: string, seat: Seat, marker: AutoPruned): Promise<PruneDecision> {
+  const base = { seat: seat.id, worktree: seat.worktree, branch: seat.data.branch as string | null, lost: [] as string[], remove: false };
+  const refused = agedMarkerLegacyReason(marker) ?? agedLeftoverScopeReason(stateDir, seat, marker);
+  if (refused) return { ...base, reason: refused };
+  if (checkoutInUse(store, seat)) return { ...base, reason: 'checkout in use' };
+  // Check before touching any bytes, including a dangling .git link.
+  if (!lstatSync(seat.worktree!, { throwIfNoEntry: false })?.isDirectory() ||
+      lstatSync(path.join(seat.worktree!, '.git'), { throwIfNoEntry: false }))
+    return { ...base, reason: 'leftover is no longer a gitless directory' };
+  const kept = await unarchivedLeftover(seat.worktree!);
+  if (kept !== null) return { ...base, reason: kept };
+  const reason = `resume aged removal: ${marker.reason}`;
+  store.updateSeat(seat.id, { data: { worktreeRemoved: true } }, 'seat.pruned', { reason });
+  return { ...base, reason, remove: true, lost: Array.isArray(marker.lost) ? marker.lost : [] };
 }
 
 /** Hash completed backup files without buffering a potentially large patch in Node. */

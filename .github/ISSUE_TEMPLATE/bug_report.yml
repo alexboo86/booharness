@@ -1,0 +1,23 @@
+name: Bug report
+description: Something in the latest release does not work
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is a generated build and is replaced on each publication.
+        A report is a proposal. The maintainer ports an accepted fix into the source and closes it with a link to the release.
+        Security and conduct reports are private: use the Security tab, Report a vulnerability.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: input
+    id: release
+    attributes:
+      label: Release
+      description: Only the latest release is supported.
+    validations:
+      required: true

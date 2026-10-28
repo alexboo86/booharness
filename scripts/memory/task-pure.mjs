@@ -15,6 +15,14 @@ export class HttpError extends Error {
 // be named by a handoff.
 export const TASK_CLOSED_STATUSES = new Set(['done', 'cancelled']);
 
+// A task lives in mem_tasks, not among the entry kinds: the refusal names the task
+// verbs, or the caller retries the same call (47 `search --kind task` 400s in 14 days, task 3227).
+export function unknownKind(kind) {
+  return `unknown kind: ${String(kind)}${kind === 'task'
+    ? '; tasks are not memory entries: CLI memoryctl task list, task show --id <id> or task create;'
+      + ' MCP task_list or task_create' : ''}`;
+}
+
 // Advisory only: callers supply the existing task reader after explicit closures.
 export function namedOpenTasks(entry, entryId, readTask) {
   const named = [];
