@@ -61,5 +61,19 @@ and rebuilds once for definite failed/incomplete status, but retries timeout onc
 without deleting. Init errors retain exit/output tail. Notes persist as
 `remoteProvisionNotes` (`ops/orchestrator/src/remote-provision.ts`).
 
+Before that init a remote seat seeds its index from the complete index in the host
+clone (`host.repo/.codegraph/codegraph.db`; no ancestor walk): one node script, run
+directly (never through git-bash `bash -c`, which strips a backslash level from win paths),
+claims `.codegraph` by exclusive mkdir, takes the read-only `SNAPSHOT` (`VACUUM INTO`),
+runs `codegraph sync .` inside the build gate, and verifies status. Any failure stops the
+seat's daemon, removes only the `.codegraph` it made, and falls to init. A status
+`projectPath` that is not the seat dir (compared as real paths) forces a rebuild. The
+read-only open leaves an empty `-wal` and a `-shm` beside the clone db: SQLite protocol
+files, the db bytes are unchanged and the next writer's close removes them. After a
+verified runtime move, `syncHostRuntime` runs a separate host-queue turn that syncs the
+clone index under its own deadline and stops its daemon; failure only logs, an incomplete
+index is skipped. The lead initializes each clone index once; orch never inits a clone
+(`ops/orchestrator/src/remote-codegraph.ts`, `ops/orchestrator/src/remote-repo.ts`).
+
 verified: 2026-09-27
 

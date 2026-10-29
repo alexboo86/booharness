@@ -79,6 +79,7 @@ Roles define a seat's job and available methods; families define which provider 
 | Coder | Implement an agreed task and run the relevant checks |
 | Tester | Reproduce defects with tests and verify user paths |
 | Designer | Design or redesign a surface within the project's UI rules |
+| Motion | Make video and motion assets on this Mac with Higgsfield and ffmpeg-full; write only `web/apps/landing/public/media/**` and `web/apps/landing/_drafts/motion/**` |
 | Copywriter | Write user-facing copy, metadata and locale strings |
 | Reviewer | Inspect a change; run a test only to prove a finding of its own |
 | Legal | Review legal copy, payments, personal data and consent |
@@ -228,7 +229,7 @@ The authors use Claude as lead in the Claude Code desktop app. Claude Code termi
 | `qwen` | Pi `qwen-token-plan-individual` | Token-plan key through Pi `/login` |
 | `mimo` | Pi `xiaomi-token-plan-*` | Token-plan key through Pi `/login` |
 
-Not every family has every role. OpenCode is scout-only in the default matrix. Claude has researcher, coder, tester, designer, copywriter, reviewer, plan-critic and legal assignments, and not scout, debater, bughunter or security. Codex, glm, qwen and mimo cover every role; kimi has every role except scout; grok has every role except bughunter and security. A glm coder whose effort is max gets 60 minutes when the lead names no time limit; every other seat keeps the 30-minute default (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). The full role/model matrix and login requirements are in [INSTALL.md, §2](INSTALL.md#2-supported-ai-families).
+Not every family has every role. OpenCode is scout-only in the default matrix. Claude has researcher, coder, tester, designer, copywriter, motion, reviewer, plan-critic and legal assignments, and not scout, debater, bughunter or security. Codex, glm, qwen and mimo cover every role; kimi has every role except scout; grok has every role except bughunter and security. Motion uses the designer family matrix and runs on this Mac only, with a local Higgsfield session and ffmpeg-full; writes are limited to `web/apps/landing/public/media/**` and `web/apps/landing/_drafts/motion/**` (`ops/orchestrator/src/profiles.ts`, `ops/orchestrator/src/role-policy.ts`, `ops/orchestrator/src/placement.ts`, `.agents/skills/motion-media/SKILL.md`). A glm coder whose effort is max gets 60 minutes when the lead names no time limit; every other seat keeps the 30-minute default (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). The full role/model matrix and login requirements are in [INSTALL.md, §2](INSTALL.md#2-supported-ai-families).
 
 ## Requirements
 

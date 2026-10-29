@@ -175,14 +175,22 @@ pinned Pi runtime with that vendor's subscription route, `native` = the vendor's
 
 | Family | Roles in the matrix | Default model / effort | Harness | What must exist on the machine |
 |---|---|---|---|---|
-| **claude** | researcher, coder, tester, designer, copywriter, reviewer, plan critic, legal (not scout, debater, bughunter or security) | coder, tester, designer and copywriter `claude-opus-5-5` high; reviewer, critic and legal `claude-sonnet-5-5` high; researcher `claude-sonnet-5` high | native Claude Code | `claude` CLI signed in to a Claude subscription |
-| **codex** | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `gpt-6.1-sol` (coder, tester, designer, copywriter, reviewer, critic and legal high; researcher and debater medium; bughunter and security max); scout `gpt-6-luna` high | pi (`openai-codex`) | Pi `/login` for `openai-codex` (ChatGPT subscription); the `codex-edit` Pi extension (phase 7.3) |
-| **glm** | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `glm-5.3` (high; researcher low; bughunter and security max); scout `glm-5.3-flash` high | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
-| **kimi** | researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security (not scout) | `k3.1-pro` high in every role it has | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
-| grok | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal (not bughunter or security) | `grok-4.7` (scout low; researcher medium; other roles high) | pi (`xai`) | Pi `/login` for `xai` |
+| **claude** | researcher, coder, tester, designer, copywriter, motion, reviewer, plan critic, legal (not scout, debater, bughunter or security) | coder, tester, designer, copywriter and motion `claude-opus-5-5` high; reviewer, critic and legal `claude-sonnet-5-5` high; researcher `claude-sonnet-5` high | native Claude Code | `claude` CLI signed in to a Claude subscription |
+| **codex** | scout, researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal, bughunter, security | `gpt-6.1-sol` (coder, tester, designer, copywriter, motion, reviewer, critic and legal high; researcher and debater medium; bughunter and security max); scout `gpt-6-luna` high | pi (`openai-codex`) | Pi `/login` for `openai-codex` (ChatGPT subscription); the `codex-edit` Pi extension (phase 7.3) |
+| **glm** | scout, researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal, bughunter, security | `glm-5.3` (high; researcher low; bughunter and security max); scout `glm-5.3-flash` high | pi (`zai`) | Z.AI Coding Plan API key in `~/.local/state/orch/providers.json`; installer also requires `claude` for this family (native mode reuses it) |
+| **kimi** | researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal, bughunter, security (not scout) | `k3.1-pro` high in every role it has | pi (`kimi-coding`) | Pi `/login` for `kimi-coding` |
+| grok | scout, researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal (not bughunter or security) | `grok-4.7` (scout low; researcher medium; other roles high) | pi (`xai`) | Pi `/login` for `xai` |
 | opencode | scout | `glm-5.3-flash` | pi (`opencode-go`) | Pi `/login` for `opencode-go` |
-| qwen | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `qwen3.8-max` (researcher, coder, tester, designer and copywriter medium; debater, reviewer, critic and legal high; bughunter and security max); scout `qwen3.8-flash` low | pi (`qwen-token-plan-individual`) | Pi `/login` with the Qwen token-plan key |
-| mimo | scout, researcher, debater, coder, tester, designer, copywriter, reviewer, critic, legal, bughunter, security | `mimo-v2.6-pro` (researcher medium; other roles high, including bughunter and security); scout `mimo-v2.6-flash` low | pi (`xiaomi-token-plan-*`) | Pi `/login` with the Xiaomi token-plan key |
+| qwen | scout, researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal, bughunter, security | `qwen3.8-max` (researcher, coder, tester, designer, copywriter and motion medium; debater, reviewer, critic and legal high; bughunter and security max); scout `qwen3.8-flash` low | pi (`qwen-token-plan-individual`) | Pi `/login` with the Qwen token-plan key |
+| mimo | scout, researcher, debater, coder, tester, designer, copywriter, motion, reviewer, critic, legal, bughunter, security | `mimo-v2.6-pro` (researcher medium; other roles high, including bughunter and security); scout `mimo-v2.6-flash` low | pi (`xiaomi-token-plan-*`) | Pi `/login` with the Xiaomi token-plan key |
+
+The motion role runs on this Mac only: it needs the local Higgsfield session and
+Homebrew ffmpeg-full (`/opt/homebrew/opt/ffmpeg-full/bin` on PATH). Its write scope is
+`web/apps/landing/public/media/**` and `web/apps/landing/_drafts/motion/**`; it does not
+edit application code. Its family matrix is the designer matrix shown above
+(no opencode), with qwen at medium effort and the other motion families at high.
+Sources: `ops/orchestrator/src/profiles.ts`, `ops/orchestrator/src/role-policy.ts`,
+`ops/orchestrator/src/placement.ts` and `.agents/skills/motion-media/SKILL.md`.
 
 The screenshotter role was removed on 2026-10-21. A lead or a seat captures the screen or a window and reads the image itself, only when a picture is necessary; a log, test, DOM or accessibility read that proves the point comes first. Peekaboo runs on macOS and needs Screen Recording and Accessibility rights granted by the user; `npm run doctor` shows its state.
 

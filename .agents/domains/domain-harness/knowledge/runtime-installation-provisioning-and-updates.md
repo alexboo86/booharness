@@ -57,8 +57,17 @@ releases the hold. Resolution failure installs nothing. Codegraph changes stop o
 daemon answering as codegraph and index the main checkout, retaining
 `codegraphRefreshPending` until success; absent .codegraph is reported, worktrees only
 flagged stale. Win32 defers while codegraph lives, reporting the third consecutive
-deferral. `--check` writes nothing. Setup scripts use the same pin; ast-grep remains
-outside it. `rtkInstallTarget` writes the PATH binary's linked target, preserving links.
+deferral. `--check` writes nothing. Non-check runs persist discovered tool ids in
+`seenTools`; a never-seen provider CLI reports `absent` in current versions without
+operator attention, while a previously seen CLI that disappears remains `missing`.
+Setup scripts use the same pin; ast-grep remains outside it. `rtkInstallTarget` writes
+the PATH binary's linked target, preserving links. Pinned memory reports use key
+`harness-tool-updates:<machine>` and a title suffixed ` (<machine>)`: the hostname's
+first label is lowercased and characters outside `[a-z0-9-]` become `-`. State stores
+`memoryKey` with `memoryId`; unkeyed or foreign-key ids are never reused. A superseded
+id refusal is resolved with `memoryctl get <current_id> --follow latest --json` before
+retrying at the live head; key-conflict refusals still recover the named live id.
+Regression coverage: `node scripts/test-update-tools.mjs` (`scripts/test-update-tools.mjs` not in this kit).
 
 verified: 2026-09-23
 

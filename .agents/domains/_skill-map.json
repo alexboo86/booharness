@@ -11,6 +11,7 @@
     "tester",
     "designer",
     "copywriter",
+    "motion",
     "reviewer",
     "bughunter",
     "legal",
@@ -70,6 +71,10 @@
     ],
     "designer": [
       "design-direction"
+    ],
+    "motion": [
+      "motion-media",
+      "ffmpeg-skill"
     ],
     "copywriter": [
       "anti-slop"
@@ -543,6 +548,10 @@
         "input:image"
       ]
     },
+    "ffmpeg-skill": {
+      "class": "core",
+      "requires": []
+    },
     "desktop-interaction-review": {
       "class": "method",
       "requires": []
@@ -610,6 +619,12 @@
     "memoryctl": {
       "class": "core",
       "requires": []
+    },
+    "motion-media": {
+      "class": "core",
+      "requires": [
+        "input:image"
+      ]
     },
     "next": {
       "class": "lead",

@@ -16,6 +16,8 @@ export const FIXTURE_GLOBS = ['**/fixtures/**'] as const;
 export const TESTER_WRITE_SCOPE = [...TEST_FILE_GLOBS, ...FIXTURE_GLOBS, ...CAPTURE_OUTPUT_GLOBS] as const;
 export const DESIGNER_WRITE_SCOPE = ['src/**/*.tsx', 'src/**/*.css', 'web/apps/**'] as const;
 export const COPYWRITER_WRITE_SCOPE = ['web/apps/**', 'src/locales/**'] as const;
+/** Motion edits the landing page's media and its own drafts (task 3336 S1, decisions 21078/21079). */
+export const MOTION_WRITE_SCOPE = ['web/apps/landing/public/media/**', 'web/apps/landing/_drafts/motion/**'] as const;
 
 export const ROLE_POLICY = {
   coder: { access: 'full', worktree: 'branch', sealed: false },
@@ -28,6 +30,8 @@ export const ROLE_POLICY = {
   tester: { access: 'full', worktree: 'branch', sealed: false, writeScope: TESTER_WRITE_SCOPE },
   designer: { access: 'full', worktree: 'branch', sealed: false, writeScope: DESIGNER_WRITE_SCOPE },
   copywriter: { access: 'full', worktree: 'branch', sealed: false, writeScope: COPYWRITER_WRITE_SCOPE },
+  // Task 3336 S1: the video editor, landed like a coder inside its media scope; Mac-only placement is placeSeat's rule.
+  motion: { access: 'full', worktree: 'branch', sealed: false, writeScope: MOTION_WRITE_SCOPE },
   legal: { access: 'full', worktree: 'detached', sealed: false, review: true },
   security: { access: 'full', worktree: 'detached', sealed: false, review: true },
 } as const satisfies Record<string, { access: 'full' | 'read-only'; worktree: 'branch' | 'detached' | 'none'; sealed: boolean; turns?: number; review?: boolean; writeScope?: readonly string[] }>;

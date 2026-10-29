@@ -408,14 +408,22 @@ const NEED_FITS = {
   any: { fits: () => true, miss: () => '' },
 };
 
+/** The Mac-only hard pins placeSeat returns before any ranking: the thrown line's seat label and tail, and the recorded reason. claude runs native on the Mac; motion's Higgsfield session and ffmpeg-full exist only here (task 3336 S1). */
+export function macOnlyPin(family: Family, role: ProfileRole): { label: string; tail: string; reason: string } | null {
+  if (family === 'claude') return { label: `a claude ${role}`, tail: 'claude runs native on the Mac', reason: `claude runs native on the Mac: ${role} seat stays local` };
+  if (role === 'motion') return { label: 'a motion seat', tail: 'motion runs on this Mac', reason: 'motion runs on this Mac: Higgsfield session and ffmpeg-full exist only here' };
+  return null;
+}
+
 /** Pure: the same inputs always give the same target and reason. Throws when no target is eligible. Hard rules come first; the lead's need then narrows the platform, load picks the machine (decision #12522). */
 export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles: readonly string[]; local: Candidate; hosts: Readonly<Record<string, Candidate>>; need: PlatformNeed; instruments?: Instruments }): { target: Target; reason: string } {
   const { role, family, taskFiles, local, hosts, need } = input;
   const instruments = input.instruments ?? effectiveInstruments(undefined);
-  if (family === 'claude') {
-    // A hard rule the lead's need cannot move: a claude seat that needs Windows has no target.
-    if (need === 'win') throw new Error(`no placement target is eligible for a claude ${role}: claude runs native on the Mac, and the need is win`);
-    return { target: 'local', reason: `claude runs native on the Mac: ${role} seat stays local` };
+  // A hard rule the lead's need cannot move: a Mac-only seat that needs Windows has no target.
+  const pin = macOnlyPin(family, role);
+  if (pin) {
+    if (need === 'win') throw new Error(`no placement target is eligible for ${pin.label}: ${pin.tail}, and the need is win`);
+    return { target: 'local', reason: pin.reason };
   }
   const serverFile = taskFiles.find(touchesServer);
   const desktopFile = taskFiles.find(touchesMacDesktop);

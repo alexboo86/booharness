@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readHost, readHosts, type RemoteHost } from './config.ts';
+import { localNodeExecutable } from './shared.entry.ts';
 
 type Pins = { package: string; version: string; integrity: string; extension: string; config: { enabled: boolean; models: string[] } };
 const pins = JSON.parse(readFileSync(new URL('../../ab-stand/codex-edit.json', import.meta.url), 'utf8')) as Pins;
@@ -108,7 +109,7 @@ export function checkPinnedEdit(installer: string, prefix: string, name: string)
     } catch { return null; }
   };
   return new Promise((resolve) => {
-    execFile(process.execPath, [installer, '--check', '--prefix', prefix],
+    execFile(localNodeExecutable(), [installer, '--check', '--prefix', prefix],
       { encoding: 'utf8', timeout: 60_000, windowsHide: true },
       (error, stdout) => {
         // --check exits 1 with its verdict on stdout; anything else is a broken

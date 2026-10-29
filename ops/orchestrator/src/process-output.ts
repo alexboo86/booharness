@@ -1,4 +1,22 @@
 import type { spawn } from 'node:child_process';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+/** Resolve afresh before local launches: upgrades can remove the daemon's Node binary. */
+export function localNodeExecutable(execPath = process.execPath, lookup: () => string | undefined = () => {
+  for (const dir of (process.env.PATH ?? process.env.Path ?? '').split(path.delimiter).filter(Boolean)) {
+    const candidate = path.resolve(dir, process.platform === 'win32' ? 'node.exe' : 'node');
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return candidate;
+    } catch { /* Keep searching PATH when an entry is absent or not executable. */ }
+  }
+}): string {
+  if (existsSync(execPath)) return execPath;
+  const node = lookup();
+  if (node) return node;
+  throw new Error(`Node executable '${execPath}' no longer exists and 'node' was not found on PATH`);
+}
 
 // Shared process collection: remote probes must keep stdin open until close.
 // Kept independent of providers and the daemon's Git checkout transport.

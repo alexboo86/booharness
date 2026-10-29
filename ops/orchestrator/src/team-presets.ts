@@ -31,7 +31,7 @@ export type BuiltMatrix = {
 const TIERS: readonly PresetTier[] = ['economy', 'balanced', 'strong'];
 /** Every role, in matrix order; the object form makes a role missing from this list a type error. */
 const ROLES_ORDER: Record<ProfileRole, true> = {
-  scout: true, researcher: true, debater: true, coder: true, tester: true, designer: true, copywriter: true,
+  scout: true, researcher: true, debater: true, coder: true, tester: true, designer: true, copywriter: true, motion: true,
   reviewer: true, critic: true, legal: true, bughunter: true, security: true,
 };
 const ROLES = Object.keys(ROLES_ORDER) as ProfileRole[];

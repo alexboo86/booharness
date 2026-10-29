@@ -66,9 +66,15 @@ The operator approved the open extraction of the ASD-STE100 issue 9 dictionary, 
 
 By decision #20542 (after the whole-tree measurement #20541) the operator approved two tools by Robert C. Martin, both 0BSD Python on tree-sitter: [unclebob/crapper](https://github.com/unclebob/crapper) @ `6fd92c4c9bcc` for a check:commit gate that stops function complexity (CC) from growing (task 3184), and [unclebob/dryer](https://github.com/unclebob/dryer) @ `66ff6d21a42c` for a weekly duplicate report, never a commit gate (a whole-tree run takes 27 min on one core). Their sources are vendored at those commits with `NOTICE` and per-file SHA-256; their Python dependencies are pinned wheels with hashes, unpacked by the installer without pip, and the tree-sitter grammars are fetched at install time, never at commit time. Only `--no-coverage` complexity and the duplicate scan are approved: their coverage and mutation runs (which run test suites and install `@vitest/coverage-v8` or `cargo-llvm-cov`), `unclebob/mutator`, `unclebob/uml-viewer` and the `ub-mode` skill are not added.
 
-### Higgsfield CLI — explicit operator addition, 2026-10-28
+### Motion media — explicit operator additions, decisions #21078, #21079 and #21082
 
-The operator ordered Higgsfield for the landing animations (site redesign track, annotation call 2026-10-28) and signs in with his own account. The approved route is the official CLI [`@higgsfield/cli`](https://github.com/higgsfield-ai/cli), installed globally on this Mac at a pinned version (`npm i -g @higgsfield/cli@1.2.2`, postinstall script not allowed) and authenticated by `higgsfield auth login` in the operator's browser; no API key is stored. Each generation spends the operator's Higgsfield credits: a lead or a seat runs `higgsfield generate cost` before `generate create` and generates only scenarios the operator approved. The companion skills (`npx skills add higgsfield-ai/skills`) and the remote MCP connector are not added.
+The operator ordered Higgsfield for landing animations (2026-10-28). Decisions #21078 and #21079 supersede direct CLI execution: **designer and motion seats only** use `node ops/media/hf.mjs`, or the `higgsfield` shim that delegates to that wrapper. Every other seat role is refused. Leads and the operator call `node ops/media/hf.mjs` too (it passes their every verb through to the session under `~/.local/state/orch/higgsfield-home`); a plain `higgsfield` outside a seat answers `Not authenticated` once the session has moved there. Same Unix user: the gate stops accidental and normal use, not a seat that deliberately reads the moved session. The lead approves the scenario and total credit ceiling; the seat runs `generate cost` for the exact request before `generate create` and keeps cumulative spend within that ceiling. A wrapper refusal is not permission to call the vendor CLI, API or MCP directly. The existing pinned official [`@higgsfield/cli`](https://github.com/higgsfield-ai/cli) 1.2.2 is an implementation dependency of the wrapper, not a second public execution route; its postinstall script remains disallowed. Operator authentication remains operator-owned. Companion Higgsfield skills and its remote MCP connector are not added.
+
+The local [`motion-media`](../../.agents/skills/motion-media/SKILL.md) workflow is the motion role default; router registration is delivered separately. Mechanical editing routes to [`ffmpeg-skill`](../../.agents/skills/ffmpeg-skill/PROVENANCE.md) (kajisho5/ffmpeg-skill, MIT), vendored unmodified at its pinned upstream commit with LICENSE and runnable-file SHA-256 pins. Only SKILL.md, scripts/, templates/, references/ and LICENSE are imported; plugin manifests, CI, installers and other upstream tooling are excluded. Upstream install/update hints and implicit ASR model downloads are not approved execution routes. All rendering uses staged local assets with no network fetch at render time, real terminal captures rather than invented UI, and outputs only under `web/apps/landing/public/media/**` or `web/apps/landing/_drafts/motion/**`.
+
+Homebrew **ffmpeg-full** is approved for local use (GPL; keg-only). Text and subtitles use `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg`; prefix `PATH` with that directory for ffmpeg-skill scripts so ffprobe uses the same build. This approval is for local media production, not redistribution of FFmpeg or automatic package installation.
+
+By decision #21082, **HyperFrames**, **fal hosted MCP**, and **ElevenLabs hosted MCP** are approved, **not yet installed**. This records approval only: no connector, credentials, endpoint, unpinned install or additional render-time network access is introduced by this entry.
 
 ### Vendored Claude Code mods — explicit operator addition, 2026-10-16
 
@@ -416,6 +422,7 @@ npm run check:unpinned-installs        # ратчет; новая непинов
   - [`edit-contract-mirror`](../../.agents/skills/edit-contract-mirror/SKILL.md)
   - [`emil-design-eng`](../../.agents/skills/emil-design-eng/SKILL.md)
   - [`enumerate-cases`](../../.agents/skills/enumerate-cases/SKILL.md)
+  - [`ffmpeg-skill`](../../.agents/skills/ffmpeg-skill/SKILL.md)
   - [`find-skills`](../../.agents/skills/find-skills/SKILL.md)
   - [`flaky-test-reproduction`](../../.agents/skills/flaky-test-reproduction/SKILL.md)
   - [`handoff`](../../.agents/skills/handoff/SKILL.md)
@@ -427,6 +434,7 @@ npm run check:unpinned-installs        # ратчет; новая непинов
   - [`llm-grounding-audit`](../../.agents/skills/llm-grounding-audit/SKILL.md)
   - [`memory-domain-extraction`](../../.agents/skills/memory-domain-extraction/SKILL.md)
   - [`memoryctl`](../../.agents/skills/memoryctl/SKILL.md)
+  - [`motion-media`](../../.agents/skills/motion-media/SKILL.md)
   - [`next`](../../.agents/skills/next/SKILL.md)
   - [`orch-team`](../../.agents/skills/orch-team/SKILL.md)
   - [`plan-before-code`](../../.agents/skills/plan-before-code/SKILL.md)

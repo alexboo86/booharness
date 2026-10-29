@@ -51,7 +51,7 @@ import {
   existsSync, mkdirSync, readFileSync, writeFileSync, rmSync,
   statSync, readdirSync, copyFileSync, chmodSync, renameSync, realpathSync,
 } from 'node:fs';
-import { homedir, tmpdir, platform, arch } from 'node:os';
+import { homedir, tmpdir, platform, arch, hostname } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../scripts/lib/is-main.mjs';
@@ -75,8 +75,9 @@ const PLIST = path.join(homedir(), 'Library', 'LaunchAgents', `${PLIST_ID}.plist
 // operator's live daemon, and a scheduler call that names it would be a
 // fixture written into production.
 const TASK_NAME = `${PREFIX}-update-tools`;
-const MEMORY_KEY = 'harness-tool-updates';
-const MEMORY_TITLE = 'Состояние агентского инструментария: версии и последние обновления';
+const MACHINE = hostname().split('.')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-');
+const MEMORY_KEY = `harness-tool-updates:${MACHINE}`;
+const MEMORY_TITLE = `Состояние агентского инструментария: версии и последние обновления (${MACHINE})`;
 
 const ARGS = new Set(process.argv.slice(2));
 const CHECK_ONLY = ARGS.has('--check');
@@ -756,6 +757,18 @@ async function updatePinnedTool(tool, state) {
   }
 }
 
+function missingToolResult(tool, state) {
+  const absent = PROVIDER_TOOL_IDS.has(tool.id) && !state.seenTools?.includes(tool.id);
+  return { id: tool.id, status: absent ? 'absent' : 'missing', before: null, after: null,
+    detail: absent ? 'not installed on this machine' : 'not on PATH — install it, or drop it from ops/update-tools.mjs' };
+}
+
+function rememberSeenTools(state, results) {
+  if (CHECK_ONLY) return;
+  const found = results.filter((r) => r.before != null).map((r) => r.id);
+  state.seenTools = [...new Set([...(state.seenTools ?? []), ...found])];
+}
+
 async function updateAll(state) {
   const results = [];
   for (const tool of activeTools()) {
@@ -765,8 +778,7 @@ async function updateAll(state) {
     }
     const before = versionOf(tool);
     if (before === null) {
-      results.push({ id: tool.id, status: 'missing', before: null, after: null,
-        detail: 'not on PATH — install it, or drop it from ops/update-tools.mjs' });
+      results.push(missingToolResult(tool, state));
       continue;
     }
     if (CHECK_ONLY) {
@@ -791,6 +803,7 @@ async function updateAll(state) {
       detail: status === 'updated' || status === 'current' ? '' : tail(r.out, 400),
     });
   }
+  rememberSeenTools(state, results);
   return results;
 }
 
@@ -856,7 +869,7 @@ function renderReport(results, stamp) {
 }
 
 // ---------------------------------------------------------------------------
-// memory: ONE live entry, superseded each run
+// memory: ONE live entry per machine, superseded each run
 // ---------------------------------------------------------------------------
 //
 // Appending daily would put 365 entries a year into a store whose `hot` digest
@@ -891,9 +904,14 @@ export function findLiveEntryId(runMemory = (args, options) => run('memoryctl', 
   if (!r.ok) {
     throw new Error(`memory search for "${MEMORY_TITLE}" failed — refusing to write on an unknown store state: ${r.out}`);
   }
-  const line = r.out.split('\n').find((l) => l.includes(MEMORY_TITLE));
-  const id = line?.match(/\b(\d{2,})\b/)?.[1];
-  return id ? Number(id) : null;
+  let entries;
+  try {
+    entries = JSON.parse(r.out);
+    if (!Array.isArray(entries)) throw new Error('expected a JSON array');
+  } catch (error) {
+    throw new Error(`memory search for "${MEMORY_TITLE}" returned an invalid JSON array — refusing to write on an unknown store state: ${error.message}`);
+  }
+  return entries.find((entry) => entry.title === MEMORY_TITLE && entry.kind === 'reference')?.id ?? null;
 }
 
 export function recordToMemory(
@@ -908,7 +926,8 @@ export function recordToMemory(
   writeFileSync(bodyFile, `${body}\n`);
 
   const state = readState(stateFile);
-  let existing = state.memoryId ?? findLiveEntryId(runMemory);
+  let existing = state.memoryKey === MEMORY_KEY ? state.memoryId : null;
+  existing ??= findLiveEntryId(runMemory);
 
   // `--pinned` is what makes this reach the agents, and it was not optional:
   // measured 2026-08-22, the unpinned entry was live, unique and findable by
@@ -930,7 +949,7 @@ export function recordToMemory(
 
   if (!r.ok) return { ok: false, out: tail(r.out, 300) };
   const id = r.out.match(/"id"\s*:\s*(\d+)/)?.[1];
-  if (id) writeState({ ...state, memoryId: Number(id), lastRun: new Date().toISOString() }, stateFile);
+  if (id) writeState({ ...state, memoryKey: MEMORY_KEY, memoryId: Number(id), lastRun: new Date().toISOString() }, stateFile);
   return { ok: true, out: `memory entry ${id ?? existing}` };
 }
 
@@ -949,11 +968,21 @@ export function recordToMemory(
 // repeating the same call — the unique index over `key` allows one live row,
 // so a blind append would fail too, and if it did not, it would fork the
 // history this entry exists to keep in one place.
+function latestEntryId(id, runMemory) {
+  const r = runMemory(['get', String(id), '--follow', 'latest', '--json'], { timeout: 60_000 });
+  if (!r.ok) throw new Error(`memory get latest for ${id} failed — refusing to retry: ${r.out}`);
+  const entry = JSON.parse(r.out);
+  if (!Number.isSafeInteger(entry.id) || entry.id <= 0) throw new Error('memory get latest returned no valid id');
+  return entry.id;
+}
+
 function recoverFromRefusal(r, existing, runMemory) {
   if (r.ok) return null;
-  const named = r.out.match(/"current_id"\s*:\s*(\d+)/)?.[1]
-    ?? r.out.match(/already belongs to memory entry (\d+)/)?.[1];
-  const recovered = named ? Number(named) : findLiveEntryId(runMemory);
+  // current_id is only the next row in the lineage, not necessarily its head.
+  const next = r.out.match(/"current_id"\s*:\s*(\d+)/)?.[1];
+  const conflict = r.out.match(/already belongs to memory entry (\d+)/)?.[1];
+  const recovered = next ? latestEntryId(next, runMemory)
+    : conflict ? Number(conflict) : findLiveEntryId(runMemory);
   return recovered && recovered !== existing ? recovered : null;
 }
 

@@ -4,6 +4,9 @@
 // The gate script itself holds the machine-wide slots in `<orch state dir>/build-gate`; the shims
 // live beside them in `bin`. When the gate script is absent from the checkout the wiring stays
 // dormant: a dead `cargo` first on PATH would break every seat, so activation follows the file.
+// POSIX also routes higgsfield, higgs and hf directly through ops/media/hf.mjs when present,
+// keeping its authorization/credit boundary separate from build slots; absent media gates remove
+// those aliases. Windows installs only native build-tool launchers.
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -128,7 +131,7 @@ function withWindowsShimLock(dir: string, install: () => void): void {
  * writer leaves it behind. Remove only those writer temp files whose owner pid is gone — a live
  * pid names a concurrent writer — and never anything else in the shim dir.
  */
-const writerTempName = /^(?:cargo|cmake|ninja|msbuild)(?:\.exe)?\.(\d+)\.tmp$/;
+const writerTempName = /^(?:(?:cargo|cmake|ninja|msbuild)(?:\.exe)?|higgsfield|higgs|hf)\.(\d+)\.tmp$/;
 function sweepStaleWriterTemps(dir: string, platform: NodeJS.Platform): void {
   const fsPath = pathOf(platform);
   for (const name of readdirSync(dir)) {
@@ -225,9 +228,14 @@ export function writeBuildShims(stateDir: string, gate: string, platform: NodeJS
     return dir;
   }
   sweepStaleWriterTemps(dir, platform);
-  for (const tool of BUILD_GATE_TOOLS) {
-    const name = tool;
-    const content = shimScript(tool, gate);
+  const shims = BUILD_GATE_TOOLS.map((tool): [string, string] => [tool, shimScript(tool, gate)]);
+  const media = path.posix.resolve(path.posix.dirname(gate), '../media/hf.mjs');
+  const hasMedia = existsSync(media);
+  for (const name of ['higgsfield', 'higgs', 'hf']) {
+    if (hasMedia) shims.push([name, `#!/bin/sh\nexec node '${media.replaceAll("'", "'\\''")}' "$@"\n`]);
+    else rmSync(path.posix.join(dir, name), { force: true });
+  }
+  for (const [name, content] of shims) {
     const file = pathOf(platform).join(dir, name);
     let current: string | undefined;
     try { current = readFileSync(file, 'utf8'); } catch { /* absent: written below */ }

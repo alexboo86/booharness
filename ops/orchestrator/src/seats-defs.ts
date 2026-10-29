@@ -29,7 +29,7 @@ import type { rtkMissed } from './toolkinds.ts';
 /**
  * What each role may do and where it works. Same role names as
  * ops/orchestrator/mcp-by-role.json except lead and advisor, which are callers, never seats.
- * - coder, tester, designer and copywriter edit on their own branch; the worktree outlives the seat so the lead can land it;
+ * - coder, tester, designer, copywriter and motion edit on their own branch; the worktree outlives the seat so the lead can land it;
  * - reviewer, bughunter, legal and security run checks on a disposable detached checkout, removed on close;
  * - the rest read the repository in place.
  */
@@ -39,7 +39,7 @@ import type { rtkMissed } from './toolkinds.ts';
 // landing one needs override_reason. Dot-segment paths (.agents, .claude) stay out on purpose:
 // a tester does not edit harness files, and Node ** does not match a dot-segment.
 import { ROLE_POLICY, TESTER_WRITE_SCOPE, DESIGNER_WRITE_SCOPE, type SeatRole } from './role-policy.ts';
-export { ROLE_POLICY, TEST_FILE_GLOBS, CAPTURE_OUTPUT_GLOBS, FIXTURE_GLOBS, TESTER_WRITE_SCOPE, DESIGNER_WRITE_SCOPE, COPYWRITER_WRITE_SCOPE, landable, type SeatRole } from './role-policy.ts';
+export { ROLE_POLICY, TEST_FILE_GLOBS, CAPTURE_OUTPUT_GLOBS, FIXTURE_GLOBS, TESTER_WRITE_SCOPE, DESIGNER_WRITE_SCOPE, COPYWRITER_WRITE_SCOPE, MOTION_WRITE_SCOPE, landable, type SeatRole } from './role-policy.ts';
 
 /** The specialist-role hint kinds, one text each, shown at most once per seat (task 2953). */
 export type RoleHintKind = 'tester' | 'designer' | 'copywriter' | 'test0';

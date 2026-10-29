@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import { copyFile, lstat, mkdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { localNodeExecutable } from './shared.entry.ts';
 
 export type ProvisionStep = { command: string; code: number | null; ms: number; tail: string };
 export type SeedCodegraphDeps = {
@@ -7,8 +9,11 @@ export type SeedCodegraphDeps = {
   stopDaemon(dir: string): Promise<unknown>;
 };
 
-function normalizedPath(value: string, win: boolean): string {
-  const normalized = value.replace(/^\\\\\?\\/, '').replaceAll('\\', '/').replace(/\/$/, '');
+export function normalizedPath(value: string, win: boolean): string {
+  let resolved: string;
+  try { resolved = fs.realpathSync.native(value); }
+  catch { resolved = (win ? path.win32 : path.posix).resolve(value); }
+  const normalized = resolved.replace(/^\\\\\?\\/, '').replaceAll('\\', '/').replace(/\/$/, '');
   return win ? normalized.toLowerCase() : normalized;
 }
 
@@ -42,7 +47,7 @@ async function nearestSource(main: string): Promise<string | null> {
 
 // VACUUM is synchronous in node:sqlite: keep it out of the orchestrator event loop.
 // A SQLite snapshot includes committed WAL contents without copying live sidecars.
-const SNAPSHOT = `
+export const SNAPSHOT = `
 const { DatabaseSync } = require('node:sqlite');
 const [source, destination, version] = process.argv.slice(1);
 const db = new DatabaseSync(source, { readOnly: true });
@@ -59,7 +64,7 @@ function requireSuccess(step: ProvisionStep): void {
 }
 
 async function populateSeed(source: string, dir: string, deps: SeedCodegraphDeps, steps: ProvisionStep[], version: string): Promise<void> {
-  const copy = await deps.run(process.execPath, ['-e', SNAPSHOT, source, path.join(dir, '.codegraph', 'codegraph.db'), version], false);
+  const copy = await deps.run(localNodeExecutable(), ['-e', SNAPSHOT, source, path.join(dir, '.codegraph', 'codegraph.db'), version], false);
   copy.command = `codegraph seed from ${source}`;
   steps.push(copy);
   requireSuccess(copy);

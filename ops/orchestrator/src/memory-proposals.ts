@@ -14,6 +14,7 @@ import { refusalReasons, withoutRefusalLogEnvelopes } from './lesson-stats.ts';
 import { resolveMemoryctl, spawnPlan } from '../../../scripts/memory/lesson-lib.mjs';
 import { gateNewLesson } from '../../../scripts/memory/capture-gate.mjs';
 import { lessonFields } from '../../../scripts/memory/lesson-quality.mjs';
+import { localNodeExecutable } from './shared.entry.ts';
 
 const exec = promisify(execFile);
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -125,7 +126,7 @@ function memoryctl(args: string[]): Promise<{ stdout: string; stderr: string }> 
  * daemon event loop. Tests may supply a child script with a slow gate. */
 export async function runLessonGate(input: Parameters<typeof gateNewLesson>[0], script = fileURLToPath(new URL('./lesson-gate-child.mjs', import.meta.url))): Promise<Awaited<ReturnType<typeof gateNewLesson>>> {
   try {
-    const { stdout } = await exec(process.execPath, [script, JSON.stringify(input)], { cwd: ROOT, timeout: 120000, maxBuffer: 65536 });
+    const { stdout } = await exec(localNodeExecutable(), [script, JSON.stringify(input)], { cwd: ROOT, timeout: 120000, maxBuffer: 65536 });
     return JSON.parse(stdout) as Awaited<ReturnType<typeof gateNewLesson>>;
   } catch (error) {
     const failure = error as Error & { stderr?: string };

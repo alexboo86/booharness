@@ -308,7 +308,7 @@ function denseFilesOf(lessons) {
 
 async function probeLessons(lessons, {
   retired, merged, compiled, multi, noCache, phase, tree, repoRoot, map, render, lessonsForPath, route, rawEnvelopes,
-  expandGlob, failClosed, activeLessons, dense: denseOverride,
+  expandGlob, failClosed, activeLessons, dense: denseOverride, scoreCache, rescoreIds,
 }) {
   const read = readerFor(tree);
   const pageFor = (domain) => readKnowledgePage(domain, read);
@@ -358,10 +358,10 @@ async function probeLessons(lessons, {
       }
       sources.push({ file: probed, envelope });
     }
-    const seatCall = { sources, brief, role: 'coder', repoRoot, phase };
+    const seatCall = { sources, brief, role: 'coder', repoRoot, phase, scoreCache, rescoreIds };
     const { prefix } = leadEditContext(sources.map(({ file: probed, envelope }) => ({ file: probed, envelope })));
     const leadCall = {
-      sources, brief, role: 'lead', repoRoot, phase,
+      sources, brief, role: 'lead', repoRoot, phase, scoreCache, rescoreIds,
       budget: LESSON_CONTEXT_BYTES - bytes(prefix),
     };
     if (noCache) {
@@ -560,16 +560,22 @@ async function run(argv, deps, log, err) {
   };
 
   if (sub === 'compare') {
+    // Pair candidate scores, never selected ids: each phase still matches and packs.
+    const scoreCache = new Map();
+    const rescoreIds = new Set([
+      ...Object.keys(moved), ...Object.keys(set.compiled),
+      ...Object.keys(set.merged), ...Object.values(set.merged),
+    ].map(Number));
     const dense = denseFilesOf(beforeLessons);
     const before = await probeLessons(beforeLessons, {
-      ...shared, phase: 'before', retired: new Set(), merged: {}, compiled: set.compiled, tree: repoRoot, failClosed: true, dense,
+      ...shared, scoreCache, phase: 'before', retired: new Set(), merged: {}, compiled: set.compiled, tree: repoRoot, failClosed: true, dense,
     });
     if (before.fault) {
       err(`eval-compile-delivery: ${before.fault}`);
       return 2;
     }
     const after = await probeLessons(afterLessons, {
-      ...shared, phase: 'after', retired: set.retired, merged: set.merged, compiled: set.compiled,
+      ...shared, scoreCache, rescoreIds, phase: 'after', retired: set.retired, merged: set.merged, compiled: set.compiled,
       tree: set.tree ?? repoRoot, failClosed: true, activeLessons, dense,
     });
     if (after.fault) {

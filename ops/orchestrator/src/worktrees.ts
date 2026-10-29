@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKeyedQueue } from './keyed-queue.ts';
 import { seedCodegraph, type ProvisionStep } from './codegraph-seed.ts';
+import { localNodeExecutable } from './shared.entry.ts';
 export { seedCodegraph, codegraphIndexNote, type ProvisionStep, type SeedCodegraphDeps } from './codegraph-seed.ts';
 
 const exec = promisify(execFile);
@@ -620,7 +621,7 @@ function runStep(command: string, args: string[], cwd: string, env: NodeJS.Proce
 
 function runProvisionCommand(command: string, args: string[], dir: string, env: NodeJS.ProcessEnv, timeoutMs: number, gated: boolean): Promise<ProvisionStep> {
   return gated
-    ? runStep(process.execPath, [buildGateScript, '--exec', command, ...args], dir, env, timeoutMs, true)
+    ? runStep(localNodeExecutable(), [buildGateScript, '--exec', command, ...args], dir, env, timeoutMs, true)
     : runStep(command, args, dir, env, timeoutMs);
 }
 

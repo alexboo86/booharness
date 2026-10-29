@@ -43,16 +43,16 @@ export function preserveReportTable(original: string, corrected: string, role: R
   return `\`\`\`json\n${JSON.stringify({ ...into, table: from.table })}\n\`\`\``;
 }
 
-export type ReportRole = 'coder' | 'tester' | 'designer' | 'copywriter' | 'legal' | 'security' | 'reviewer' | 'scout' | 'critic' | 'researcher' | 'debater' | 'bughunter';
+export type ReportRole = 'coder' | 'tester' | 'designer' | 'copywriter' | 'motion' | 'legal' | 'security' | 'reviewer' | 'scout' | 'critic' | 'researcher' | 'debater' | 'bughunter';
 /** The roles with a report contract of their own; the specialist roles map onto one of these. */
-export type ContractRole = Exclude<ReportRole, 'designer' | 'copywriter' | 'legal' | 'security'>;
+export type ContractRole = Exclude<ReportRole, 'designer' | 'copywriter' | 'motion' | 'legal' | 'security'>;
 /**
- * The contract a role answers with (task 2802 S1b): designer and copywriter report as a coder,
- * legal and security as a reviewer; no new report fields. Every contract branch and schema read
+ * The contract a role answers with (task 2802 S1b): designer, copywriter and motion report as a
+ * coder, legal and security as a reviewer; no new report fields. Every contract branch and schema read
  * goes through this at call time, so the mapped role is the one the checks see.
  */
 export function contractRole(role: ReportRole): ContractRole {
-  if (role === 'designer' || role === 'copywriter') return 'coder';
+  if (role === 'designer' || role === 'copywriter' || role === 'motion') return 'coder';
   if (role === 'legal' || role === 'security') return 'reviewer';
   return role;
 }
@@ -101,7 +101,7 @@ const EXTRA_KEYS: Record<ContractRole, string[]> = {
 };
 
 /** The roles that get lesson bodies (context.ts: every role but the read-only ones) and answer for them. */
-export const LESSON_ROLES: ReadonlySet<ReportRole> = new Set(['coder', 'tester', 'designer', 'copywriter', 'legal', 'security', 'reviewer', 'bughunter']);
+export const LESSON_ROLES: ReadonlySet<ReportRole> = new Set(['coder', 'tester', 'designer', 'copywriter', 'motion', 'legal', 'security', 'reviewer', 'bughunter']);
 
 /** A round-table turn's vote requirement (operator #19423): present only for a debater carrying options. */
 export type TableContract = { options: string[] };

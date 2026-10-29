@@ -196,6 +196,7 @@ was last seen over 24 hours ago; a named post keeps every row (task 2305).
 | tester | proof by tests: a change, a defect, a user path (Test 0 or Test 3) | own branch worktree, landed like a coder, outside the coder cap; writes only test files, fixtures and `captures/**`; `seat_land` refuses another path unless `override_reason` says why |
 | designer | a new look or a redesign of a surface, desktop terminal UI or web: directions, the chosen one, canon checks | own branch worktree, landed like a coder; writes only `src/**/*.tsx`, `src/**/*.css`, `web/apps/**`; this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`); reads images by default |
 | copywriter | web copy and metadata, SEO, locale strings, academy content | own branch worktree, landed like a coder; writes only `web/apps/**`, `src/locales/**`; this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`) |
+| motion | video for the landing page: scenario, animation, generation, editing of its media | own branch worktree, landed like a coder; writes only `web/apps/landing/public/media/**`, `web/apps/landing/_drafts/motion/**`; this Mac only (Higgsfield session and ffmpeg-full exist only here); reads images by default |
 | legal | a diff or page that touches legal copy, payments, personal data or consent (Russian law) | reviewer rights: `base` or `snapshot`, nothing lands; this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`) |
 | security | a diff on a security path: threat model, reproduced PoC | reviewer rights: `base` or `snapshot`, nothing lands; bughunter matrix at max effort |
 | reviewer | the accumulated diff of a task | disposable worktree at `base` or `snapshot` |
@@ -208,21 +209,23 @@ was last seen over 24 hours ago; a named post keeps every row (task 2305).
 
 Pick the role by the work before you create a coder (task 2953: in 10-17..10-24 leads made 985 coders, 2 testers, 5 designers, 1 security seat and no legal seat). orch adds a reminder to the `warning` of a coder's `seat_create` and first `seat_prompt` answer when the files or Jev's reading of the brief fit a specialist; switching means closing the coder and creating the role seat.
 
-**`role: "auto"` picks tester or coder for you** (task 2955, operator #19868). Pass `brief` (the first-turn brief, the same 300-word rules) and `files`, no `seat_prompt`: orch creates ONE seat, queues the brief as its first turn and answers with `turn`, `wait` and `picked` (role, rule, Jev numbers, `next`). Rules in order: every file is a test file, or Jev reads tests only → tester; Jev reads a reported defect → tester with a Test 0 line, and `next` says "then a coder on the red test"; else coder. Jev unavailable refuses: pick the role yourself. It never picks a designer, copywriter, legal or security seat: create those by role. After the orch restart that brings `auto`, reconnect the orch MCP before you pass it.
+**`role: "auto"` picks tester or coder for you** (task 2955, operator #19868). Pass `brief` (the first-turn brief, the same 300-word rules) and `files`, no `seat_prompt`: orch creates ONE seat, queues the brief as its first turn and answers with `turn`, `wait` and `picked` (role, rule, Jev numbers, `next`). Rules in order: every file is a test file, or Jev reads tests only → tester; Jev reads a reported defect → tester with a Test 0 line, and `next` says "then a coder on the red test"; else coder. Jev unavailable refuses: pick the role yourself. It never picks a designer, copywriter, motion, legal or security seat: create those by role. After the orch restart that brings `auto`, reconnect the orch MCP before you pass it.
 
 - **A reported defect:** a tester writes the red test first (Test 0), then the fix coder gets that test.
 - **Tests, fixtures or captures only** (regression cover, a test migration): a tester, not a coder.
 - **A user-visible change, desktop terminal or web, before you call it done:** a tester walks the same user path before and after (Test 3); for a desktop or visual kit you hold the lease. An entry point (a button, a menu item) is walked together with the surface it opens (operator #13245).
 - **How a surface looks** (layout, spacing, colour, type, icons, the look of a new dialog, panel or component), in the desktop terminal (`src/**`) as much as on the web (`web/apps/**`): a designer. Work with a look part and a logic part (an indicator's computation and its appearance) is one task with two seats on disjoint files: the designer sets the look (colours, line styles, defaults, the `.tsx`/`.css` settings form, mocks), the coder writes the logic and any `.ts` renderer code (chart-engine draw code is outside the designer's write scope). A designer needs an image-capable family; orch picks it and the host. Without a Jev reading orch adds no reminder; this list decides.
 - **Text a user reads** (dialog, button and error strings in `src/locales/**`, web copy, docs, academy): a copywriter.
+- **Video for the landing page** (files under `web/apps/landing/public/media/**`, motion drafts in `web/apps/landing/_drafts/motion/**`): a motion seat; it runs on this Mac only and reads images by default.
 - **Legal copy, payments, personal data or consent:** a legal reviewer besides the ordinary one. **A security path:** a security seat besides `review_plan`'s count.
 - **A defect hunt in existing code without a diff:** a bughunter. **A fork with two defensible answers:** two debaters. **A plan that changes behaviour:** a critic before any code.
 
-Each role brings its defining skill or skills (`.agents/domains/_skill-map.json` roleDefaults: designer `design-direction`, security `security-and-hardening`, copywriter its product copy skill and `anti-slop` (#19584), legal its compliance skill; the copy and compliance skills are product-bound and kit-excluded, so read their names in roleDefaults). Its other skills are trigger candidates that Jev filters against the brief, so a brief that names the surface and the task brings them; the brief does not name skills. Researcher, designer, copywriter and legal run on this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`); this Mac always offers it. Legal and security share the reviewer class with reviewer: one family never takes two of them on one title, the cap of 2 counts per role, and the author's family steps aside for each as for a reviewer.
+Each role brings its defining skill or skills (`.agents/domains/_skill-map.json` roleDefaults: designer `design-direction`, security `security-and-hardening`, copywriter its product copy skill and `anti-slop` (#19584), legal its compliance skill, motion `motion-media` and `ffmpeg-skill`; the copy and compliance skills are product-bound and kit-excluded, so read their names in roleDefaults). Its other skills are trigger candidates that Jev filters against the brief, so a brief that names the surface and the task brings them; the brief does not name skills. Researcher, designer, copywriter and legal run on this Mac or a host with brightdata-web (`BRIGHTDATA_API_KEY`); this Mac always offers it. A motion seat runs on this Mac only: the Higgsfield session and ffmpeg-full exist only here. Legal and security share the reviewer class with reviewer: one family never takes two of them on one title, the cap of 2 counts per role, and the author's family steps aside for each as for a reviewer.
 
 - **tester.** Pick it for proof by tests: Test 0 reproduces a reported bug before any fix (a test that fails on the target commit); Test 3 accepts a landed change by the same user path, before and after. Brief: mode, kit (desktop, visual, web, data, install), target (the report, or the landed commit and its base), the user path with expected and observed results, `files`; for a desktop or visual kit the lease you hold (root, port, minutes): the tester never takes a lease and never starts the app. Report: the coder contract; `criteria[0]` is the verdict (reproduced, not reproduced, accept, reject). Land: `seat_land` as a coder; to hand a red test to the fixing coder, land it into a task worktree and create the coder with `repo: <task worktree>, snapshot: true`. A flagged change of an existing test needs the commit to name the changed behaviour (#14245). Limits: outside the coder cap, no blocker rechecks.
 - **designer.** Pick it for a new look, a redesign or a visual direction with alternatives; a logic change in a component stays a coder's. Brief: the surface and its files, the goal in the operator's words, what must stay (the project's design rules), the captures or lease you have. Report: the coder contract; directions and the chosen one with why; capture paths in `checked`; the project's UI checks in `checks`. Land as a coder; a path outside its scope needs `override_reason`. It reads images by default (`design-direction` requires `input:image`): `images` is true even when omitted, and `images: false` does not turn it off, so a model with no image input leaves the pick.
 - **copywriter.** Pick it for page copy, metadata, SEO, locale strings and academy text. Brief: the pages, the audience, the keyword source. Report: the coder contract; each keyword or market fact with its URL and read date in evidence. Land as a coder; a path outside its write scope needs `override_reason`.
+- **motion.** Pick it for video work on the landing page: scenario, animation, generation, editing. Brief: the files in its scope, the goal in the operator's words, the scenario or render source, what must stay. Report: the coder contract; render and capture paths in `checked`; ffmpeg checks in `checks`. Land as a coder; a path outside its scope needs `override_reason`. It reads images by default (`motion-media` requires `input:image`), runs on this Mac only, and gets the designer's MCP set (brightdata-web included; this Mac always offers it).
 - **legal.** Create it as a reviewer of the diff (`snapshot` or `base`, `author: <coder>`) when the change touches legal copy, payments, personal data or consent. Report: the reviewer contract; each finding names the law article, the URL and its read date. It is a review, not advice to the operator.
 - **security.** Create it as a reviewer of the diff on a security path (auth, tokens, credentials, install, hooks, Tauri capabilities, IPC). Report: the reviewer contract; each finding names the CWE, a reproduced PoC and the severity. `review_plan` does not create a security seat: it only sets the ordinary reviewer count (a security path keeps at least one; two when own security lines changed and Jev risk is at least 0.7, or when Jev is unavailable and those lines changed). A security seat is extra, and only the lead creates it.
 
@@ -303,6 +306,9 @@ A round table (operator #19423) is debaters on different families answering ONE 
   brightdata-web (`BRIGHTDATA_API_KEY` in the host environment or its prefixed
   secrets file). This Mac always offers it. An explicit `host` without the key
   is refused; automatic placement skips that host (task 2802 slice W).
+- A motion seat runs on this Mac only (task 3336): the Higgsfield session and
+  ffmpeg-full exist only here, so an explicit `host` or `needs: "win"` is
+  refused and placement never leaves this Mac.
 - While your own timing or memory measurement runs on <configured-windows-host>, create every other seat with `host: "<configured-host>"` (or `needs: mac` when it must reach the Mac) and read `placement.target`: with `needs` left out orch may place it on win (2026-10-12, track page-memory).
 - Title = what the seat is for. Reviewers of one task share one title: orch
   compares their findings and caps them at two.
@@ -312,7 +318,7 @@ A round table (operator #19423) is debaters on different families answering ONE 
   a different create reusing the id is refused.
 - Close with `seat_close {seat}`. A running turn is cancelled. A detached
   worktree (reviewer, legal, security, bughunter) is removed; a branch
-  worktree (coder, tester, designer, copywriter) stays for landing. While
+  worktree (coder, tester, designer, copywriter, motion) stays for landing. While
   provisioning, the answer is immediate with `closePending: true` and closure
   waits for setup to finish.
 - **Land a coder within 2 days.** An idle coder seat is closed after 2 days without a turn, landed or not, and its checkout goes a day later (task 1953, operator #13916). Land before that, or recover the work from branch `orch/<seat>` (a remote coder: `refs/orch/snapshots/<seat>`) and `~/.local/state/orch/worktree-backups/`.
@@ -397,7 +403,7 @@ chat step lists.
 - The brief is English and at most 300 words: task, owned files, evidence,
   acceptance, and out of scope: each thing the seat must not do, with its reason
   (an exclusion without a reason is a default the seat fills in; decision #12668).
-  Pass repo-relative `files` of the area (the suspected area for a bug with an unknown cause) to select knowledge pages, lessons and skills; a first coder, tester, designer, copywriter or bughunter brief without files in the brief or seat is refused, while a reviewer inherits its author's files or warns (decision #17906).
+  Pass repo-relative `files` of the area (the suspected area for a bug with an unknown cause) to select knowledge pages, lessons and skills; a first coder, tester, designer, copywriter, motion or bughunter brief without files in the brief or seat is refused, while a reviewer inherits its author's files or warns (decision #17906).
   Link large artifacts, never paste them. A brief over 300 words is refused unless `long_brief` says why it cannot be shorter.
 - The brief names the touched module ids. The seat's first context carries their
   contract summaries in its `## Modules` section. A coder that changes a Public API also edits its contract.
@@ -557,6 +563,35 @@ A seat that ignores its instruments is a finding. Write it to memory with
   Use `handoff_draft` (`since` or `repo` if needed) for an orch-store-only draft;
   edit it and close each chunk with `memoryctl handoff`. The tool never writes
   memory; do not copy full seat reports into memory.
+
+## Disk cleanup
+
+When the operator says a disk is full, clean at once (operator 2026-10-29): no
+`--dry-run`, no fresh survey of what the sweeps do. They were checked many times
+and refuse what is unsafe by themselves. Report free space before and after on
+each machine (`df -h`).
+
+1. Run the orch sweeps from a lead checkout, orch running:
+   `node ops/orchestrator/src/main.ts prune --targets`, `prune --caches`,
+   `sweep-host-worktrees`, `tmp-sweep`, `backup-sweep`. Plain `prune` (closed
+   coder checkouts) refuses while orch runs; the daemon prunes a closed seat
+   after one day by itself: never stop orch for it.
+2. Remove by hand (`rm -r`; the hook refuses `-f`) what the sweeps do not reach.
+   - On a host, the `target` directories in `~/orch/worktrees/<seat>` of each seat
+     this query names (ready, no queued or running turn, last turn 4 h or more ago:
+     the daemon rule for local seats, which remote seats do not get yet):
+     `sqlite3 -readonly ~/.local/state/orch/orch.sqlite "select s.id from seats s where s.status='ready' and json_extract(s.data,'$.host')='<host>' and not exists (select 1 from turns t where t.seat_id=s.id and t.status in ('running','queued')) and (select max(coalesce(t.ended_at,t.created_at)) from turns t where t.seat_id=s.id) < strftime('%Y-%m-%dT%H:%M:%fZ','now','-4 hours');"`
+   - On a host, `~/orch/lead-check/target-*` and the subdirectories of `~/orch/*-tmp`,
+     `~/orch/check-tmp` and `~/orch-tmp` with no file written in 24 h
+     (`find <dir> -newermt '-24 hours'` is empty). Keep their top-level logs.
+   - In a lead worktree, `target/debug/incremental` when no cargo or rustc runs
+     there (`pgrep -fl 'cargo|rustc'`).
+3. Never remove: a working seat's files, a checkout with unlanded edits, a host
+   repo `target` written in 24 h, measurement or stand data, checkout archives,
+   `worktree-backups`.
+4. On the Mac a Time Machine local snapshot keeps deleted bytes allocated
+   (`tmutil listlocalsnapshots /`). Deleting it is the operator's step: give him
+   `tmutil deletelocalsnapshots <date>`.
 
 ## Mechanics that cost turns (measured 2026-09-25)
 

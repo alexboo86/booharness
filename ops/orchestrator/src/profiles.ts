@@ -33,7 +33,7 @@ import type { FamilyLoad, Reading } from './limits.ts';
 export type CellTier = { tier: 'WEAK' | 'NORMAL'; warning: string | null; cell: { rated: number; mean: number | null; failShare: number } | null };
 
 export type Profile = { model: string; effort: string | null };
-export type ProfileRole = 'scout' | 'researcher' | 'debater' | 'coder' | 'tester' | 'designer' | 'copywriter' | 'reviewer' | 'critic' | 'legal' | 'bughunter' | 'security';
+export type ProfileRole = 'scout' | 'researcher' | 'debater' | 'coder' | 'tester' | 'designer' | 'copywriter' | 'motion' | 'reviewer' | 'critic' | 'legal' | 'bughunter' | 'security';
 /** Accounting only: a critic keeps the scout lifecycle, but never shares scout burn or stats. */
 export type AccountingRole = ProfileRole;
 export function accountingRole<R extends string>(seat: { role: R; data: Record<string, unknown> }): R | 'critic' {
@@ -122,6 +122,17 @@ export const MATRIX: Record<ProfileRole, Partial<Record<Family, Profile>>> = {
     mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
   },
   copywriter: {
+    codex: { model: SOL, effort: 'high' },
+    claude: { model: 'claude-opus-5-5', effort: 'high' },
+    kimi: { model: 'k3.1-pro', effort: 'high' },
+    glm: { model: 'glm-5.3', effort: 'high' },
+    grok: { model: 'grok-4.7', effort: 'high' },
+    qwen: { model: 'qwen3.8-max', effort: 'medium' },
+    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
+  },
+  // A copy of the designer row, not the same object (task 3336 S1): the motion role runs the
+  // designer family matrix, and a later designer edit must not move motion.
+  motion: {
     codex: { model: SOL, effort: 'high' },
     claude: { model: 'claude-opus-5-5', effort: 'high' },
     kimi: { model: 'k3.1-pro', effort: 'high' },
@@ -466,7 +477,7 @@ export type Load = Pick<FamilyLoad, 'family' | 'worst'> & Partial<Pick<FamilyLoa
 
 /** Quota percentage reserved for one turn when this role has no calibrated burn yet; reservations are estimates, not observed usage. */
 export const DEFAULT_TURN_BURN: Record<ProfileRole, number> = {
-  scout: 0.25, researcher: 0.5, debater: 0.5, coder: 1, tester: 1, designer: 1, copywriter: 1,
+  scout: 0.25, researcher: 0.5, debater: 0.5, coder: 1, tester: 1, designer: 1, copywriter: 1, motion: 1,
   reviewer: 0.5, critic: 0.5, legal: 0.5, bughunter: 1, security: 1,
 };
 /** `burn` is spent on `pace`, the window of the seat's own pace reading (null when that is unreadable); `burns` holds the calibrated burn on each other window the seat's model spends, absent where none is known. A pick charges `burn` only to `pace` and each `burns` entry only to its own window — never by label equality with the pick's budget (lesson 17774, decision 17805 F1). */
@@ -520,7 +531,12 @@ export function paceReading(family: Family, readings: readonly Reading[] | null 
   return budgetReading(readings);
 }
 
+/** Remaining-budget floor for uncalibrated probes and ahead-of-pace rows; calibrated turns at or behind pace may use the remainder if they fit. Shorter-window throttles keep this floor. */
 export const MIN_LEFT = 5;
+
+function belowBudgetFloor(left: number, atPace: boolean, burn: number | null): boolean {
+  return left < MIN_LEFT && !(atPace && burn !== null);
+}
 
 /** Percent of every token window (pace and throttling, not ·mcp) kept for non-seat consumers: hermes-agent shares GLM's key (operator #12969). */
 export const WINDOW_RESERVE: Partial<Record<Family, number>> = { glm: 5 };
@@ -629,7 +645,7 @@ export function rankFamilies(role: ProfileRole, loads: Load[], avoid: ReadonlySe
       && (100 - reading.used - reserveOn(reading) - reservedOn(reading.window) <= 0 || 100 - reading.used - reserveOn(reading) - reservedOn(reading.window) < (load?.estimates?.[reading.window] ?? 0)));
     const burn = budget && load?.estimate?.window === budget.window && load.estimate.used === used ? load.estimate.burn : null;
     const veto = burn !== null && Number.isFinite(burn) && burn > 0 && effectiveUsed !== null && 100 - effectiveUsed - reserved < burn;
-    const blocked = reserveHit || (effectiveUsed !== null && (100 - effectiveUsed - reserved < MIN_LEFT || throttle || veto));
+    const blocked = reserveHit || (effectiveUsed !== null && (belowBudgetFloor(100 - effectiveUsed - reserved, atPace, burn) || throttle || veto));
     const scopedSpent = readings.some((reading) => reading.window.includes('·') && !reading.window.endsWith('·mcp') && windowMs(reading.window) !== null && reading.used >= 100);
     return { family, budget, used, effectiveUsed, reserve, reserveHit, elapsed, headroom, headroomDays, need, needWindow, atPace, weekResets, shortResets, throttleLifted: shortFloorLifted && !throttle, resetsUnknown: load?.resets === null, working: workingSeats.get(family) ?? 0, tier: tiers.get(family)?.tier ?? 'NORMAL', tierCell: tiers.get(family)?.cell ?? null, burn, reserved, pending: pending.length, blocked, throttle, throttledBy, overrun, veto, scopedSpent, outage: load?.outageError ?? null, auth: load?.authError ?? null };
   });

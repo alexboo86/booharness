@@ -91,6 +91,126 @@ test('a retired id that disappears is not a loss', async () => {
   assert.equal(payload.after.retired, 1);
 });
 
+test('compare pairs unchanged scores across retirement but still detects a removed delivery', async () => {
+  const file = 'src/billing/store.ts';
+  const lessons = writeJson('drifting-lessons.json', [lesson(7, file), lesson(8, file)]);
+  const retire = path.join(dir, 'drifting-retire.txt');
+  const merged = writeJson('drifting-merged.json', { 7: 8 });
+  const items = [7, 8].map((id) => ({
+    id, title: `lesson ${id}`, anchor: file, trigger: `editing ${id}`,
+    rule: `keep lesson ${id}`, match: 'anchor',
+  }));
+  for (const merge of [false, true]) {
+    // Retiring a merge's survivor really removes the old lesson's delivery.
+    writeFileSync(retire, merge ? '8\n' : '7\n');
+    const logs = [];
+    const errors = [];
+    let requests = 0;
+    const code = await main([
+      'compare', '--lessons', lessons, '--retire', retire, '--no-cache',
+      ...(merge ? ['--merged', merged] : []),
+    ], {
+      log: (line) => logs.push(line), err: (line) => errors.push(line),
+      lessonsForPath: () => ({ items, omitted: 0 }),
+      routeKnowledgeSections: () => ({ sections: [] }),
+      renderLessonContext: (call) => renderLessonContext({
+        ...call,
+        ask: async ({ questions }) => {
+          const score = ++requests <= 4 ? 0.77 : 0.58;
+          return { answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { noul: score }])) };
+        },
+      }),
+    });
+    assert.equal(code, merge ? 1 : 0, errors.join('\n'));
+    assert.deepEqual(JSON.parse(logs.at(-1)).lost, merge ? [7] : []);
+  }
+});
+
+test('compare re-scores changed questions and proposed candidates without freezing neighbours', async () => {
+  const file = 'src/billing/store.ts';
+  const originals = [
+    { ...lesson(7, file), body: `- rule: ${'X'.repeat(1300)}original tail` },
+    lesson(8, file),
+  ];
+  const envelopes = liveEnvelopes(originals, [file]);
+  const cases = [
+    ['title', '--moved', { 7: { title: 'changed title' } }, [7]],
+    ['body', '--moved', { 7: { body: `- rule: ${'X'.repeat(1300)}changed tail` } }, [7]],
+    ['trigger', '--moved', { 7: { trigger: 'different question' } }, [7]],
+    ['anchor', '--moved', { 7: { anchor: 'src/billing/other.ts' } }, [7]],
+    ['same-anchor', '--moved', { 7: { anchor: file } }, [7]],
+    ['compiled', '--compiled', { 7: 'not present on page' }, [7]],
+    ['merged', '--merged', { 7: 8 }, [7, 8]],
+    ['question', null, null, [7, 8]],
+    ['content-tail', null, null, [7]],
+  ];
+  for (const [name, option, proposal, lost] of cases) {
+    const logs = [];
+    const errors = [];
+    const code = await main([
+      'compare', '--lessons', writeJson(`rescore-${name}-lessons.json`, originals),
+      ...(option ? [option, writeJson(`rescore-${name}-proposal.json`, proposal)] : []), '--no-cache',
+    ], {
+      log: (line) => logs.push(line), err: (line) => errors.push(line),
+      loadLessons: async () => originals,
+      lessonsForPath: (probed) => envelopes[probed] ?? { items: [], omitted: 0 },
+      routeKnowledgeSections: () => ({ sections: [] }),
+      renderLessonContext: (call) => renderLessonContext({
+        ...call,
+        brief: name === 'question' && call.phase === 'after' ? `${call.brief}\nA different task` : call.brief,
+        sources: name === 'content-tail' && call.phase === 'after'
+          ? call.sources.map((source) => ({ ...source, envelope: { ...source.envelope,
+            items: source.envelope.items.map((item) => item.id === 7
+              ? { ...item, rule: `${'X'.repeat(1300)}changed tail` } : item),
+          } })) : call.sources,
+        ask: async ({ questions }) => ({
+          answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
+            noul: call.phase === 'before' ? 0.77 : 0.58,
+          }])),
+        }),
+      }),
+    });
+    assert.equal(code, 1, `${name}: ${errors.join('\n')}`);
+    assert.deepEqual(JSON.parse(logs.at(-1)).lost, lost, name);
+  }
+});
+
+test('compare re-asks a lesson when only its rendered match changes', async () => {
+  const file = 'src/billing/store.ts';
+  const logs = [];
+  const asked = [];
+  const afterSources = [];
+  const code = await main([
+    'compare', '--lessons', writeJson('match-change-lessons.json', [lesson(7, file)]), '--no-cache',
+  ], {
+    log: (line) => logs.push(line), err: () => {},
+    lessonsForPath: () => ({ items: [{
+      id: 7, title: 'lesson 7', anchor: file, trigger: 'editing 7', rule: 'keep lesson 7', match: 'anchor',
+    }], omitted: 0 }),
+    routeKnowledgeSections: () => ({ sections: [] }),
+    renderLessonContext: async (call) => {
+      const result = await renderLessonContext({
+        ...call,
+        sources: call.sources.map((source) => ({ ...source, envelope: { ...source.envelope,
+          items: source.envelope.items.map((item) => ({ ...item, match: call.phase === 'after' ? 'class' : item.match })),
+        } })),
+        ask: async ({ questions }) => {
+          asked.push(`${call.phase}:${call.role}`);
+          return { answers: Object.fromEntries(Object.keys(questions).map((key) => [key, {
+            noul: call.phase === 'before' ? 0.77 : 0.58,
+          }])) };
+        },
+      });
+      if (call.phase === 'after') afterSources.push(result.source);
+      return result;
+    },
+  });
+  assert.deepEqual(asked, ['before:coder', 'before:lead', 'after:coder', 'after:lead']);
+  assert.deepEqual(afterSources, ['jev', 'jev']);
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(logs.at(-1)).lost, [7]);
+});
+
 test('a page that was the only delivery, then lost, exits 1', async () => {
   const row = (page) => ({
     id: 9,

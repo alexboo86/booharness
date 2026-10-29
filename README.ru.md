@@ -80,6 +80,7 @@ orch создаёт и отслеживает исполнителей, выби
 | Coder | Реализовать согласованное задание и запустить нужные проверки |
 | Tester | Воспроизвести дефект тестом и проверить пользовательский сценарий |
 | Designer | Разработать дизайн или редизайн интерфейса по правилам проекта |
+| Motion | Создать видео и анимацию на этом Mac через Higgsfield и ffmpeg-full; писать только в `web/apps/landing/public/media/**` и `web/apps/landing/_drafts/motion/**` |
 | Copywriter | Написать тексты для пользователей, метаданные и строки локализации |
 | Reviewer | Проверить изменение; запустить тест только чтобы доказать собственное замечание |
 | Legal | Проверить правовые тексты, платежи, персональные данные и согласия |
@@ -229,7 +230,7 @@ Jev — **необязательный платный классификатор
 | `qwen` | Pi `qwen-token-plan-individual` | Ключ token-plan через Pi `/login` |
 | `mimo` | Pi `xiaomi-token-plan-*` | Ключ token-plan через Pi `/login` |
 
-Не каждое семейство доступно для каждой роли. В штатной матрице OpenCode работает только как scout. Claude доступен как researcher, coder, tester, designer, copywriter, reviewer, plan critic и legal, но не как scout, debater, bughunter или security. Codex, glm, qwen и mimo покрывают все роли; у kimi есть все роли, кроме scout; у grok есть все роли, кроме bughunter и security. Coder семейства glm с effort max получает 60 минут, если лид не назвал предел времени; остальные исполнители сохраняют предел в 30 минут (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). Полная матрица ролей и моделей, а также требования к входу находятся в [§2 INSTALL.md](INSTALL.md#2-supported-ai-families).
+Не каждое семейство доступно для каждой роли. В штатной матрице OpenCode работает только как scout. Claude доступен как researcher, coder, tester, designer, copywriter, motion, reviewer, plan critic и legal, но не как scout, debater, bughunter или security. Codex, glm, qwen и mimo покрывают все роли; у kimi есть все роли, кроме scout; у grok есть все роли, кроме bughunter и security. Motion использует матрицу семейств designer и работает только на этом Mac с локальной сессией Higgsfield и ffmpeg-full; запись ограничена `web/apps/landing/public/media/**` и `web/apps/landing/_drafts/motion/**` (`ops/orchestrator/src/profiles.ts`, `ops/orchestrator/src/role-policy.ts`, `ops/orchestrator/src/placement.ts`, `.agents/skills/motion-media/SKILL.md`). Coder семейства glm с effort max получает 60 минут, если лид не назвал предел времени; остальные исполнители сохраняют предел в 30 минут (`ops/orchestrator/src/seats-defs.ts`, `ops/orchestrator/src/seats.ts`). Полная матрица ролей и моделей, а также требования к входу находятся в [§2 INSTALL.md](INSTALL.md#2-supported-ai-families).
 
 ## Требования
 

@@ -4,4 +4,4 @@ export * from './scout-tool.ts';
 export * from './loop-delay.ts';
 export * from './language.ts';
 export * from './peekaboo.ts';
-export { collect, text } from './process-output.ts';
+export { collect, text, localNodeExecutable } from './process-output.ts';

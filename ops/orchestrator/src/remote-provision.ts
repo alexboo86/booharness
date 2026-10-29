@@ -16,7 +16,8 @@ import { spawnProvider } from './providers/spawn.ts';
 import { gatedSetupLine, type ProvisionStep, SLOT_ACQUIRED_MARKER, slotWaitMs } from './worktrees.ts';
 import { withHostClone } from './remote-repo.ts';
 import { createKeyedQueue } from './keyed-queue.ts';
-import { codegraphIndexNote } from './codegraph-seed.ts';
+import { codegraphIndexNote, normalizedPath } from './codegraph-seed.ts';
+import { CODEGRAPH_INVOCATION, remoteCodegraphSeed } from './remote-codegraph.ts';
 export { codegraphIndexNote } from './codegraph-seed.ts';
 
 const CONFIG = 'ops/orchestrator/worktree-setup.json';
@@ -200,13 +201,29 @@ function initFailure(run: Run & { missing: boolean }): string | null {
  * non-zero exit) or an index that is not complete. A killed status (code null)
  * and unreadable exit-0 output say nothing about the database: no rebuild.
  */
-export function codegraphRebuildReason(run: { code: number | null; output: string }): string | null {
+export function codegraphRebuildReason(run: { code: number | null; output: string }, dir?: string): string | null {
   if (run.code === null) return null;
   if (run.code !== 0) return `status failed (${run.output.trim().slice(-CODEGRAPH_TAIL) || `exit ${run.code}`})`;
   let status;
   try { status = JSON.parse(run.output); } catch { return null; }
+  return codegraphPathMismatch(status, dir) ?? incompleteIndexReason(status);
+}
+
+function codegraphPathMismatch(status: { projectPath?: string }, dir?: string): string | null {
+  const win = /^[a-z]:[\\/]/i.test(dir ?? '');
+  return dir && typeof status?.projectPath === 'string' && normalizedPath(status.projectPath, win) !== normalizedPath(dir, win)
+    ? `index belongs to another checkout (${status.projectPath})` : null;
+}
+
+function incompleteIndexReason(status: { index?: { state?: string }; fileCount?: number } | null): string | null {
   const state = status?.index?.state;
   return state === 'complete' ? null : `incomplete index (state ${JSON.stringify(state ?? null)}, ${status?.fileCount ?? 'unknown'} files)`;
+}
+
+async function seedRemoteCodegraph(run: HostScript, host: string, timeoutMs: number, repo?: string): Promise<ProvisionStep[]> {
+  if (!repo) return [];
+  const seed = await run(remoteCodegraphSeed(repo), timeoutMs);
+  return [{ command: `[${host}] codegraph seed`, code: seed.code, ms: seed.ms, tail: seed.output.slice(-1500) }];
 }
 
 /**
@@ -216,8 +233,8 @@ export function codegraphRebuildReason(run: { code: number | null; output: strin
  * fatal: a seat without an index keeps the rg fallback. `note` is what the seat
  * should know (null for a clean, verified index).
  */
-export async function provisionCodegraph(run: HostScript, dir: string, host: string, initLabel: string, timeoutMs: number): Promise<{ steps: ProvisionStep[]; note: string | null }> {
-  const steps: ProvisionStep[] = [];
+export async function provisionCodegraph(run: HostScript, dir: string, host: string, initLabel: string, timeoutMs: number, repo?: string): Promise<{ steps: ProvisionStep[]; note: string | null }> {
+  const steps = await seedRemoteCodegraph(run, host, timeoutMs, repo);
   const init = await runCodegraphInit(run, CODEGRAPH_INIT_KEPT, timeoutMs);
   const initNote = initFailure(init);
   steps.push({ command: initLabel, code: init.code, ms: init.ms, tail: initNote ? `codegraph init failed: ${initNote}` : 'codegraph init ok' });
@@ -235,7 +252,7 @@ export async function provisionCodegraph(run: HostScript, dir: string, host: str
     }
   };
   let status = await verify();
-  const reason = codegraphRebuildReason(status);
+  const reason = codegraphRebuildReason(status, dir);
   let rebuildNote: string | null = null;
   if (reason) {
     // The first status step records why a rebuild ran; the final status step carries the note.
@@ -335,6 +352,15 @@ async function checkPinnedEditOnHost(host: string, name: string, prefix: string,
   return verdict && (!verdict.ok || run.code === 0) ? verdict : { ok: false, prefix, reason: `host ${host} reported no ${name} verdict (exit ${run.code}): ${run.output.trim().slice(-300)}` };
 }
 
+// Seed gates sync internally and streams the slot marker through stderr.
+function runCodegraphOnHost(host: string, dir: string, repo: string, bash: string, env: Record<string, string>, body: string, ms: number): Promise<Run> {
+  if (body.startsWith('// orch-codegraph-seed')) return runOnHost(host, 'node', ['-e', body], dir, env, ms, 4000, true);
+  if (/codegraph (?:init|sync)\b/.test(body)) {
+    return runOnHost(host, 'node', [`${repo}/ops/orchestrator/build-gate.mjs`, '--exec', bash, '-c', body], dir, env, ms, 4000, true);
+  }
+  return runOnHost(host, bash, ['-c', body], dir, env, ms);
+}
+
 /** `notes` is everything the seat should know about its checkout; seats store it as remoteProvisionNotes. */
 export async function provisionRemote(host: string, dir: string, options: { readOnly?: boolean; timeoutMs?: number; codexEdit?: boolean; hashlineEdit?: boolean; role?: string } = {}): Promise<{ ok: boolean; steps: ProvisionStep[]; notes: string[]; codexEditExtension?: string; hashlineEditExtension?: string }> {
   const { readOnly = false, codexEdit = false, hashlineEdit = false, timeoutMs = 20 * 60_000, role } = options;
@@ -360,11 +386,8 @@ export async function provisionRemote(host: string, dir: string, options: { read
       continue;
     }
     if (line === CODEGRAPH_INIT) {
-      // init and rebuild are heavy; the quick status probes stay outside the gate.
-      const script: HostScript = (body, ms) => body.includes('codegraph init')
-        ? runOnHost(host, 'node', [hostGate, '--exec', bash, '-c', body], dir, env, ms, 4000, true)
-        : runOnHost(host, bash, ['-c', body], dir, env, ms);
-      const index = await provisionCodegraph(script, dir, host, command, timeoutMs);
+      const script: HostScript = (body, ms) => runCodegraphOnHost(host, dir, repo, bash, env, body, ms);
+      const index = await provisionCodegraph(script, dir, host, command, timeoutMs, repo);
       steps.push(...index.steps);
       if (index.note) notes.push(index.note);
       continue;
@@ -382,27 +405,7 @@ export async function provisionRemote(host: string, dir: string, options: { read
   // inheritEnv:false intentionally leaves MCP children without PATH. Resolve
   // CodeGraph's installed npm shim on the host before writing the seat config;
   // spawning a bare `codegraph` would fail inside the role gate on Windows.
-  const probe = `const fs=require('node:fs'),p=require('node:path');
-    const dirs=(process.env.PATH||process.env.Path||'').split(p.delimiter);
-    let invocation;
-    for(const dir of dirs){
-      if(!dir)continue;
-      if(process.platform==='win32' && fs.existsSync(p.join(dir,'codegraph.cmd'))){
-        const root=p.join(dir,'node_modules','@colbymchenry','codegraph');
-        const manifest=p.join(root,'package.json');
-        if(!fs.existsSync(manifest))continue;
-        const bin=JSON.parse(fs.readFileSync(manifest,'utf8')).bin?.codegraph;
-        const script=typeof bin==='string' ? p.resolve(root,bin) : '';
-        if(!script || !fs.existsSync(script))continue;
-        invocation={command:process.execPath,args:[script]};break;
-      }
-      if(process.platform!=='win32' && fs.existsSync(p.join(dir,'codegraph'))){
-        const binary=fs.realpathSync(p.join(dir,'codegraph'));
-        invocation=/\\.[cm]?js$/.test(binary) ? {command:process.execPath,args:[binary]} : {command:binary,args:[]};break;
-      }
-    }
-    if(!invocation)throw new Error('cannot resolve host CodeGraph executable for seat MCP');
-    process.stdout.write(JSON.stringify(invocation));`;
+  const probe = `${CODEGRAPH_INVOCATION}process.stdout.write(JSON.stringify(invocation));`;
   const detected = await runOnHost(host, 'node', ['-e', probe], dir, {}, timeoutMs);
   steps.push({ command: `resolve host codegraph for seat MCP on ${host}`, code: detected.code, ms: detected.ms, tail: detected.output.slice(-1500) });
   if (detected.code !== 0) return { ok: false, steps, notes };

@@ -231,7 +231,7 @@ export function prompt(self: SeatManager, seatId: string, text: string, timeoutM
     const named = [...new Set(files.map((file) => file.trim()))];
     const context = named.length ? named : self.contextFiles(seat);
     if (!turns.length && !context.length && (landable(seat.role) || seat.role === 'bughunter')) {
-      throw new Error('files are required for a first coder, tester, designer, copywriter or bughunter brief; pass the repo-relative files of the area (for a bug with an unknown cause, the suspected area)');
+      throw new Error('files are required for a first coder, tester, designer, copywriter, motion or bughunter brief; pass the repo-relative files of the area (for a bug with an unknown cause, the suspected area)');
     }
     const limitMs = timeoutMs ?? turnLimitMs(seat, self.options.turnTimeoutMs);
     const pending: TurnPending = {

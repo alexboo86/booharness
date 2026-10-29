@@ -4,6 +4,16 @@
 
 Each publication of BooHarness to this repository adds an entry here, newest first.
 
+## 0.2.0 — 2026-10-29
+
+- The new motion role makes video and motion assets with Higgsfield and ffmpeg-full. It runs on this Mac only and writes only landing media and motion drafts. The kit ships its Higgsfield credit-boundary wrapper and test.
+- Remote seats seed their code index from the host clone's existing index instead of rebuilding it from scratch.
+- Local Node launches survive a Homebrew upgrade instead of keeping a removed Cellar path.
+- The update-tools memory report is recorded per machine, so one machine's report does not replace another's. When the stored report was already replaced, the updater follows it to the live entry and writes again; before this, the Windows daily run failed every time. A provider CLI that a machine never had shows as absent, not missing.
+- The lesson gate reuses an unchanged lesson's score instead of scoring it again.
+- Reviewer placement inherits both author and coauthor files.
+- The 5% budget floor no longer steps aside a calibrated family at or behind pace. The per-turn veto still applies.
+
 ## 0.1.0 — 2026-10-29
 
 First versioned release. The package version is this number. Publishing a changed kit refuses a version whose tag already exists. A push tags that version and opens a release whose notes are this entry, with a link to the Russian changelog.

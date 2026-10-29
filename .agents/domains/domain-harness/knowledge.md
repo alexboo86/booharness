@@ -1,8 +1,8 @@
 # Knowledge: the agent harness
 
 fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
-amended: 2026-10-29 — 2026-10-29: orch-board pane part: Bright Data balance read every minute, not every 10 minutes (task 3303) (NOT fact-checked)
-body-sha256: 6d03af04ccbb
+amended: 2026-10-29 — skill-routing part: motion role defaults (motion-media, ffmpeg-skill) added (task 3336 S1) (NOT fact-checked)
+body-sha256: 6d4500df37f9
 
 Patterns:
 - Commit gates: `scripts/check-commit.mjs` (not in this kit)

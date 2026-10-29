@@ -51,6 +51,11 @@
     "memoryctl",
     "brightdata-web"
   ],
+  "motion": [
+    "codegraph",
+    "memoryctl",
+    "brightdata-web"
+  ],
   "legal": [
     "codegraph",
     "memoryctl",

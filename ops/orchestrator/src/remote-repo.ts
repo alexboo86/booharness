@@ -8,6 +8,7 @@ import { refuseHostSsh, spawnProvider } from './providers/spawn.ts';
 import type { Logger } from './log.ts';
 import { createKeyedQueue } from './keyed-queue.ts';
 import { collect, text } from './shared.entry.ts';
+import { remoteCodegraphScript } from './remote-codegraph.ts';
 export { collect, text } from './shared.entry.ts';
 
 export const hash = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -275,6 +276,20 @@ async function refreshRuntimeHooks(host: string, repo: string, log?: Logger): Pr
   }
 }
 
+// Independent from the verified Git move: index upkeep must never mark a moved runtime stale.
+async function refreshRuntimeCodegraph(host: string | undefined, repo: string, moved: boolean, log?: Logger): Promise<void> {
+  if (!moved) return;
+  const name = host ?? 'local';
+  try {
+    await withHostClone(name, async () => {
+      const signal = AbortSignal.timeout(HOST_RUNTIME_TIMEOUT_MS);
+      await hostScript(host, repo, remoteCodegraphScript(repo, 'upkeep'), [], signal);
+    }, AbortSignal.timeout(HOST_RUNTIME_WAIT_TIMEOUT_MS));
+  } catch (error) {
+    log?.('warn', 'daemon.host_runtime_codegraph_failed', { host: name, message: (error as Error).message });
+  }
+}
+
 export type HostRuntimeState = {
   host: string; target: string; head: string | null;
   current: boolean; moved: boolean; error: string | null; at: string;
@@ -330,6 +345,7 @@ export async function syncHostRuntime(host: string | undefined, localRepo: strin
       return { moved: true, from: head, to: sha };
     }, waitSignal);
     hostRuntime.set(name, { host: name, target: sha, head: result.to, current: true, moved: result.moved, error: null, at: new Date().toISOString() });
+    await refreshRuntimeCodegraph(host, repo, result.moved, options.log);
     return result;
   } catch (error) {
     const failure = workSignal?.aborted

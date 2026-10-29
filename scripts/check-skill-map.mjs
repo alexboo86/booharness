@@ -130,7 +130,7 @@ function run() {
   const map = JSON.parse(readFileSync(join(root, '.agents/domains/_skill-map.json'), 'utf8'));
   const canon = new Set(readdirSync(join(root, '.agents/skills')));
   const domainDirs = readdirSync(join(root, '.agents/domains')).filter((d) => d.startsWith('domain-'));
-  const ROLES = ['lead', 'scout', 'critic', 'researcher', 'debater', 'advisor', 'coder', 'tester', 'designer', 'copywriter', 'reviewer', 'legal', 'security', 'bughunter'];
+  const ROLES = ['lead', 'scout', 'critic', 'researcher', 'debater', 'advisor', 'coder', 'tester', 'designer', 'copywriter', 'motion', 'reviewer', 'legal', 'security', 'bughunter'];
   const problems = [];
   const names = (where, list) => {
     if (!Array.isArray(list)) { problems.push(`${where}: not a list`); return; }

@@ -15,7 +15,7 @@ import { hostInstrumentCauses, lighterHost, missingHostInstruments, needsBrightd
 import { assertMirrorPath } from './remote-worktree.ts';
 import { checkoutTop, largestUntrackedSnapshotDirs, repoOf, resolveCommit, snapshotBytes, snapshotCommit } from './worktrees.ts';
 import { chainHolds } from './seats-drain.ts';
-import { ROLE_POLICY, landable, reviewRights, normalizeFile, SAFE } from './seats-defs.ts';
+import { ROLE_POLICY, landable, reviewRights, normalizeFile, stringsOf, SAFE } from './seats-defs.ts';
 import type { SeatRole, CreateSeat, Choose } from './seats-defs.ts';
 import { seatModel } from './seats-scope.ts';
 import { imageInput } from './model-input.ts';
@@ -170,6 +170,19 @@ export async function coderOwningCheckout(self: SeatManager, repo: string): Prom
   return sameCheckout(seat.worktree, top) ? seat.id : null;
 }
 
+/** Mac-only roles never reach a remote host: claude runs native on the Mac, and motion's Higgsfield session and ffmpeg-full exist only here (task 3336 S1). */
+function refuseRemoteHost(role: SeatRole, family: Family): void {
+  if (family === 'claude') throw new Error('claude is not supported on a remote host');
+  if (role === 'motion') throw new Error('motion is not supported on a remote host: the Higgsfield session and ffmpeg-full exist only on this Mac');
+}
+
+/** Path rules include every writer's files without persisting them as the reviewer's own. */
+function placementFiles(self: SeatManager, input: CreateSeat): string[] {
+  const inherited = input.author === undefined ? [] : [input.author, ...(input.coauthors ?? [])]
+    .flatMap(id => stringsOf(self.store.getSeat(id)?.data.taskFiles));
+  return [...new Set([...(input.files ?? []), ...inherited].map(normalizeFile).filter(Boolean))];
+}
+
 export async function createSeat(self: SeatManager, input: CreateSeat, choose: Choose & { replaces?: string }, skillMap?: string, images?: boolean, onCoderChain = false): Promise<Seat> {
     const createStart = Date.now();
     if (!Object.hasOwn(ROLE_POLICY, input.role)) throw new Error(`role must be one of ${Object.keys(ROLE_POLICY).join(', ')}`);
@@ -222,7 +235,8 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     let hostName = parentHost ?? input.host;
     let remoteHost = hostName === undefined ? null : readHost(hostName, self.options.stateDir);
     // An explicit host picks the machine, but never over a need it contradicts: mac is this Mac, win a win32 host (decision #12522).
-    const desktopFile = input.files?.find(touchesMacDesktop);
+    const filesForPlacement = placementFiles(self, input);
+    const desktopFile = filesForPlacement.find(touchesMacDesktop);
     if (remoteHost && desktopFile) throw new Error(`host ${hostName} contradicts ${desktopFile}: this Mac's desktop runtime requires this Mac`);
     if (remoteHost && input.needs === 'mac') throw new Error(`host ${hostName} contradicts needs mac: mac means this Mac (decision #12522); omit host or pass needs any`);
     if (remoteHost && input.needs === 'win' && remoteHost.platform !== 'win32') throw new Error(`host ${hostName} is ${remoteHost.platform}, which contradicts needs win: win needs a win32 host`);
@@ -521,13 +535,16 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
           const failures = [...probed].map(([target, probe]) => `${target} probe failed: ${probe.ok === false ? probe.error : ''}`).join('; ');
           placement = { needs, target: 'local', reason: `needs omitted (default any; decision #12591): no probe succeeded; this Mac is the fallback; ${failures}` };
         } else {
-          const placed = placeSeat({ role, family, taskFiles: input.files ?? [], need: needs, instruments, local: candidate('local', process.platform),
+          const placed = placeSeat({ role, family, taskFiles: filesForPlacement, need: needs, instruments, local: candidate('local', process.platform),
             hosts: Object.fromEntries(Object.entries(hosts).map(([name, host]) => [name, candidate(name, host.platform)])) });
           placement = { needs, ...placed, reason: `${input.needs === undefined ? 'needs omitted (default any; decision #12591): ' : ''}${placed.reason}` };
           if (placed.target !== 'local') { hostName = placed.target; remoteHost = hosts[placed.target]; }
         }
       }
-      if (remoteHost && family === 'claude') throw new Error('claude is not supported on a remote host');
+      // Mac-only roles never reach a host: claude runs native, and motion needs this
+      // Mac's Higgsfield session and ffmpeg-full (task 3336 S1) — an explicit host
+      // must not bypass placeSeat's hard pin.
+      if (remoteHost) refuseRemoteHost(role, family);
       // A host runtime move needs the commit this daemon started from (task 1784); without it a
       // remote create is refused here, before a row exists. The move itself runs in the seat chain.
       if (remoteHost && !self.options.daemonRuntime && !self.options.syncHostRuntime)
