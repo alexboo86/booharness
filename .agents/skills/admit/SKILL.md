@@ -5,8 +5,8 @@ lead_only: true
 ---
 
 You are the memory ADMISSION judge. The store is **memoryctl memory.db**; the mechanical layers are
-already automatic — content_hash dedup on append, lesson-links validation, inbox quarantine,
-selfreview drafts. What is NOT automatic is JUDGMENT: does this fact merge into an existing entry,
+already automatic — content_hash dedup on append, lesson-links validation, capture gates
+(capture-lesson lands `status=active` at once), selfreview drafts. What is NOT automatic is JUDGMENT: does this fact merge into an existing entry,
 supersede it, or contradict it? That is this skill.
 
 ## Procedure (per candidate fact/lesson)
@@ -14,7 +14,7 @@ supersede it, or contradict it? That is this skill.
    english token) + for lessons `memoryctl lessons --path <anchor-file>`. Read the top hits.
 2. **Classify** against the best match:
    - **new** — no real overlap → `memoryctl append` (lesson → via
-     `node scripts/memory/capture-lesson.mjs` so it lands in inbox quarantine with structured links;
+     `node scripts/memory/capture-lesson.mjs` so it lands `status=active` at once with structured links — no quarantine, no promotion step (decision #12333);
      non-lesson kinds → direct append, `--pinned` only for prod-axioms).
    - **merge** — same topic, complementary → `memoryctl supersede --id <existing>` with the merged
      body (existing + new evidence). ONE entry, richer; not entry #N+1.
@@ -28,7 +28,9 @@ supersede it, or contradict it? That is this skill.
 4. **Smoke retrieval**: `memoryctl search "<how a future agent would ask>"` — the entry must surface
    in top-5. If it doesn't, sharpen the title (short rule-style, ≤500 chars).
 5. Lessons additionally: correct `links.domain` (path must route there — `resolveDomain` semantics),
-   live anchor, promotion to active only via `/curate` / promote-lesson.mjs.
+   live anchor; capture-lesson lands `status=active` at once — new captures need no quarantine or
+   promotion step (decision #12333); legacy inbox lessons are promoted only via `/curate` /
+   promote-lesson.mjs.
 
 ## Hard rules
 - Update-in-place (supersede/merge) beats creating a near-duplicate. Default to merge when overlap is real.

@@ -14,6 +14,7 @@ import type { ContextUsage, Family, PromptOptions, ProviderAdapter, ProviderSess
 import { MCP_SERVERS, type InstrumentKey } from '../shared.entry.ts';
 import { SEAT_MCP_PATH, SEAT_MCP_SERVER } from '../shared.entry.ts';
 import { SKILL_INSTALL_DENY } from '../seat-guard.ts';
+import { quoteShellPath } from '../role-policy.ts';
 
 const STOP: Record<string, StopReason> = {
   end_turn: 'end_turn',
@@ -26,6 +27,13 @@ type WorkerMcp = { file: string; dir: string; names: string[]; operatorNames: st
 
 const OPERATOR_MCP = fileURLToPath(new URL('../../../bootstrap/mcp-servers.operator.json', import.meta.url));
 const WORKER_MCP_KEYS = ['codegraph', 'memory'] as const;
+
+function writeScopeHooks(spec: SessionSpec) {
+  if (spec.env?.ORCH_SEAT_WRITE_SCOPE === undefined) return {};
+  const hook = fileURLToPath(new URL('../write-scope-hook.ts', import.meta.url));
+  const command = [process.execPath, hook, spec.cwd].map((arg) => quoteShellPath(arg)).join(' ');
+  return { hooks: { PreToolUse: [{ matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command, timeout: 10 }] }] } };
+}
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -96,7 +104,7 @@ export function claudeArgs(spec: SessionSpec, session: { id: string; resume: boo
   if (mcp) args.push('--mcp-config', mcp.file, '--strict-mcp-config');
   // Strict MCP config does not exclude plugin MCPs. Clear settings as well as
   // the process env below: either source alone can still load operator mods.
-  args.push('--settings', JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_DIRS: '' } }));
+  args.push('--settings', JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_DIRS: '' }, ...writeScopeHooks(spec) }));
   args.push(session.resume ? '--resume' : '--session-id', session.id);
   return args;
 }
@@ -124,7 +132,26 @@ export function claudeUsage(result: any, costBefore: number | null): { usage: Us
   };
 }
 
-type Turn = { resolve: (result: any) => void; reject: (error: Error) => void; text: string; onEvent?: PromptOptions['onEvent'] };
+type Turn = { resolve: (result: any) => void; reject: (error: Error) => void; text: string; onEvent?: PromptOptions['onEvent']; tools: Map<string, { name: string; at: number }> };
+type ToolResultBlock = { type: string; tool_use_id: string; is_error?: unknown };
+type ToolResultMessage = { type?: string; message?: { content?: ToolResultBlock[] } };
+
+/** A user message's tool_result blocks close the calls their tool_use blocks opened (event-stream.ts
+ *  live frames): the name and start came from the tool_use in this same turn, paired by id. */
+function claudeToolResults(turn: Turn, message: ToolResultMessage | null | undefined): void {
+  if (message?.type !== 'user') return;
+  for (const block of message.message?.content ?? []) {
+    if (block.type !== 'tool_result') continue;
+    claudeToolResult(turn, block);
+  }
+}
+
+/** One tool_result block closes the call its tool_use opened, paired by id. */
+function claudeToolResult(turn: Turn, block: ToolResultBlock): void {
+  const known = turn.tools.get(block.tool_use_id);
+  turn.tools.delete(block.tool_use_id);
+  turn.onEvent?.({ kind: 'tool', name: known?.name ?? 'tool', status: 'ended', id: block.tool_use_id, durationMs: known === undefined ? undefined : Date.now() - known.at, isError: block.is_error === true });
+}
 
 class ClaudeSession implements ProviderSession {
   readonly family: Family;
@@ -215,11 +242,13 @@ class ClaudeSession implements ProviderSession {
         } else if (block.type === 'thinking') {
           turn.onEvent?.({ kind: 'thought', delta: block.thinking ?? '' });
         } else if (block.type === 'tool_use') {
-          turn.onEvent?.({ kind: 'tool', name: block.name, status: 'started', args: block.input });
+          turn.tools.set(block.id, { name: block.name, at: Date.now() });
+          turn.onEvent?.({ kind: 'tool', name: block.name, status: 'started', args: block.input, id: block.id });
         }
       }
       return;
     }
+    claudeToolResults(turn, message);
     if (message.type === 'result') {
       if (this.mcpExpected !== null && !this.mcpVerified) {
         const error = new Error('Claude worker did not confirm its MCP configuration in system/init');
@@ -242,7 +271,7 @@ class ClaudeSession implements ProviderSession {
     if (this.turn) throw new Error('a turn is already running on this session');
     let turn!: Turn;
     const done = new Promise<any>((resolve, reject) => {
-      turn = { resolve, reject, text: '', onEvent: options.onEvent };
+      turn = { resolve, reject, text: '', onEvent: options.onEvent, tools: new Map() };
     });
     this.turn = turn;
     this.child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })}\n`);

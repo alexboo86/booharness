@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "roles": [
+    {
+      "name": "scout",
+      "base": "scout",
+      "description": "read the repo in place and answer ONE question; a scout reports facts only, never a design or a how-to (#17974).",
+      "models": {
+        "opencode": { "model": "glm-5.3-flash", "effort": null },
+        "grok": { "model": "grok-4.7", "effort": "low" },
+        "qwen": { "model": "qwen3.8-flash", "effort": "low" },
+        "mimo": { "model": "mimo-v2.6-flash", "effort": "low" },
+        "codex": { "model": "gpt-6-luna", "effort": "high" },
+        "glm": { "model": "glm-5.3-flash", "effort": "high" }
+      },
+      "turnLimitMinutes": 45,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "researcher",
+      "base": "scout",
+      "description": "read the repo in place and answer ONE question.",
+      "models": {
+        "grok": { "model": "grok-4.7", "effort": "medium" },
+        "codex": { "model": "gpt-6.1-sol", "effort": "medium" },
+        "claude": { "model": "claude-sonnet-5", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "medium" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "low" }
+      },
+      "turnLimitMinutes": 45,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "debater",
+      "base": "debater",
+      "description": "read the repo in place, answer one question, then one rebuttal of the other side's done first turn (`seat_prompt` `rebut`); give the two debaters of a fork ONE title, and orch keeps them on different models.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "medium" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "high" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 45,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "coder",
+      "base": "coder",
+      "description": "own worktree on branch orch/<seat> from `base` (kept after close for you to land).",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "claude": { "model": "claude-opus-5-5", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 90,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "tester",
+      "base": "tester",
+      "description": "own branch worktree, same landing as a coder, outside the coder cap and without coder rechecks.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "claude": { "model": "claude-opus-5-5", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 60,
+      "writeScope": [
+        "**/*.test.*",
+        "**/*.spec.*",
+        "scripts/test-*.mjs",
+        "**/__tests__/**",
+        "**/tests/**",
+        "**/tests.rs",
+        "**/*_tests.rs",
+        "**/test-*.mjs",
+        "**/test-*.py",
+        "**/test_*.py",
+        "**/fixtures/**",
+        "captures/**"
+      ],
+      "images": false
+    },
+    {
+      "name": "designer",
+      "base": "tester",
+      "description": "own branch worktree like a coder that may only write src/**/*.tsx, src/**/*.css and web/apps/**, on this Mac or a host with the Bright Data key, reading images by default.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "claude": { "model": "claude-opus-5-5", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 90,
+      "writeScope": ["src/**/*.tsx", "src/**/*.css", "web/apps/**"],
+      "images": true
+    },
+    {
+      "name": "copywriter",
+      "base": "tester",
+      "description": "own branch worktree that may only write web/apps/** and src/locales/**, on this Mac or a host with the Bright Data key.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "claude": { "model": "claude-opus-5-5", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 60,
+      "writeScope": ["web/apps/**", "src/locales/**"],
+      "images": false
+    },
+    {
+      "name": "motion",
+      "base": "tester",
+      "description": "own branch worktree like a coder that may only write web/apps/landing/public/media/** and web/apps/landing/_drafts/motion/**, on this Mac only (the Higgsfield session and ffmpeg-full exist only here), reading images by default.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "claude": { "model": "claude-opus-5-5", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "medium" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 90,
+      "writeScope": ["web/apps/landing/public/media/**", "web/apps/landing/_drafts/motion/**"],
+      "images": true
+    },
+    {
+      "name": "reviewer",
+      "base": "reviewer",
+      "description": "disposable detached worktree at `base` or a `snapshot`, reviewing the ACCUMULATED diff once per task, at most 2 per task (same title), a recheck is a turn of one of them (a closed reviewer without a valid report does not count, nor one a recheck superseded, whose family stays out).",
+      "models": {
+        "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "high" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 60,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "critic",
+      "base": "scout",
+      "description": "Sealed read-only plan critic on the reviewer model matrix.",
+      "models": {
+        "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "high" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 45,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "legal",
+      "base": "reviewer",
+      "description": "disposable detached worktree with reviewer rights (`base` or `snapshot`, author and coauthors step aside, nothing lands), on this Mac or a host with the Bright Data key.",
+      "models": {
+        "claude": { "model": "claude-sonnet-5-5", "effort": "high" },
+        "codex": { "model": "gpt-6.1-sol", "effort": "high" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "high" },
+        "grok": { "model": "grok-4.7", "effort": "high" },
+        "qwen": { "model": "qwen3.8-max", "effort": "high" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 45,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "bughunter",
+      "base": "bughunter",
+      "description": "hunts reproduced defects in existing code at max effort (kimi: high), disposable worktree.",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "max" },
+        "qwen": { "model": "qwen3.8-max", "effort": "max" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 150,
+      "writeScope": null,
+      "images": false
+    },
+    {
+      "name": "security",
+      "base": "reviewer",
+      "description": "disposable detached worktree with reviewer rights, max effort where the route supports it (kimi, mimo: high).",
+      "models": {
+        "codex": { "model": "gpt-6.1-sol", "effort": "max" },
+        "kimi": { "model": "k3.1-pro", "effort": "high" },
+        "glm": { "model": "glm-5.3", "effort": "max" },
+        "qwen": { "model": "qwen3.8-max", "effort": "max" },
+        "mimo": { "model": "mimo-v2.6-pro", "effort": "high" }
+      },
+      "turnLimitMinutes": 60,
+      "writeScope": null,
+      "images": false
+    }
+  ]
+}

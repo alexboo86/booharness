@@ -5,7 +5,6 @@
   "license": "MIT",
   "files": {
     ".gitignore": "5f553b5e4cb6d72067e49d198a0bccc3b9948520253eee50354f6c3f26f4109d",
-    "package-lock.json": "74dda2a071053f93acaab82e528f8f8773b9798ffb26f42554bc6ab069668ba5",
     "package.json": "9d78aabe525bce3ee6b49e0dc6b7b1fb25b666d8b175dadc07957ac8e3bb4cb3",
     "tsconfig.json": "7398fb6baadc6b51e19e5f5db581d1e8aa9a76dcd29d3995cf050b818b462c96",
     "vitest.config.ts": "54b7edda5e3d94145ed60508173c2419c21774d408cdf8a3bb4536eb8811fcd7",

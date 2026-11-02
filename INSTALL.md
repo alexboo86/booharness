@@ -21,20 +21,22 @@ and permissions for the chosen checkout/home; it has no desktop-only install
 switch. It does not install the desktop app. Codex lead configs are also generated,
 but Claude Code mods are not Codex extensions.
 
-The rich orch-board pane is a desktop surface; its terminal surface renders a
-text summary instead. A headless session with no attached surface gets no pane,
-and collision-guard cannot ask there, so it lets an edit proceed. See 7.2.1;
+The lead-wake mod wakes an idle lead on orch chat posts without a pane or surface.
+A headless session has no collision-guard question, so an edit proceeds. See 7.2.1;
 do not treat successful settings registration as proof of a loaded mod.
 
 Paste:
 
 ```text
-Clone https://github.com/alexboo86/booharness.git into ~/Developer/harness if it is absent. Read INSTALL.md there in full and install BooHarness by its instructions.
+On macOS, before any git command, run xcode-select -p. If it fails, run xcode-select --install and stop: tell me to rerun this prompt after Command Line Tools installation finishes. Clone https://github.com/alexboo86/booharness.git into ~/Developer/harness if it is absent. Read INSTALL.md there in full and install BooHarness by its instructions.
 ```
 
 First agent step on macOS, before any Git command: run `xcode-select -p`.
-If it fails, run `xcode-select --install`. The dialog is the user's to confirm;
-wait for "done", then verify the selected Git binary:
+If it fails, run `xcode-select --install` and stop: tell the user to rerun the
+prompt after Command Line Tools installation finishes, even if the install
+request exits non-zero (for example, an installation is already in progress).
+The dialog is the user's to confirm; on the rerun, wait for "done", then verify
+the selected Git binary:
 
 ```bash
 git_bin="$(xcrun --find git)" && "$git_bin" --version
@@ -49,6 +51,11 @@ If `~/Developer/harness` is absent, run:
 POSIX:
 
 ```bash
+if [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1; then
+  printf '%s\n' 'Rerun this prompt after Command Line Tools installation finishes.' >&2
+  xcode-select --install
+  exit 1
+fi
 mkdir -p ~/Developer
 git clone 'https://github.com/alexboo86/booharness.git' ~/Developer/harness
 ```
@@ -117,7 +124,7 @@ rehearsal is incomplete (4.2); Linux is accepted for remote seat hosts, not by t
 | **Tools** | `rtk` 1.0.1 (shell output compressor), `codegraph` 1.6.2 (code graph + MCP), `ast-grep`, `rg` | `~/.local/bin`, npm global |
 | **Hooks, MCP, permissions, instructions** | written into each runtime's home by one installer | `~/.claude`, `~/.codex`, `~/.kimi-code`, `~/.grok`, `~/.pi/agent`; PATH block in `~/.zshenv` on POSIX, user PATH on Windows |
 | **Skills** | methods as `SKILL.md` files: a default lead set (18) and per-role sets for seats | `HARNESS/.agents/skills`, linked into `HARNESS/.claude/skills` and `~/.codex/skills` |
-| **Claude Code mods** | orch-board, handover, collision-guard, delay-no-more, secrets-veil | five checkout folders registered by `permissions` (7.2.1) |
+| **Claude Code mods** | lead-wake, handover, collision-guard, delay-no-more, secrets-veil | five checkout folders registered by `permissions` (7.2.1) |
 | **Doctor and routines** | read-only diagnostic CLI; five optional recurring-task definitions | `npm run doctor`; `ops/routines/`, activated only through the lead's scheduler (9.6) |
 
 The kit ships `orch.lanPort: "off"`. The orch API and local memory service bind to
@@ -974,7 +981,7 @@ per-session dev-mods folder: that loads them twice and asks about hot reloading.
 | `collision-guard` | asks before Edit/Write/NotebookEdit touches a file another open chat recently changed | Collision question with Proceed/Cancel and, for tracked files, Move to a worktree; `/guard` or `/collision-guard` status. No attached surface means no question and the edit proceeds; not an OS lock. |
 | `delay-no-more` | places named tools into or out of deferred ToolSearch | a `tool.describe` hook, no pane/band/toast; tool availability changes only with configured `eager`/`defer` patterns. All default patterns are empty: registration alone changes nothing. |
 | `handover` | queues a successor prompt, optionally after `/clear` | `mcp__handover__run`, a queued tool result and log messages, not a pane; requires the Claude mod tool/command/prompt APIs. |
-| `orch-board` | shows orch seats, leads, quotas and chat | desktop pane with header band and cards/forms; terminal pane has a text summary, not the rich cards. With no attached surface, opening waits for an attach. Requires the local orch API. |
+| `lead-wake` | wakes an idle lead on released orch chat posts | submits the chat batch as a prompt, without a pane or surface. Requires the local orch API and a live session binding. |
 | `secrets-veil` | masks secret values in tool results, withholding a result when masking fails | masked output, best-effort toast and status line; optional clipboard offer only when explicitly enabled. A missing UI surface does not disable masking; not a guarantee that every possible secret is recognized. |
 
 These are Claude Code mods, not Pi or Codex extensions. Their hooks do not
@@ -982,19 +989,19 @@ exclude either macOS or Windows, but runtime API/surface availability still
 matters. The installer registers every mod on both platforms; this is not proof
 of successful loading on either. Windows mod loading is **not measured**.
 
-The shipped orch service and this pane use the fixed loopback port **7760**
+The shipped orch service and the lead-wake mod use the fixed loopback port **7760**
 (`http://127.0.0.1:7760`). `ORCH_PORT` is a test-daemon override, not a kit setting;
-`orch.lanPort` controls a separate LAN listener, not the pane's API.
+`orch.lanPort` controls a separate LAN listener, not the API lead-wake calls.
 **Verify:** inspect the five absolute folders (and any folders you already listed):
 
 ```bash
 node -e 'const fs=require("fs"),os=require("os"),p=require("path");const s=JSON.parse(fs.readFileSync(p.join(os.homedir(),".claude/settings.json"),"utf8"));console.log(s.env.CLAUDE_CODE_PLUGIN_DIRS.split(p.delimiter).join("\n"))'
 ```
 
-Quit and reopen the Claude Code desktop app, then run `/orch-board` if the pane
-has not already opened. With `curl -s http://127.0.0.1:7760/health` answering,
-the desktop pane must show live orch data (the terminal CLI shows a summary);
-ask the session to list its tools and confirm `mcp__handover__run` is available.
+Quit and reopen Claude Code. With `curl -s http://127.0.0.1:7760/health` answering
+and the lead joined to orch chat, send it a wake post from another lead and confirm
+that the idle session receives the batch as a prompt. Ask the session to list its
+tools and confirm `mcp__handover__run` is available.
 Settings alone do not prove the mods loaded.
 
 ### 7.3 Pi: MCP adapter, settings, sign-ins, codex-edit
@@ -1189,14 +1196,14 @@ What a seat receives when it works on a project:
 
 ### 9.2 First delegation, from a lead session
 
-The lead loads the `orch-team` skill and uses the orch MCP tools. Minimal round:
+The lead loads the `orch` skill and uses the orch MCP tools. Minimal round:
 
 1. `seat_create { role: "scout", title: "map the auth flow", repo: "<project>" }` (no `family`: orch picks by pace).
 2. `seat_prompt { seat, text: "<one question, at most 300 words>", files: ["src/auth.ts"] }` returns a turn id and a `wait` command.
 3. Run that `node .../main.ts wait <turn>` as a background shell job; its exit prints the digest.
 4. For edits: role `coder`, then `review_plan { seat }`, one `reviewer` seat per its answer, `seat_land { seat }` to apply the change to the lead checkout (never commits), then the lead commits explicit paths with `npm run check:commit` and the user's approval. That check runs the commit-safety check and the gates those paths select; it does not run the orchestrator tests, the kit build or the knowledge-history judgement. A reviewer runs a test only to prove a finding of its own.
 When several machines can run a seat, the machine that runs orch is ranked after a reserve of 6 cores and 12 GB of free memory, floored at zero (`ops/orchestrator/src/placement.ts`); a tie goes to a host. `seat_create` with `needs` set to `mac` requires `needs_reason` of at most 300 characters (`ops/orchestrator/src/http.ts`), unless the seat is Claude, a native harness, a stand arm, or a task file is a configured Mac-only path.
-Full rules: `.agents/skills/orch-team/SKILL.md` and `ops/orchestrator/README.md`.
+Full rules: `.agents/skills/orch/SKILL.md` and `ops/orchestrator/README.md`.
 
 
 ### 9.3 Adapt these to the user's project (do it with the user, after the install works)
@@ -1210,7 +1217,7 @@ name that product's commands. They do not break the install, they mislead a seat
   orch refuses to start Pi seats when one is missing. Restart is not needed: it is read per seat.
 - Skills that are inlined into every coder or lead turn and name donor commands
   (`tsconfig.app.json`, `npx vitest run`, `cargo check -p`, `npm run check:*`): `verify-change`
-  (coder default), `land-worktree`, `next`, `orch-team`, `edit-contract-mirror`,
+  (coder default), `land-worktree`, `next`, `orch`, `edit-contract-mirror`,
   `visual-critique`, `desktop-interaction-review`. Replace those commands with the project's,
   keep the method.
 - Environment and memory pages describe the portable local layout. Donor NAS deployment,

@@ -74,34 +74,8 @@ export function openVikingEnv(dir) {
 /** Install the arm: pinned Python 3.12 venv (the serena pattern), the
  *  sha256-verified wheel, arm-local ov.conf and ov CLI config, and the
  *  digest-pinned Ollama chat model beside the verified embedding model. */
-export async function installOpenViking(dir) {
-  const requirements = fileURLToPath(new URL('./openviking.requirements.txt', import.meta.url));
-  const topLevel = readFileSync(requirements, 'utf8').split(/\r?\n/).filter((line) => line.startsWith(`${OPENVIKING_PINS.package}==`));
-  if (topLevel.length !== 1 || topLevel[0].split(/\s/)[0] !== OPENVIKING_PACKAGE) throw new Error(`openviking: ${requirements} must pin ${OPENVIKING_PACKAGE}`);
-  const venv = path.join(dir, 'venv');
-  const run = (command, args, timeout = 15 * 60_000) => {
-    console.log(`stand install: ${command} ${args.join(' ')}`);
-    execFileSync(command, args, { cwd: dir, env: { ...process.env, ...uvEnv }, stdio: 'inherit', timeout });
-  };
-  if (!existsSync(path.join(standRoot, 'python', 'cpython-3.12-macos-aarch64-none', 'bin', 'python3.12'))) run('uv', ['python', 'install', '3.12']);
-  if (!existsSync(path.join(venv, 'bin', 'python'))) run('uv', ['venv', '--python', '3.12', venv]);
-  await verifiedWheel(path.join(dir, 'cache'), (line) => console.log(`stand install: ${line}`));
-  run('uv', ['pip', 'install', '--python', path.join(venv, 'bin', 'python'), '--require-hashes', '--no-deps', '-r', requirements]);
-  const metadata = path.join(venv, 'lib', 'python3.12', 'site-packages', `${OPENVIKING_PINS.package}-${OPENVIKING_PINS.version}.dist-info`, 'METADATA');
-  if (!existsSync(metadata) || !readFileSync(metadata, 'utf8').includes(`Version: ${OPENVIKING_PINS.version}\n`)) throw new Error(`openviking: ${OPENVIKING_PACKAGE} missing after uv install`);
-  for (const binary of ['openviking-server', 'ov']) if (!existsSync(path.join(venv, 'bin', binary))) throw new Error(`openviking: ${binary} missing after uv install`);
-  mkdirSync(path.join(dir, 'openviking'), { recursive: true, mode: 0o700 });
-  writeFileSync(path.join(dir, 'openviking', 'ov.conf'), `${JSON.stringify(openVikingConfig(dir), null, 2)}\n`, { mode: 0o600 });
-  mkdirSync(path.join(dir, 'home', '.openviking'), { recursive: true, mode: 0o700 });
-  writeFileSync(path.join(dir, 'home', '.openviking', 'ovcli.conf'), `${JSON.stringify({ url: OPENVIKING_URL }, null, 2)}\n`, { mode: 0o600 });
-  // ov refuses every command until a display language is chosen (it writes ovcli.settings.conf beside ovcli.conf).
-  execFileSync(path.join(venv, 'bin', 'ov'), ['language', 'en'], { cwd: dir, env: { ...process.env, ...openVikingEnv(dir) }, stdio: 'inherit', timeout: 60_000 });
-  // Models are served only by the stand's own Ollama: embeddings reuse the
-  // verified nomic-embed-text:v1.5; the chat model is pulled once and pinned.
-  await installOllama();
-  if (!existsSync(OPENVIKING_CHAT_MODEL_MANIFEST)) await withOllama(({ bin, env }) => { execFileSync(bin, ['pull', OPENVIKING_CHAT_MODEL], { env, stdio: 'inherit', timeout: 15 * 60_000 }); });
-  if (!existsSync(OPENVIKING_CHAT_MODEL_MANIFEST) || sha256(OPENVIKING_CHAT_MODEL_MANIFEST) !== OPENVIKING_CHAT_MODEL_SHA) throw new Error(`stand Ollama model ${OPENVIKING_CHAT_MODEL} manifest differs from pinned digest`);
-  console.log(`openviking: ${OPENVIKING_PACKAGE} in ${venv}; MCP ${OPENVIKING_MCP_URL}; models ${OPENVIKING_PINS.embeddingModel} + ${OPENVIKING_CHAT_MODEL}`);
+export async function installOpenViking() {
+  throw new Error('This experimental Python arm is not installable from the public kit; use the source repository.');
 }
 
 /** Start the stand Ollama and the arm-local openviking server for exactly the

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import type { Store } from './store.ts';
+import { turnRepeatLessons, type Store } from './store.ts';
 import { parseReport, type ReportRole } from './report.ts';
 import { reviewRights } from './seats-defs.ts';
 import { tableContractOf } from './seats-scope.ts';
@@ -96,7 +96,7 @@ export function lessonApplications(store: Store, turnId: string, proposals: Memo
     if (proposal.op !== 'append' || proposal.kind !== 'lesson') return [];
     const row = byIndex.get(index);
     let outcome: string;
-    if (!row) outcome = 'proposed (lead capture: node scripts/memory/capture-lesson.mjs)';
+    if (!row) outcome = 'proposed (lead capture: node scripts/memory/capture-lesson.mjs <domain> "<title>" --anchor <file:symbol> --trigger "<when>" --rule "<rule>" --why "<root cause>" --evidence "<commit/test>")';
     else if (row.state === 'applied') {
       const saved = JSON.parse(row.output) as ApplyResult;
       outcome = saved.id === undefined ? 'applied (id not recorded; check memory)' : `applied #${saved.id}`;
@@ -105,7 +105,7 @@ export function lessonApplications(store: Store, turnId: string, proposals: Memo
       outcome = `deferred: awaiting commit of ${(JSON.parse(row.output) as ApplyResult).deferred?.file} (legacy proposal; lead capture required)`;
     } else if (row.state === 'refused') {
       const saved = JSON.parse(row.output) as ApplyResult;
-      outcome = saved.repairTurn ? `refused (brevity) — repair queued ${saved.repairTurn}` : `refused: ${refusalReasons(saved.text)[0]} · rewrite with node scripts/memory/capture-lesson.mjs`;
+      outcome = saved.repairTurn ? `refused (brevity) — repair queued ${saved.repairTurn}` : `refused: ${refusalReasons(saved.text)[0]} · rewrite with node scripts/memory/capture-lesson.mjs <domain> "<title>" --anchor <file:symbol> --trigger "<when>" --rule "<rule>" --why "<root cause>" --evidence "<commit/test>"`;
     } else if (row.state === 'retryable' || row.state === 'gate') outcome = 'retryable (lead action required)';
     else outcome = 'uncertain (check memory before re-applying)';
     return [{ index, title: proposal.title, outcome }];
@@ -150,6 +150,18 @@ async function liveLesson(id: number, client: typeof memoryctl = memoryctl): Pro
 // One field per line: a proposal's free text must not create a second lesson header.
 function field(text: string): string { return text.trim().replace(/\r?\n/g, '\n  '); }
 
+/** The write gate reads a lesson's trigger from the body line, but the report contract carries a
+ * proposal's trigger in links.trigger as well and seats regularly author only links.trigger (64 of
+ * 100 refusals in the week to 2026-11-01, critic-claude-889d21). Materialize the missing line from
+ * links.trigger before gating: the stored body keeps the one shape every body parser reads, the
+ * trigger ceiling is still enforced, and a trigger absent everywhere still refuses. */
+function lessonAppendBody(proposal: MemoryProposal): string {
+  if (proposal.kind !== 'lesson' || proposal.op !== 'append') return proposal.body;
+  const trigger = proposal.links?.trigger;
+  if (typeof trigger !== 'string' || trigger.trim() === '' || /^-\s+trigger:/m.test(proposal.body)) return proposal.body;
+  return `- trigger: ${field(trigger)}\n${proposal.body}`;
+}
+
 const inFlight = new WeakMap<Store, Map<string, Promise<void>>>();
 
 export async function applyMemory(store: Store, turnId: string, pick?: number[], confirm = false, gate: typeof gateNewLesson = runLessonGate, client: typeof memoryctl = memoryctl): Promise<{ turn: string; results: ApplyResult[] } | { turn: string; preview: Preview[] }> {
@@ -158,7 +170,7 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
   const seat = store.getSeat(turn.seat_id);
   if (!seat) throw new Error(`no seat for turn '${turnId}'`);
   const lessons = store.lessonDeliveries(turnId).filter((row) => row.mode === 'full').map((row) => row.lesson_id);
-  const parsed = parseReport(turn.text, seat.role as ReportRole, lessons, { stored: true, table: tableContractOf(seat) });
+  const parsed = parseReport(turn.text, seat.role as ReportRole, lessons, { stored: true, table: tableContractOf(seat), repeatLessons: turnRepeatLessons(turn) });
   if (parsed.ok === false) throw new Error(`turn '${turnId}' has no valid report: ${parsed.error}`);
   const proposals = (parsed.report.memory ?? []) as MemoryProposal[];
   if (!proposals.length) throw new Error(`turn '${turnId}' has no memory proposals`);
@@ -250,16 +262,17 @@ export async function applyMemory(store: Store, turnId: string, pick?: number[],
       let result: ApplyResult;
       let writeStarted = false;
       try {
+        const gatedBody = lessonAppendBody(proposal);
         const links = lesson ? { ...lesson.links, ...(proposal.links?.trigger === undefined ? {} : { trigger: proposal.links.trigger }),
           status: proposal.op === 'retire' ? 'retired' : lesson.links.status ?? 'active' }
           : proposal.kind === 'lesson' && proposal.op === 'append'
-            ? await gate({ title: proposal.title, body: proposal.body, links: proposal.links }) : proposal.links;
+            ? await gate({ title: proposal.title, body: gatedBody, links: proposal.links }) : proposal.links;
         const substitution = proposal.op === 'append' && proposal.kind === 'lesson' && links?.domain !== proposal.links?.domain
           ? `domain ${proposal.links?.domain} -> ${links?.domain}: routed for ${String(proposal.links?.anchor).split(':')[0]}` : undefined;
         const title = proposal.op === 'retire' ? `RETIRED: ${lesson!.title}` : proposal.title;
         const body = proposal.op === 'retire'
           ? `${oldTrigger === undefined ? '' : `- trigger: ${field(oldTrigger)}\n`}- rule: Retired; do not apply\n- why: ${field(proposal.reason)}\n- evidence: ${field(oldEvidence || proposal.body)}\n`
-          : proposal.body;
+          : gatedBody;
         const directory = await mkdtemp(path.join(os.tmpdir(), 'orch-memory-'));
         try {
           const args = [proposal.op === 'retire' ? 'supersede' : proposal.op,
@@ -310,6 +323,31 @@ function gateOutage(text: string): boolean {
   return /lesson refused: (?:Jev unavailable|cannot compare active lessons)/i.test(text);
 }
 
+/** Full author/coauthor deliveries only; an unauthored or non-review seat has no repeat list. */
+export function authorLessonIds(store: Store, seat: ReturnType<Store['getSeat']>, before: string): string[] {
+  if (!seat || !reviewRights(seat.role) || typeof seat.data.author !== 'string' || !seat.data.author) return [];
+  const authors = [seat.data.author, ...(Array.isArray(seat.data.coauthors) ? seat.data.coauthors.filter((id): id is string => typeof id === 'string') : [])];
+  return (store.db.prepare(`SELECT DISTINCT lesson_id FROM lesson_deliveries
+    WHERE mode = 'full' AND delivered_at <= ? AND seat_id IN (${authors.map(() => '?').join(',')}) ORDER BY lesson_id`)
+    .all(before, ...authors) as { lesson_id: string }[]).map((row) => row.lesson_id);
+}
+
+/** Called only after settlement, through the same recorder as manual duplicate confirmations. */
+export async function recordFindingRepeats(store: Store, turnId: string, report: Record<string, unknown>): Promise<string[]> {
+  const flags: string[] = [];
+  for (const [index, finding] of (report.findings as { repeats?: string }[]).entries()) {
+    if (!finding.repeats) continue;
+    try {
+      const result = await recordLessonRepeat(store, turnId, index, finding.repeats);
+      if (!result.recorded) flags.push(`lesson repeat[${index}] #${finding.repeats}: not recorded (no full author delivery)`);
+      else if (result.task?.state !== 'created') flags.push(`lesson repeat[${index}] #${finding.repeats}: recorded; task ${result.task?.state ?? 'unavailable'}`);
+    } catch (error) {
+      flags.push(`lesson repeat[${index}] #${finding.repeats}: ${(error as Error).message}`);
+    }
+  }
+  return flags;
+}
+
 /** The daemon owns repeat writes; a confirmed duplicate uses the same path as legacy refusals. */
 export async function recordLessonRepeat(store: Store, turnId: string, index: number, lessonId: string, client: typeof memoryctl = memoryctl): Promise<{ recorded: boolean; task: { state: string; id: number | null } | null }> {
     const turn = store.getTurn(turnId);
@@ -321,9 +359,7 @@ export async function recordLessonRepeat(store: Store, turnId: string, index: nu
         AND (d.seat_id = ? OR (s.title = ? AND COALESCE(json_extract(s.data, '$.main'), '') = ?)) LIMIT 1`)
       .get(lessonId, turnId, turn.ended_at, seat.id, seat.title, String(seat.data.main ?? '')) as unknown;
     const author = reviewRights(seat.role) && typeof seat.data.author === 'string' && seat.data.author ? seat.data.author : null;
-    const authorDelivery = !earlier && author && store.db.prepare(`SELECT 1 FROM lesson_deliveries
-      WHERE lesson_id = ? AND seat_id = ? AND mode = 'full' AND delivered_at <= ? LIMIT 1`)
-      .get(lessonId, author, turn.ended_at);
+    const authorDelivery = !earlier && author && authorLessonIds(store, seat, turn.ended_at).includes(lessonId);
     if (!earlier && !authorDelivery) return { recorded: false, task: null };
     store.db.prepare('INSERT OR IGNORE INTO lesson_repeats(turn_id, idx, lesson_id, seat_id) VALUES (?, ?, ?, ?)')
       .run(turnId, index, lessonId, seat.id);

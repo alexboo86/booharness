@@ -40,8 +40,11 @@ proof; `--no-suite` logs a reason, restart cancel and SIGTERM are ungated
 On success, check:commit stamps `<git-common-dir>/check-pass/<commitTree>-<workTree>`.
 CommitTree is HEAD plus named paths in a temporary index, or merge index; workTree is
 the whole tree. Equal hashes allow cached pass; stamps expire after 7 days, unborn HEAD
-gets none. Pre-commit requires a stamp for its index tree; git errors refuse and
-`SKIP_GIT_GUARD=1` escapes (`.githooks/pre-commit`, `scripts/check-commit.mjs` (not in this kit)).
+gets none. The stamp also records the checked paths' mode:oid map and HEAD (task 3447):
+pre-commit admits the exact index tree, or an index whose every changed path matches a
+same-work stamp's map, recorded on the parent or on an ancestor whose diff touches no
+stamped path. Names that are not valid UTF-8 make the map unreadable and refuse. Git errors
+refuse and `SKIP_GIT_GUARD=1` escapes (`.githooks/pre-commit`, `scripts/check-commit.mjs` (not in this kit)).
 Post-commit checks even after no-verify: missing proof appends check-pass-misses.jsonl
 and posts fail-open to `/commit-miss` (1000 ms), unless skipped. Sequencer/rebase/cherry-
 pick/revert state and old-writer branches skip reporting; clean revert/merge-continue
@@ -66,14 +69,17 @@ listed occurrences warn, excess fails, surplus warns to trim.
 `scripts/check-knowledge-history.mjs` (not in this kit), run by hand outside check:commit, compares
 frozen-tree page-line identity across all parents, replacing citations with
 placeholders but judging backtick changes. Jev scores
-new prose for narrated history/progress; >= 0.6 fails, unanswered batches skip and count.
+new prose for narrated history/progress; scores at or above the project setting
+`jev.historyGatePercent` (default 60 percent) fail, unanswered batches skip and count.
+Only operators may change that gate threshold; it does not enable a check:commit guard.
 `lineIdentity`, shared with size checking, takes maximum parent multiplicity, not sum;
 numeric-anchor cleanup grants no replacement credit. Semantic fact-check is separate
 (`.agents/domains/_domain-routing.schema.md`). Gate entry guards compare realpaths
 through `scripts/lib/is-main.mjs`; hook topology tests probe symlinked invocation.
 
 The large-file ratchet covers tracked sources including shebang files, threshold 1500
-lines: new/grown large files fail, improved/stale entries are notices. Check:commit
+lines, except VENDOR.json-pinned files whose bytes match the pin (index bytes in staged
+mode; task 3484): new/grown large files fail, improved/stale entries are notices. Check:commit
 uses named paths, pre-commit staged mode includes typechanges. New/raised baseline
 entries require justification; removing a still-large entry fails
 (`scripts/check-large-file-ratchet.mjs` (not in this kit), `scripts/large-file-ratchet.mjs` (not in this kit)). Cyrillic

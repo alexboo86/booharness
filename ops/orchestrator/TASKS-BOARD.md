@@ -140,7 +140,7 @@ loopback Host/Origin check the chat routes use, with the header
 | `/api/tasks/update` | `{id, title?, next?, priority?, track?, domain?, status?: 'open'\|'blocked'\|'deferred', blocked_reason?}` | `blocked` needs `blocked_reason` |
 | `/api/tasks/cancel` | `{id, reason}` | reason required; the board's "delete" |
 | `/api/tasks/done` | `{id, evidence}` | evidence required |
-| `/api/tasks/assign` | `{id, handle}` | claims the task for `handle`, then posts to that handle in the lead chat as the operator with wake; the post is the operator's order to start the task now (a busy lead takes it next or runs it in parallel through seats) and names the two commands whole, `memoryctl task update --id <id> --next "<step>"` and `memoryctl task show --id <id>` (decision #15281; the lead rule is in orch-team, "The lead chat"); `409` when the handle has no live binding |
+| `/api/tasks/assign` | `{id, handle}` | claims the task for `handle`, then posts to that handle in the lead chat as the operator with wake; the post is the operator's order to start the task now (a busy lead takes it next or runs it in parallel through seats) and names the two commands whole, `memoryctl task update --id <id> --next "<step>"` and `memoryctl task show --id <id>` (decision #15281; the lead rule is in the skill orch, "The lead chat"); `409` when the handle has no live binding |
 | `/api/tasks/release` | `{id}` | releases the claim |
 
 ## Agent

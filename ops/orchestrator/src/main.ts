@@ -37,13 +37,20 @@ import { fileURLToPath } from 'node:url';
 import { codeHash } from '../code-hash.mjs';
 import { suitePassRefusal } from '../suite-pass.mjs';
 import type { AddressInfo } from 'node:net';
-import { addHost, checkHosts, loadConfig, readHost, readHosts, refuseExistingHost, removeHost, type RemoteHost } from './config.ts';
+import os from 'node:os';
+import { addHost, checkHosts, hostTransport, loadConfig, readHost, readHosts, refuseExistingHost, removeHost, setHostTransport, type RemoteHost } from './config.ts';
+import { agentCredentialStatus, agentLinkStatePath, revokeStoredCredential } from './agent-pairing.ts';
+import { revokeAgentLink, setAgentLinkStatus } from './providers/spawn.ts';
 import { describeRoles, resetRole, setRole, unsetRole, writeRolesMatrix } from './profiles.ts';
-import { buildMatrix, knownModel, teamPresets, type PresetTier } from './team-presets.ts';
+import { buildMatrix, knownModel, presetLoginWarnings, singleProviderPreset, teamPresets, type Preset, type PresetTier } from './team-presets.ts';
+import { readInstallSetting } from './settings/index.ts';
 import { probeHost } from './placement.ts';
 import { daemonCheckout, syncHostRuntime } from './remote-repo.ts';
+import { ensurePinnedEdits } from './remote-provision.ts';
 import { checkOn } from './check-on.ts';
+import { diskCleanup } from './disk-cleanup.ts';
 import { createHttpServer, createLanBoardServer } from './http.ts';
+import { createHostsService, type HostsService } from './http-hosts.ts';
 import { formatDigest, formatWaitError } from './digest-text.ts';
 import type { Digest } from './seats.ts';
 import { landable } from './seats-defs.ts';
@@ -52,7 +59,7 @@ import { Limits, providerError } from './limits.ts';
 import { FAMILIES, type Family } from './providers/types.ts';
 import { changePaused, formatPause, readPauseRecords } from './paused-families.ts';
 import { LANGUAGE_MODES, languageFile, readLanguageMode, writeLanguageMode, type LanguageMode } from './shared.entry.ts';
-import { createLogger } from './log.ts';
+import { createLogger, type Logger } from './log.ts';
 import { startConfigHealth } from './config-health.ts';
 import { startLoopDelay } from './shared.entry.ts';
 import { SeatManager } from './seats.ts';
@@ -94,6 +101,12 @@ function readServeLanPort(argv: string[]): number {
   return parseLanPort(fromFlag ?? process.env.ORCH_LAN_PORT ?? '7761');
 }
 
+/** S6a demand start (task 3459): the host-agent listener binds only while a host uses the agent transport. */
+async function startHostsOnDemand(hosts: HostsService, log: Logger): Promise<void> {
+  if (!hosts.hasAgentTransportHosts()) return;
+  await hosts.ensureStarted().catch((error) => log('warn', 'daemon.agent_listener_failed', { message: (error as Error).message }));
+}
+
 async function serve(lanPort: number): Promise<void> {
   // Task 3105: before anything else, pin outbound fetch to HTTP/1.1. A wedged
   // native h2 send loop ignores the AbortController; no later code may fetch h2.
@@ -130,7 +143,7 @@ async function serve(lanPort: number): Promise<void> {
   const resumeDrain = store.draining();
   const recovered = store.interruptOrphans();
   if (recovered.turns || recovered.seats) log('warn', 'daemon.recovered', recovered);
-  const limits = new Limits(config.usage ? { lastGoodFile: config.lastGoodFile, doneUsage: store.doneUsage } : { off: 'usage reading is off (ORCH_USAGE=off)' });
+  const limits = new Limits(config.usage ? { lastGoodFile: config.lastGoodFile, doneUsage: store.doneUsage, reauth: true } : { off: 'usage reading is off (ORCH_USAGE=off)' });
   limits.refresh();
   // A turn that failed on its quota is the only load signal some plans give (qwen, memory #10496).
   let exitDrain = (): void => {};
@@ -161,11 +174,13 @@ async function serve(lanPort: number): Promise<void> {
   // checkout (its hosts.json repo): move each to the commit resolved above.
   // A refusal (uncommitted tracked changes) or failure is logged and surfaced in
   // orch_status; it never blocks startup or unrelated local seats (task 1784).
+  // The sync also re-ensures each host's pinned edit extensions (task 3545); their
+  // failure logs and surfaces in the host's runtime state the same way, never thrown.
   if (daemonRuntime) {
     const { repo, sha } = daemonRuntime;
     void Promise.all(Object.keys(readHosts(config.stateDir)).map(async (name) => {
       try {
-        const result = await syncHostRuntime(name, repo, { sha, log });
+        const result = await syncHostRuntime(name, repo, { sha, log, ensurePinnedEdits });
         if (result.moved) log('info', 'daemon.host_runtime_moved', { host: name, from: result.from, to: result.to });
       } catch (error) {
         log('warn', 'daemon.host_runtime_refused', { host: name, message: (error as Error).message });
@@ -231,7 +246,12 @@ async function serve(lanPort: number): Promise<void> {
   sweep.unref();
   const startedAt = Date.now();
   let port = config.port;
-  const runtime = { store, seats, log, loop, startedAt, stateDir: config.stateDir, port: () => port, code, limits, configHealth };
+  // Add machine (task 3459 R10 S6a): one host-agent listener per daemon, off
+  // until a host uses the agent transport (started here) or a pairing window
+  // opens (started by the hosts route); it closes in stop and stopDrain.
+  const hosts = createHostsService({ stateDir: config.stateDir, boardPorts: () => [port, lanPort], daemonCommit: code, log });
+  await startHostsOnDemand(hosts, log);
+  const runtime = { store, seats, log, loop, startedAt, stateDir: config.stateDir, port: () => port, code, limits, configHealth, hosts };
   const server = createHttpServer(runtime);
   const lanServer = lanPort === 0 ? null : createLanBoardServer(runtime);
   lanServer?.on('error', (error: NodeJS.ErrnoException) => {
@@ -290,7 +310,13 @@ async function serve(lanPort: number): Promise<void> {
       lanServer.close();
       lanServer.closeAllConnections();
     }
-    await Promise.race([seats.shutdown(), new Promise((resolve) => setTimeout(resolve, 8000))]);
+    await Promise.race([
+      Promise.all([
+        seats.shutdown(),
+        hosts.stop({ deadline: Date.now() + 8000 }).catch((error) => log('warn', 'daemon.agent_listener_failed', { message: (error as Error).message })),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
     store.appendEvent('daemon.stopped', { pid: process.pid, signal: 'drain' });
     store.close();
     releaseLock(config.pidFile);
@@ -309,7 +335,13 @@ async function serve(lanPort: number): Promise<void> {
       lanServer.closeAllConnections();
     }
     // Longer than an adapter's own 5 s kill timer, so no provider outlives the daemon.
-    await Promise.race([seats.shutdown(), new Promise((resolve) => setTimeout(resolve, 8000))]);
+    await Promise.race([
+      Promise.all([
+        seats.shutdown(),
+        hosts.stop({ deadline: Date.now() + 8000 }).catch((error) => log('warn', 'daemon.agent_listener_failed', { message: (error as Error).message })),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
     // Turns still running when the providers were closed did not finish: say so.
     store.interruptOrphans();
     store.appendEvent('daemon.stopped', { pid: process.pid, signal });
@@ -754,13 +786,43 @@ else if (command === 'language') {
 }
 else if (command === 'hosts') {
   const args = process.argv.slice(3);
-  const HOSTS_USAGE = 'usage: node ops/orchestrator/src/main.ts hosts list|hosts add <name> --ssh <alias> --platform <p> --repo <path> --node <path> [--native <json>] [--replace]|hosts remove <name>|hosts probe <name> (hosts add also takes --no-probe: write with no probe)';
+  const HOSTS_USAGE = 'usage: node ops/orchestrator/src/main.ts hosts list|hosts add <name> --ssh <alias> --platform <p> --repo <path> --node <path> [--native <json>] [--replace]|hosts remove <name>|hosts transport <name> [<ssh|agent>]|hosts revoke <name>|hosts probe <name> (hosts add also takes --no-probe: write with no probe)';
   // add and remove print the registry as written; the writer stays the one validator of entries.
   const printHosts = (hosts: Record<string, RemoteHost>) => process.stdout.write(`${JSON.stringify(hosts)}\n`);
   try {
     if (args[0] === 'list' && args.length === 1) printHosts(readHosts(loadConfig().stateDir));
     else if (args[0] === 'remove' && args.length === 2) printHosts(removeHost(args[1]!, loadConfig().stateDir));
+    else if (args[0] === 'transport' && (args.length === 2 || args.length === 3)) {
+      const name = args[1]!;
+      const stateDir = loadConfig().stateDir;
+      const wanted = args[2];
+      if (wanted === undefined) {
+        const entry = readHost(name, stateDir);
+        process.stdout.write(`${JSON.stringify({ host: name, transport: hostTransport(entry), ...(entry.agent === undefined ? {} : { agent: entry.agent }) })}\n`);
+      } else if (wanted === 'ssh' || wanted === 'agent') {
+        // The switch keeps every other field, the ssh entry included: rollback is the same verb.
+        printHosts(setHostTransport(name, wanted, stateDir));
+      } else throw new Error(`hosts transport: transport must be 'ssh' or 'agent'`);
+    }
+    else if (args[0] === 'revoke' && args.length === 2) {
+      const name = args[1]!;
+      const stateDir = loadConfig().stateDir;
+      const entry = readHost(name, stateDir);
+      if (entry.agent === undefined) throw new Error(`host '${name}' has no paired agent link to revoke`);
+      // This process can tombstone only its own link map and delete the durable
+      // credential. An established daemon link keeps its session and ends only the
+      // commands it re-checks per command; a running command ends at the S6 route.
+      // State exactly that, never a dropped link.
+      revokeAgentLink(entry.agent);
+      const dropped = revokeStoredCredential(agentLinkStatePath(stateDir), entry.agent);
+      process.stdout.write(`${JSON.stringify({
+        host: name, agent: entry.agent, credential: dropped ? 'revoked' : 'already absent',
+        furtherCommands: 'refused', runningCommand: 'ends at the S6 route',
+      })}\n`);
+    }
     else if (args[0] === 'probe' && args.length === 2) {
+      // A revoked credential is a named refusal, not merely an absent link.
+      setAgentLinkStatus((agentId) => agentCredentialStatus(agentLinkStatePath(loadConfig().stateDir), agentId));
       const probe = await probeHost(readHost(args[1]!, loadConfig().stateDir));
       process.stdout.write(`${JSON.stringify({ host: args[1], ...probe })}\n`);
       if (probe.ok === false) process.exitCode = 1;
@@ -863,7 +925,11 @@ else if (command === 'roles') {
       const PRESET_USAGE = 'usage: node ops/orchestrator/src/main.ts roles preset <tier> --families <family,...> [--dry-run] [--json]  tier: economy, balanced, strong';
       try {
         const rest = args.slice(1);
-        const tier = rest[0];
+        const stateDir = loadConfig().stateDir;
+        // Task 3459 C6: with no arguments at all, the tier is the presets.team install setting
+        // (default 'balanced', today's compiled matrix). Every old shape — a flag with no tier —
+        // stays the usage error it is today.
+        const tier = rest.length === 0 ? String(readInstallSetting(stateDir, 'presets.team')) : rest[0];
         if (tier === undefined || tier.startsWith('--')) throw new Error(PRESET_USAGE);
         let families: string | undefined;
         let dryRun = false;
@@ -875,16 +941,39 @@ else if (command === 'roles') {
           else if (rest[i] === '--json' && !json) json = true;
           else throw new Error(PRESET_USAGE);
         }
-        if (families === undefined) throw new Error(PRESET_USAGE);
+        // A family name is that family's single-provider preset (task 3459 C6, decision 22510):
+        // one subscription, every served role on the family, models from the role catalogue;
+        // its --families defaults to the family itself. Any other name without --families keeps
+        // today's usage error.
+        const singleFamily = (FAMILIES as readonly string[]).includes(tier) ? tier as Family : null;
+        if (families === undefined && singleFamily === null && rest.length !== 0) throw new Error(PRESET_USAGE);
         const presets = teamPresets();
-        if (!Object.hasOwn(presets, tier)) throw new Error(`unknown tier '${tier}'; expected one of ${Object.keys(presets).join(', ')}`);
+        let preset: Preset;
+        let defaultFamilies: Family[] | null = null;
+        if (Object.hasOwn(presets, tier)) preset = presets[tier as PresetTier];
+        else if (singleFamily !== null) {
+          preset = singleProviderPreset(singleFamily);
+          defaultFamilies = [singleFamily];
+        } else throw new Error(`unknown tier '${tier}'; expected one of ${[...Object.keys(presets), ...FAMILIES].join(', ')}`);
         if (families === '') throw new Error('--families is an empty list; name at least one family, e.g. --families glm,kimi');
-        const names = families.split(',');
+        let names: string[];
+        if (families !== undefined) names = families.split(',');
+        else if (defaultFamilies !== null) names = defaultFamilies;
+        else throw new Error(`presets.team '${tier}' is a tier preset; name --families, or select a family preset (one of ${FAMILIES.join(', ')})`);
         for (const name of names) {
           if (!(FAMILIES as readonly string[]).includes(name)) throw new Error(`unknown family '${name}'; expected one of ${FAMILIES.join(', ')}`);
         }
-        const built = buildMatrix(names as Family[], presets[tier as PresetTier]);
+        // Task 3459 C6 correction: a single-provider preset holds cells for its own family only,
+        // so a --families list without that family would write every role empty. Refuse it before
+        // the writer, naming the preset's family and the families named (review point 1).
+        if (singleFamily !== null && !names.includes(singleFamily)) {
+          throw new Error(`'${singleFamily}' is a single-provider preset for ${singleFamily} alone; --families must name it (named: ${names.join(', ')})`);
+        }
+        const built = buildMatrix(names as Family[], preset);
         if (!dryRun) writeRolesMatrix(built.matrix);
+        // Task 3459 C6: a family not signed in on this machine is said at apply time, after
+        // every refusal point, so a refusal stays one stderr line.
+        for (const line of presetLoginWarnings(names as Family[], os.homedir(), stateDir)) process.stderr.write(`${line}\n`);
         if (json) process.stdout.write(`${JSON.stringify(built)}\n`);
         else {
           const lines: string[] = [];
@@ -914,6 +1003,7 @@ else if (command === 'roles') {
   }
 }
 else if (command === 'wait') process.exit(await wait(process.argv.slice(3)));
+else if (command === 'disk-cleanup') process.exitCode = await diskCleanup(process.argv.slice(3), fileURLToPath(new URL('..', import.meta.url)));
 else if (command === 'prune') {
   const args = process.argv.slice(3);
   let dryRun = false;

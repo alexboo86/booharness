@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { scrubbedGitEnv } from './git-env.mjs';
 
-const SKILL_CAP = 17; // Operator-gated ceiling; retiring a domain does not raise it.
+const SKILL_CAP = 18; // Operator-gated ceiling; retiring a domain does not raise it.
 const COVERAGE_STRICT = true; // every tracked repository path must map to a domain
 let failed = false;
 const fail = (m) => { console.error('FAIL: ' + m); failed = true; };

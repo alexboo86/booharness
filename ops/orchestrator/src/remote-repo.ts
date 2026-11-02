@@ -1,15 +1,49 @@
 // Git object transport for a remote orch checkout.
 import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { remoteTargetScript } from './remote-target-script.ts';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { readHost, type RemoteHost } from './config.ts';
-import { refuseHostSsh, spawnProvider } from './providers/spawn.ts';
+import { spawnHost, spawnProvider } from './providers/spawn.ts';
 import type { Logger } from './log.ts';
 import { createKeyedQueue } from './keyed-queue.ts';
 import { collect, text } from './shared.entry.ts';
 import { remoteCodegraphScript } from './remote-codegraph.ts';
 export { collect, text } from './shared.entry.ts';
+
+export type HostTargetDrop = { removed: string[]; bytesBefore: number; skipped: { path: string; reason: string }[] };
+
+/** Filesystem-only cleanup: no clone/Git mutation, so it does not take the clone queue. */
+export async function dropHostTargets(host: string, checkout: string, options: {
+  targets: string[]; window: number; dryRun?: boolean; beforeDrop: () => boolean;
+}): Promise<HostTargetDrop> {
+  const child = spawnProvider({ host, cwd: checkout, command: 'node', args: ['-e', remoteTargetScript,
+    JSON.stringify({ checkout, repo: hostConfig(host).repo, targets: options.targets, window: options.window, dryRun: options.dryRun ?? false })] });
+  const lines = createInterface({ input: child.stdout });
+  let protocolError: Error | undefined;
+  lines.on('line', line => {
+    try {
+      const message = JSON.parse(line);
+      if (typeof message.ready === 'string' && options.targets.includes(message.ready)) {
+        child.stdin.write(options.beforeDrop() ? 'drop\n' : 'keep\n');
+      }
+    } catch (error) { protocolError = error as Error; child.kill('SIGKILL'); }
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      child.kill('SIGKILL'); child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+      reject(new Error('host target drop timed out after 120000 ms'));
+    }, 120_000);
+  });
+  try {
+    const output = await Promise.race([collect(child, undefined, 'host target drop', true), deadline]);
+    if (protocolError) throw protocolError;
+    return JSON.parse(output.toString('utf8').trim().split(/\r?\n/).at(-1)!);
+  } finally { clearTimeout(timer); lines.close(); }
+}
 
 export const hash = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const name = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -125,8 +159,8 @@ export function cloneSshArgs(host: RemoteHost, origin: string): string[] {
   return ['-T', '-o', 'BatchMode=yes', host.ssh, 'git', 'clone', origin, repo];
 }
 
-export function ensureClone(host: string, localRepo: string): Promise<void> {
-  return withHostClone(host, () => cloneReady(host, localRepo));
+export async function ensureClone(host: string, localRepo: string): Promise<void> {
+  await withHostClone(host, () => cloneReady(host, localRepo));
 }
 
 /** The top of the repo containing `dir` — the daemon's own checkout. */
@@ -140,24 +174,42 @@ export async function daemonCheckout(dir: string): Promise<{ repo: string; sha: 
   return { repo, sha };
 }
 
-async function cloneReady(host: string, localRepo: string, signal?: AbortSignal): Promise<void> {
+/** Is the host's clone there, and can it run remote-exec? 'unloadable' means the checkout exists
+ *  while its own npm dependencies are missing — the debt a failed install leaves behind. */
+type CloneState = 'ready' | 'unloadable';
+
+async function cloneReady(host: string, localRepo: string, signal?: AbortSignal): Promise<CloneState> {
   if (signal?.aborted) throw signal.reason;
-  const remoteHost = hostConfig(host);
-  const { repo, platform } = remoteHost;
+  const { repo } = hostConfig(host);
   // A missing checkout cannot run remote-exec (its path is INSIDE host.repo).
-  let exists = true;
+  let probed = true;
   try { await remote(host, repo, ['rev-parse', '--show-toplevel'], undefined, signal); }
   catch {
     if (signal?.aborted) throw signal.reason;
-    exists = false;
+    probed = false;
   }
   // Config is written only when the clone is created. An existing checkout, including
   // one already on the daemon commit, is left untouched (task 1784).
-  if (exists) return;
+  if (probed) return 'ready';
+  // A failed remote-exec probe is NOT proof the checkout is absent: remote-exec statically imports
+  // the checkout's own dependencies, so a failed `npm ci` unloads it — and a clone over an existing
+  // checkout always fails ('destination path already exists'), so the install it owes would never
+  // be reached. Absence is confirmed over the dependency-free route instead (task 3507).
+  if (await hostCheckoutPresent(host, repo)) return 'unloadable';
+  await createHostClone(host, localRepo, signal);
+  return 'ready';
+}
+
+/** Create the host's clone over a direct ssh `git clone`, then write the config only a fresh clone
+ *  gets: `core.autocrlf=false`, plus `core.longpaths` on Windows (task 1784). */
+async function createHostClone(host: string, localRepo: string, signal?: AbortSignal): Promise<void> {
+  const remoteHost = hostConfig(host);
+  const { repo, platform } = remoteHost;
   const origin = await run('git', ['remote', 'get-url', 'origin'], localRepo, undefined, signal).then(text);
   if (signal?.aborted) throw signal.reason;
-  refuseHostSsh(remoteHost.ssh);
-  const child = spawn('ssh', cloneSshArgs(remoteHost, origin), { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  // Only shell-literal URL bytes are admitted (as in cloneSshArgs); never pass an arbitrary git-config string to a remote shell command.
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.@:/~+-]*$/.test(origin)) throw new Error('origin URL contains unsupported remote-shell characters');
+  const child = spawnHost({ entry: remoteHost, kind: 'bootstrap', command: 'git', args: ['clone', origin, repo], cwd: path.dirname(repo), env: {} });
   const abort = () => child.kill('SIGKILL');
   signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -290,71 +342,341 @@ async function refreshRuntimeCodegraph(host: string | undefined, repo: string, m
   }
 }
 
+/** Dependency roots a host runtime checkout must keep installed for the lockfiles in it: remote-exec
+ *  (orchestrator) and the pi MCP adapter (pi-runtime) each load the checkout's own npm dependencies. */
+type HostRuntimeDependency = { lockfile: string; dir: string; omitDev: boolean };
+const HOST_RUNTIME_DEPENDENCIES: HostRuntimeDependency[] = [
+  { lockfile: 'ops/orchestrator/package-lock.json', dir: 'ops/orchestrator', omitDev: true },
+  { lockfile: 'ops/pi-runtime/package-lock.json', dir: 'ops/pi-runtime', omitDev: false },
+];
+// npm ci can take minutes; it shares provisionCheckDependencies' ceiling.
+const HOST_RUNTIME_INSTALL_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * The durable record, inside a root's node_modules, of the lockfile its dependencies were installed
+ * from: the SHA-256 of that lockfile's bytes and of the install flags used (see HOST_SCRIPT_PROLOGUE).
+ * `npm ci` deletes node_modules before it installs and
+ * the stamp is written only after it succeeded, so a failed, timed-out or aborted install leaves no
+ * stamp and the next sync sees the debt — across a daemon restart, which an in-memory record does
+ * not survive. Untracked and inside node_modules, so no checkout move or clean touches it.
+ */
+const HOST_RUNTIME_STAMP = '.orch-lockfile-sha256';
+
+/** Script prologue for the dependency-free host route: the repo root, a guard that keeps every path
+ *  the daemon names inside it, and the one stamp recipe the check and the install must agree on. */
+const HOST_SCRIPT_PROLOGUE = String.raw`
+const fs = require('node:fs');
+const p = require('node:path');
+const { createHash } = require('node:crypto');
+const inside = (root, target) => {
+  const resolved = p.resolve(root, target);
+  const rel = p.relative(root, resolved);
+  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) throw new Error('path escapes repo: ' + target);
+  return resolved;
+};
+// Only a missing file is absent: an unreadable one (EACCES, EBUSY) throws, so it never passes for
+// "no dependencies here" and the sync fails with the real cause.
+const readOrNull = (file) => { try { return fs.readFileSync(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
+// The stamp covers the lockfile's bytes AND the flags its dependencies were installed with, so a
+// change to either invalidates it: a stamp means "this node_modules is this lockfile's, installed
+// this way", never merely "a lockfile like this was once installed here".
+const stampOf = (lock, omitDev) => createHash('sha256').update(lock).update(omitDev ? '--omit=dev' : '--include=dev').digest('hex');
+`;
+
+/**
+ * Run a self-contained CommonJS script on the host over a direct ssh `node -` that reads it from
+ * stdin, never through remote-exec: remote-exec statically imports the checkout's own dependencies
+ * (remote-exec.mjs -> src/providers/spawn.ts -> shared.entry.ts -> write-scope.ts -> minimatch),
+ * which is exactly what a failed install leaves missing, so it cannot be the route that repairs
+ * them. The script arrives on stdin and its config is embedded, so no part of it passes a shell.
+ * A timeout kills the child and throws, naming the operation and its bound.
+ */
+async function directHostNode(host: string, script: string, label: string, timeoutMs: number): Promise<string> {
+  const remoteHost = hostConfig(host);
+  const signal = AbortSignal.timeout(timeoutMs);
+  let abort: (() => void) | undefined;
+  const child = spawnHost({ entry: remoteHost, kind: 'bootstrap', command: remoteHost.node, args: ['-'], cwd: path.dirname(remoteHost.repo), env: {} });
+  const expired = new Promise<never>((_, reject) => {
+    abort = () => {
+      child.kill('SIGKILL');
+      reject(new Error(`host '${host}' ${label} timed out after ${timeoutMs}ms`));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    return text(await Promise.race([collect(child, Buffer.from(script), label), expired]));
+  } finally {
+    if (abort) signal.removeEventListener('abort', abort);
+  }
+}
+
+/** The probe classifies its own answer: only Git's definite "there is no repository here" counts as
+ *  an absence, because an absence leads the caller to clone over whatever is already there. */
+function hostCheckoutProbeScript(repo: string): string {
+  return `${HOST_SCRIPT_PROLOGUE}
+const { spawnSync } = require('node:child_process');
+const options = ${JSON.stringify({ repo })};
+if (!p.isAbsolute(options.repo)) throw new Error('repo must be absolute');
+const git = spawnSync('git', ['-C', options.repo, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+const stderr = String(git.stderr || '').slice(-300);
+const detail = ('exit ' + String(git.status) + ' ' + (git.error ? git.error.message : stderr)).slice(0, 300);
+const absent = /not a git repository|cannot change to|No such file or directory|does not appear to be a git/i;
+const answer = git.status === 0 ? 'present' : git.status !== null && !git.error && absent.test(stderr) ? 'absent' : 'unknown';
+process.stdout.write(JSON.stringify({ answer, detail }));
+`;
+}
+
+/**
+ * Is there a Git checkout at the host's repo path? Asked over the dependency-free route, and it
+ * answers only when Git is definite: an unanswerable probe throws rather than report an absence,
+ * because an absence leads to a clone over whatever is already there.
+ */
+async function hostCheckoutPresent(host: string, repo: string): Promise<boolean> {
+  const probe = JSON.parse(await directHostNode(host, hostCheckoutProbeScript(repo), 'runtime checkout probe', HOST_RUNTIME_TIMEOUT_MS)) as { answer?: string; detail?: string };
+  if (probe.answer === 'present') return true;
+  if (probe.answer === 'absent') return false;
+  throw new Error(`host '${host}' runtime checkout probe of ${repo} could not answer: ${String(probe.detail).slice(0, 200)}`);
+}
+
+/** Read each root's stamp and hash the lockfile next to it, on the host: no git and nothing the
+ *  checkout provides, so it answers for a checkout whose remote-exec cannot load. */
+function hostDependencyCheckScript(repo: string, roots: HostRuntimeDependency[]): string {
+  return `${HOST_SCRIPT_PROLOGUE}
+const options = ${JSON.stringify({ repo, roots })};
+if (!p.isAbsolute(options.repo)) throw new Error('repo must be absolute');
+const root = p.resolve(options.repo);
+const pending = [];
+for (const dep of options.roots) {
+  const lock = readOrNull(inside(root, dep.lockfile));
+  if (lock === null) continue;   // no lockfile in this checkout: no dependencies to install
+  const stamp = readOrNull(inside(root, p.join(dep.dir, 'node_modules', ${JSON.stringify(HOST_RUNTIME_STAMP)})));
+  if (stamp === null || stamp.toString('utf8').trim() !== stampOf(lock, dep.omitDev)) pending.push(dep.dir);
+}
+process.stdout.write(JSON.stringify({ pending }));
+`;
+}
+
+/** Install the owed roots over the dependency-free route, then stamp each with the lockfile it was
+ *  installed from. A failure throws and leaves that root unstamped: the debt outlives this process. */
+function hostRuntimeInstallScript(repo: string, installs: HostRuntimeDependency[]): string {
+  return `${HOST_SCRIPT_PROLOGUE}
+const { spawnSync } = require('node:child_process');
+const options = ${JSON.stringify({ repo, installs })};
+if (!p.isAbsolute(options.repo)) throw new Error('repo must be absolute');
+const root = p.resolve(options.repo);
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+for (const install of options.installs) {
+  const dir = inside(root, install.dir);
+  const lockfile = inside(root, install.lockfile);
+  const args = ['ci', ...(install.omitDev ? ['--omit=dev'] : [])];
+  const result = spawnSync(npm, args, { cwd: dir, stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
+  if (result.error) { console.error('npm ci failed in ' + dir + ': ' + result.error.message); process.exit(1); }
+  if (result.status !== 0) { console.error('npm ci failed in ' + dir + ' with exit ' + (result.status ?? 'unknown')); process.exit(result.status ?? 1); }
+  const lock = readOrNull(lockfile);
+  if (lock === null) { console.error('lockfile vanished during npm ci: ' + lockfile); process.exit(1); }
+  const modules = p.join(dir, 'node_modules');
+  fs.mkdirSync(modules, { recursive: true });
+  fs.writeFileSync(p.join(modules, ${JSON.stringify(HOST_RUNTIME_STAMP)}), stampOf(lock, install.omitDev));
+}
+console.log('host runtime dependencies installed');
+`;
+}
+
+/** The runtime dependency roots the target commit has at all. Its own tree answers, and the host
+ *  checkout sits on that commit, so a commit without them costs the sync no host round trip. */
+async function runtimeDependencyRoots(localRepo: string, sha: string, signal?: AbortSignal): Promise<HostRuntimeDependency[]> {
+  if (!hash.test(sha)) throw new Error(`invalid commit hash ${sha}`);
+  const listed = text(await run('git', ['ls-tree', '--name-only', sha, '--', ...HOST_RUNTIME_DEPENDENCIES.map((dep) => dep.lockfile)], localRepo, undefined, signal));
+  const present = new Set(listed.split(/\r?\n/).filter(Boolean));
+  return HOST_RUNTIME_DEPENDENCIES.filter((dep) => present.has(dep.lockfile));
+}
+
+/**
+ * Install every runtime dependency root whose stamp does not match the lockfile in the checkout, and
+ * return the roots it installed. The comparison lives on the host, in a stamp `npm ci` itself
+ * removes, so the fact survives a daemon restart and needs no record of an earlier turn: a checkout
+ * already on its target is installed just the same. A timeout or an npm failure throws (never a
+ * log-only warning), so the runtime is marked not current rather than left with a checkout whose
+ * remote-exec cannot load, and the missing stamp keeps the debt for the next sync.
+ */
+async function syncHostDependencies(host: string, repo: string, roots: HostRuntimeDependency[]): Promise<HostRuntimeDependency[]> {
+  if (!roots.length) return [];
+  const answer = JSON.parse(await directHostNode(host, hostDependencyCheckScript(repo, roots), 'runtime dependency check', HOST_RUNTIME_TIMEOUT_MS)) as { pending?: unknown };
+  const pending = answer?.pending;
+  if (!Array.isArray(pending) || !pending.every((dir: unknown) => typeof dir === 'string')) {
+    throw new Error(`host '${host}' runtime dependency check answered ${JSON.stringify(answer).slice(0, 200)}`);
+  }
+  const owed = roots.filter((root) => pending.includes(root.dir));
+  if (owed.length) await directHostNode(host, hostRuntimeInstallScript(repo, owed), 'runtime dependency install', HOST_RUNTIME_INSTALL_TIMEOUT_MS);
+  return owed;
+}
+
+/** In the move's own turn, once the owed install has run: re-verify the checkout over remote-exec
+ *  — which now has its freshly installed dependencies — then refresh hook shims under its own
+ *  short deadline. */
+async function verifyMovedRuntime(host: string, repo: string, sha: string, tree: string, log?: Logger): Promise<void> {
+  const signal = AbortSignal.timeout(HOST_RUNTIME_TIMEOUT_MS);
+  const git = bounded(host, repo, signal);
+  assertCheckoutIdentity({ sha, tree }, {
+    sha: await git('rev-parse', 'HEAD'),
+    tree: await git('rev-parse', 'HEAD^{tree}'),
+    status: await git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'),
+  });
+  await refreshRuntimeHooks(host, repo, log);
+}
+
+/** Resolve the commit this sync targets and its tree, once, from the daemon's own repo. */
+async function resolveRuntimeTarget(localRepo: string, state: { sha: string; tree: string }, signal: AbortSignal): Promise<void> {
+  if (state.sha === '') state.sha = await run('git', ['rev-parse', 'HEAD'], localRepo, undefined, signal).then(text);
+  if (!hash.test(state.sha)) throw new Error(`invalid commit hash ${state.sha}`);
+  state.tree = await run('git', ['rev-parse', '--verify', `${state.sha}^{tree}`], localRepo, undefined, signal).then(text);
+}
+
+/**
+ * Make the host's clone usable before any git call of the move needs remote-exec: a checkout that is
+ * there while its remote-exec cannot load owes exactly the dependencies a failed install took away,
+ * so they are installed over the dependency-free route first. The repair runs on the install's own
+ * clock — npm ci outlives the move's bound — and reports whether it installed anything.
+ */
+async function readyHostRuntime(host: string | undefined, localRepo: string, repo: string, state: { sha: string; tree: string }, signal: AbortSignal): Promise<boolean> {
+  if (host === undefined) return false;
+  if (await cloneReady(host, localRepo, signal) !== 'unloadable') return false;
+  const repaired = await syncHostDependencies(host, repo, await runtimeDependencyRoots(localRepo, state.sha, signal));
+  return repaired.length > 0;
+}
+
+/** One turn's git work: refuse tracked dirt, move the checkout. The target is resolved and the clone
+ *  made usable before it (see readyHostRuntime), and the remote host's re-verification is deliberately
+ *  not here (see finishHostRuntimeMove): its remote-exec is broken by the move itself until the
+ *  dependencies it owes are installed later in the same turn. */
+async function moveRuntimeCheckout(host: string | undefined, name: string, localRepo: string, repo: string, state: { sha: string; tree: string }, signal: AbortSignal): Promise<{ moved: boolean; from: string; to: string }> {
+  const git = bounded(host, repo, signal);
+  const head = await git('rev-parse', 'HEAD');
+  if (head === state.sha) return { moved: false, from: head, to: state.sha };
+  // Only uncommitted TRACKED changes refuse the move; they are never discarded.
+  const dirty = await git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no');
+  if (dirty !== '') throw new Error(`host '${name}' runtime checkout ${repo} has uncommitted tracked changes; refusing to move it to ${state.sha}: ${dirty.split('\n').slice(0, 3).join('; ')}`);
+  await transferCommit(host, repo, localRepo, state.sha, signal);
+  // A clean tracked tree makes checkout --detach keep every untracked file.
+  await git('checkout', '--detach', state.sha);
+  if (host !== undefined) return { moved: true, from: head, to: state.sha };
+  assertCheckoutIdentity({ sha: state.sha, tree: state.tree }, {
+    sha: await git('rev-parse', 'HEAD'),
+    tree: await git('rev-parse', 'HEAD^{tree}'),
+    status: await git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'),
+  });
+  return { moved: true, from: head, to: state.sha };
+}
+
+/** Still holding the host's turn: pay what the checkout owes — every dependency root whose stamp
+ *  does not match the lockfile sitting there — then re-verify the checkout over remote-exec, which
+ *  the install just made loadable. Running in the turn is what serializes it: one host never runs
+ *  two installs at once and no sync reports the runtime current while one is in flight. `repaired`
+ *  says this turn already installed before the move; it verifies too, because a sync may report the
+ *  runtime current only once remote-exec has been seen to load. */
+async function finishHostRuntimeMove(host: string | undefined, repo: string, localRepo: string, state: { sha: string; tree: string }, result: { moved: boolean; from: string; to: string }, repaired: boolean, log?: Logger): Promise<void> {
+  if (host === undefined) return;
+  const installed = await syncHostDependencies(host, repo, await runtimeDependencyRoots(localRepo, state.sha));
+  // Nothing moved, nothing owed and nothing repaired: an equal HEAD leaves the checkout and its shims alone.
+  if (result.moved || installed.length > 0 || repaired) await verifyMovedRuntime(host, repo, state.sha, state.tree, log);
+}
+
 export type HostRuntimeState = {
   host: string; target: string; head: string | null;
   current: boolean; moved: boolean; error: string | null; at: string;
+  /** Task 3545: per-pin notes of the post-sync pinned edit ensure (empty when nothing ran). */
+  pinnedEdits: string[];
 };
 /** The last runtime-checkout sync per host, surfaced by /health and orch_status (task 1784). */
 const hostRuntime = new Map<string, HostRuntimeState>();
 export function hostRuntimeStates(): HostRuntimeState[] { return [...hostRuntime.values()]; }
 
+/** Name a failed runtime-sync turn: the move's own timeout, the busy host queue, or the failure
+ *  itself. An install or a verify keeps its own error: both run after the move is done, and the
+ *  install has a longer bound than `timeoutMs`. */
+function hostRuntimeTurnFailure(name: string, error: unknown, turn: { workSignal?: AbortSignal; moveDone: boolean }, waitSignal: AbortSignal, timeoutMs: number): Error {
+  if (!turn.moveDone && turn.workSignal?.aborted) return new Error(`host '${name}' runtime checkout move timed out after ${timeoutMs}ms`);
+  if (!turn.workSignal && waitSignal.aborted) return new Error(`host '${name}' busy host queue wait timed out after ${HOST_RUNTIME_WAIT_TIMEOUT_MS}ms`);
+  return error as Error;
+}
+
+
+/**
+ * Task 3545: after a successful sync, let the pinned edit ensure re-check each pin on the host and
+ * provision only what its check rejects. Filesystem-only work under the host's own prefix, so it
+ * holds no clone-queue turn and cannot block unrelated seats. A failure logs and lands in the host's
+ * runtime state notes; it never throws and never fails the sync.
+ */
+async function runPinnedEditEnsure(host: string | undefined, options: { log?: Logger; ensurePinnedEdits?: (host: string) => Promise<{ ok: boolean; notes: string[] }> }): Promise<string[]> {
+  if (host === undefined || options.ensurePinnedEdits === undefined) return [];
+  try {
+    const { ok, notes } = await options.ensurePinnedEdits(host);
+    if (!ok) options.log?.('warn', 'daemon.host_runtime_pinned_edits_failed', { host, notes });
+    return notes;
+  } catch (error) {
+    const message = (error as Error).message;
+    options.log?.('warn', 'daemon.host_runtime_pinned_edits_failed', { host, notes: [message] });
+    return [`pinned edits: ${message}`];
+  }
+}
 /**
  * Move a host's runtime checkout — the hosts.json repo every remote seat's remote-exec and
  * build gate run from — to the commit this daemon runs from (task 1784). `options.sha` is that
  * commit when serve already resolved it; otherwise HEAD of `localRepo` (the bundle source).
  * A checkout already on the commit is left untouched, including its config; one with uncommitted
  * TRACKED changes is refused and nothing in it changes (they are never discarded); untracked files
- * always stay. Every git and ssh call of the sync honors `timeoutMs`, starting once it holds
- * the host's turn. Waiting for that turn has a separate ten-minute bound. Serialized with
- * the host's other git operations through withHostClone. After a verified remote move,
- * git hook shims are refreshed under a separate short deadline; failure only logs a warning.
+ * always stay. The move's git and ssh calls honor `timeoutMs`, starting once the sync holds the
+ * host's turn and the clone is usable; clone setup and a dependency repair before the move have
+ * their own bounds, because npm ci outlives `timeoutMs`. Waiting for the turn has a separate
+ * ten-minute bound. Serialized with the host's other git operations through withHostClone. After a
+ * verified remote move, git hook shims are refreshed under a separate short deadline; failure only
+ * logs a warning.
+ * The host's npm dependencies (orchestrator and pi-runtime lockfiles) are reinstalled in the same
+ * turn whenever a stamp inside a root's node_modules does not match the lockfile sitting there —
+ * after a move, on an equal HEAD, and across a daemon restart, which an in-memory debt did not
+ * survive. The check and the install both run over a direct ssh route that never loads the moved
+ * checkout's src, because remote-exec itself imports that src and needs the dependencies just
+ * installed; the install has its own longer bound (HOST_RUNTIME_INSTALL_TIMEOUT_MS). A failed
+ * install throws, marks the runtime not current and leaves that root unstamped, so the next sync
+ * installs and verifies again before it reports current. Nothing else on that host runs during an
+ * install, and no sync reports the runtime current while one is in flight. A checkout whose
+ * remote-exec cannot load is repaired the same way before the move's git work, so a failed install
+ * is never answered with a clone over the existing checkout.
+ * After the turn succeeds, the caller's `ensurePinnedEdits` re-checks each pinned edit extension on
+ * the host (task 3545); it holds no host turn and its failure lands only in the state's notes.
  * Host omitted: a local checkout
  * (the isolated tests), which needs options.repo and must already exist.
  */
-export async function syncHostRuntime(host: string | undefined, localRepo: string, options: { repo?: string; timeoutMs?: number; sha?: string; log?: Logger } = {}): Promise<{ moved: boolean; from: string; to: string }> {
+export async function syncHostRuntime(host: string | undefined, localRepo: string, options: { repo?: string; timeoutMs?: number; sha?: string; log?: Logger; ensurePinnedEdits?: (host: string) => Promise<{ ok: boolean; notes: string[] }> } = {}): Promise<{ moved: boolean; from: string; to: string }> {
   if (host === undefined && options.repo === undefined) throw new Error('syncHostRuntime without a host needs options.repo');
   if (options.sha !== undefined && !hash.test(options.sha)) throw new Error(`invalid commit hash ${options.sha}`);
   const repo = options.repo ?? hostConfig(host as string).repo;
   const name = host ?? 'local';
   const timeoutMs = options.timeoutMs ?? HOST_RUNTIME_TIMEOUT_MS;
   const waitSignal = AbortSignal.timeout(HOST_RUNTIME_WAIT_TIMEOUT_MS);
-  let workSignal: AbortSignal | undefined;
-  let sha = options.sha ?? '';
+  const state = { sha: options.sha ?? '', tree: '' };
+  // `moveDone` separates the move's own timeout from a later install or verify failure; `repaired`
+  // records a dependency install this turn ran before the move.
+  const turn = { workSignal: undefined as AbortSignal | undefined, moveDone: false, repaired: false };
   try {
     const result = await withHostClone(name, async () => {
-      const signal = workSignal = AbortSignal.timeout(timeoutMs);
-      if (sha === '') sha = await run('git', ['rev-parse', 'HEAD'], localRepo, undefined, signal).then(text);
-      if (!hash.test(sha)) throw new Error(`invalid commit hash ${sha}`);
-      const tree = await run('git', ['rev-parse', '--verify', `${sha}^{tree}`], localRepo, undefined, signal).then(text);
-      if (host !== undefined) await cloneReady(host, localRepo, signal);
-      const git = bounded(host, repo, signal);
-      const head = await git('rev-parse', 'HEAD');
-      if (head === sha) return { moved: false, from: head, to: sha };
-      // Only uncommitted TRACKED changes refuse the move; they are never discarded.
-      const dirty = await git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no');
-      if (dirty !== '') throw new Error(`host '${name}' runtime checkout ${repo} has uncommitted tracked changes; refusing to move it to ${sha}: ${dirty.split('\n').slice(0, 3).join('; ')}`);
-      await transferCommit(host, repo, localRepo, sha, signal);
-      // A clean tracked tree makes checkout --detach keep every untracked file.
-      await git('checkout', '--detach', sha);
-      assertCheckoutIdentity({ sha, tree }, {
-        sha: await git('rev-parse', 'HEAD'),
-        tree: await git('rev-parse', 'HEAD^{tree}'),
-        status: await git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'),
-      });
-      if (host !== undefined) await refreshRuntimeHooks(host, repo, options.log);
-      return { moved: true, from: head, to: sha };
-    }, waitSignal);
-    hostRuntime.set(name, { host: name, target: sha, head: result.to, current: true, moved: result.moved, error: null, at: new Date().toISOString() });
+      turn.workSignal = AbortSignal.timeout(timeoutMs);
+      await resolveRuntimeTarget(localRepo, state, turn.workSignal);
+      turn.repaired = await readyHostRuntime(host, localRepo, repo, state, turn.workSignal);
+      // The move's own bound starts once the clone is usable: a repair's npm ci outlives it.
+      const signal = turn.workSignal = AbortSignal.timeout(timeoutMs);
+      const moved = await moveRuntimeCheckout(host, name, localRepo, repo, state, signal);
+      turn.moveDone = true;
+      await finishHostRuntimeMove(host, repo, localRepo, state, moved, turn.repaired, options.log);
+      return moved;
+    }, waitSignal).catch((error: unknown) => { throw hostRuntimeTurnFailure(name, error, turn, waitSignal, timeoutMs); });
+    const pinnedEdits = await runPinnedEditEnsure(host, options);
+    hostRuntime.set(name, { host: name, target: state.sha, head: result.to, current: true, moved: result.moved, error: null, at: new Date().toISOString(), pinnedEdits });
     await refreshRuntimeCodegraph(host, repo, result.moved, options.log);
     return result;
   } catch (error) {
-    const failure = workSignal?.aborted
-      ? new Error(`host '${name}' runtime checkout move timed out after ${timeoutMs}ms`)
-      : !workSignal && waitSignal.aborted
-        ? new Error(`host '${name}' busy host queue wait timed out after ${HOST_RUNTIME_WAIT_TIMEOUT_MS}ms`)
-        : error as Error;
-    hostRuntime.set(name, { host: name, target: sha, head: null, current: false, moved: false, error: failure.message, at: new Date().toISOString() });
-    throw failure;
+    hostRuntime.set(name, { host: name, target: state.sha, head: null, current: false, moved: false, error: (error as Error).message, at: new Date().toISOString(), pinnedEdits: [] });
+    throw error;
   }
 }
 

@@ -11,19 +11,32 @@ const STOP: Record<string, StopReason> = { completed: 'end_turn', interrupted: '
 
 /** codex counts cached input inside inputTokens (OpenAI convention). */
 export function codexUsage(last: any): Usage | null {
+  const parts = codexUsageParts(last);
+  if (parts === null) return null;
+  return { inputTokens: parts.input, cacheReadTokens: parts.cacheRead, cacheWriteTokens: parts.cacheWrite, outputTokens: parts.output, costUsd: null, raw: last };
+}
+
+/** One usage record split into orch's fields: cached input is separated, never dropped or guessed. */
+export function codexUsageParts(last: any): { input: number; cacheRead: number | null; cacheWrite: number | null; output: number } | null {
   if (!last || typeof last.inputTokens !== 'number') return null;
   const cached = typeof last.cachedInputTokens === 'number' ? last.cachedInputTokens : null;
   return {
-    inputTokens: cached === null ? last.inputTokens : last.inputTokens - cached,
-    cacheReadTokens: cached,
-    cacheWriteTokens: typeof last.cacheWriteInputTokens === 'number' ? last.cacheWriteInputTokens : null,
-    outputTokens: last.outputTokens ?? 0,
-    costUsd: null,
-    raw: last,
+    input: cached === null ? last.inputTokens : last.inputTokens - cached,
+    cacheRead: cached,
+    cacheWrite: typeof last.cacheWriteInputTokens === 'number' ? last.cacheWriteInputTokens : null,
+    output: last.outputTokens ?? 0,
   };
 }
 
 const USAGE_FIELDS = ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens', 'totalTokens'];
+
+/** A turn's running usage total: raw codex fields summed per model call plus the dedup watermark. */
+export type CodexUsageTotal = { fields: Record<string, number>; seenTotal?: number };
+
+/** A whole turn's usage from its running total; null when no usable record arrived. */
+export function codexUsageTotal(total: CodexUsageTotal | null): Usage | null {
+  return total === null ? null : codexUsage(total.fields);
+}
 
 // `last` is ONE model call, and a turn with tools makes several: the turn is
 // the sum of every `last` it reported (measured 2026-09-22: one codex scout turn
@@ -31,22 +44,51 @@ const USAGE_FIELDS = ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens
 // used directly because a resumed thread's total also counts earlier turns; it
 // only drops a repeated notification.
 function addUsage(turn: Turn, tokenUsage: any): void {
+  turn.usage ??= { fields: {} };
+  codexAddUsage(turn.usage, tokenUsage);
+}
+
+/** Add one `tokenUsage` record's `last` call to a turn total; false when it only repeats the last-seen total. */
+export function codexAddUsage(total: CodexUsageTotal, tokenUsage: any): boolean {
   const last = tokenUsage?.last;
-  if (!last || typeof last.inputTokens !== 'number') return;
-  const total = tokenUsage.total?.totalTokens;
-  if (typeof total === 'number') {
-    if (total === turn.seenTotal) return;
-    turn.seenTotal = total;
-  }
-  turn.usage ??= {};
+  if (!last || typeof last.inputTokens !== 'number') return false;
+  if (repeatedTotal(total, tokenUsage?.total?.totalTokens)) return false;
   for (const field of USAGE_FIELDS) {
-    if (typeof last[field] === 'number') turn.usage[field] = (turn.usage[field] ?? 0) + last[field];
+    if (typeof last[field] === 'number') total.fields[field] = (total.fields[field] ?? 0) + last[field];
   }
+  return true;
+}
+
+/** The thread total only drops a repeated notification; a new one moves the watermark forward. */
+function repeatedTotal(total: CodexUsageTotal, whole: unknown): boolean {
+  if (typeof whole !== 'number') return false;
+  if (whole === total.seenTotal) return true;
+  total.seenTotal = whole;
+  return false;
+}
+
+export type ToolItem = { type: string; id?: string; durationMs?: unknown; status?: unknown; exitCode?: unknown };
+
+/** Items that are tool calls: everything item/started reports except the model's own words. */
+export function isToolItem(item: ToolItem | null | undefined): item is ToolItem {
+  return Boolean(item?.type) && item.type !== 'agentMessage' && item.type !== 'reasoning' && item.type !== 'userMessage';
+}
+
+/** A completed tool item failed: its failed/rejected status or a non-zero exit. */
+export function codexToolFailed(item: ToolItem): boolean {
+  return item.status === 'failed' || item.status === 'rejected' || (typeof item.exitCode === 'number' && item.exitCode !== 0);
+}
+
+/** A completed tool call closes the call item/started opened (event-stream.ts live frames): codex
+ *  reports the call's own durationMs, and a failure is its failed/rejected status or a non-zero exit. */
+function codexToolEnd(turn: Turn, item: ToolItem | null | undefined): void {
+  if (!isToolItem(item)) return;
+  turn.onEvent?.({ kind: 'tool', name: item.type, status: 'ended', id: item.id, durationMs: typeof item.durationMs === 'number' ? item.durationMs : undefined, isError: codexToolFailed(item) });
 }
 
 /** What a call asked for, without the fields that change as it runs (status, output, timing). */
-function callArgs(item: any): unknown {
-  const args = { ...item };
+export function callArgs(item: object): unknown {
+  const args: Record<string, unknown> = { ...item };
   for (const field of ['id', 'type', 'status', 'aggregatedOutput', 'exitCode', 'durationMs', 'processId', 'output', 'result', 'error']) {
     delete args[field];
   }
@@ -68,7 +110,7 @@ function threadSettings(spec: SessionSpec) {
 // `early` holds every notification that arrives before turn/start answers: with
 // the id unknown nothing can be attributed, so they are replayed through the id
 // filter once it is known, and another turn's items or completion stay out.
-type Turn = { id: string | null; text: string; usage: any; seenTotal?: number; onEvent?: PromptOptions['onEvent']; done: (turn: any) => void; early: Array<[string, any]> };
+type Turn = { id: string | null; text: string; usage: CodexUsageTotal | null; onEvent?: PromptOptions['onEvent']; done: (turn: any) => void; early: Array<[string, any]> };
 
 class CodexSession implements ProviderSession {
   readonly family: Family = 'codex';
@@ -107,12 +149,13 @@ class CodexSession implements ProviderSession {
         turn.onEvent?.({ kind: 'thought', delta: params.delta });
         break;
       case 'item/started':
-        if (params.item?.type && params.item.type !== 'agentMessage' && params.item.type !== 'reasoning' && params.item.type !== 'userMessage') {
-          turn.onEvent?.({ kind: 'tool', name: params.item.type, status: 'started', args: callArgs(params.item) });
+        if (isToolItem(params.item)) {
+          turn.onEvent?.({ kind: 'tool', name: params.item.type, status: 'started', args: callArgs(params.item), id: params.item.id });
         }
         break;
       case 'item/completed':
         if (params.item?.type === 'agentMessage') turn.text += (turn.text ? '\n\n' : '') + params.item.text;
+        else codexToolEnd(turn, params.item);
         break;
       case 'thread/tokenUsage/updated':
         addUsage(turn, params.tokenUsage);
@@ -175,7 +218,7 @@ class CodexSession implements ProviderSession {
         text: turn.text,
         stopReason: STOP[raw ?? ''] ?? 'other',
         rawStopReason: raw,
-        usage: codexUsage(turn.usage),
+        usage: codexUsageTotal(turn.usage),
         error: final?.error?.message ?? null,
         durationMs: Date.now() - started,
       };

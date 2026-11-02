@@ -190,6 +190,17 @@ export async function rerank(question, rows, { via = 'jev', limit = 5 } = {}) {
   return picked.slice(0, limit);
 }
 
+function showSearchResults(answer, results, json) {
+  if (json) {
+    console.log(JSON.stringify(Array.isArray(answer) ? results : { ...answer, results }, null, 1));
+    return;
+  }
+  if (!results.length) console.log('memory holds nothing matching this question');
+  for (const row of results) console.log(`#${row.id} [${row.kind}] ${row.date} (${row.age_days}d) ${row.title}`);
+  if (answer.knowledge) console.log(JSON.stringify({ knowledge: answer.knowledge }));
+  if (answer.knowledge_error) console.error(`knowledge: ${answer.knowledge_error}`);
+}
+
 async function main() {
   if (process.argv.length === 3 && process.argv[2] === '--help') {
     console.log(USAGE);
@@ -199,24 +210,20 @@ async function main() {
   const url = new URL(`${MEMORY_URL}/api/memory/search`);
   url.searchParams.set('q', opts.question);
   url.searchParams.set('limit', String(opts.pool));
+  url.searchParams.set('knowledge', '1');
   const res = await fetch(url);
   if (!res.ok) throw new Error(`memory search answered HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const rows = await res.json();
+  const answer = await res.json();
+  // Unupgraded services still return the original array; never alter its rows.
+  const rows = Array.isArray(answer) ? answer : answer.results;
   if (!rows.length) {
-    if (opts.json) console.log('[]');
-    else console.log('memory holds nothing matching this question');
+    showSearchResults(answer, [], opts.json);
     return;
   }
   const started = Date.now();
   const top = await rerank(opts.question, rows, opts);
-  if (opts.json) {
-    console.log(JSON.stringify(top, null, 1));
-    return;
-  }
-  for (const row of top) {
-    console.log(`#${row.id} [${row.kind}] ${row.date} (${row.age_days}d) ${row.title}`);
-  }
-  console.error(`-- deep search: ${opts.via}, ${rows.length} candidates, ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  showSearchResults(answer, top, opts.json);
+  if (!opts.json) console.error(`-- deep search: ${opts.via}, ${rows.length} candidates, ${((Date.now() - started) / 1000).toFixed(1)} s`);
 }
 
 let isMain = false;

@@ -18,6 +18,8 @@ import { createKeyedQueue } from './keyed-queue.ts';
 import { seedCodegraph, type ProvisionStep } from './codegraph-seed.ts';
 import { localNodeExecutable } from './shared.entry.ts';
 export { seedCodegraph, codegraphIndexNote, type ProvisionStep, type SeedCodegraphDeps } from './codegraph-seed.ts';
+export { dropHostTargets, type HostTargetDrop } from './remote-repo.ts';
+export { sweepHostLeadTargets, sweepHostTmp, type HostCleanupResult } from './remote-tmp.ts';
 
 const exec = promisify(execFile);
 const gitOutput = async (cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> =>
@@ -171,7 +173,9 @@ export async function snapshotCommit(repo: string): Promise<string> {
     if (!existsSync(index)) await run('read-tree', 'HEAD');
     await run('add', '-A');
     const tree = await run('write-tree');
-    return await run('commit-tree', tree, '-p', 'HEAD', '-m', `orch snapshot of ${repo} (HEAD plus its uncommitted changes)`);
+    // The moment names the snapshot: two snapshots of one tree a second apart are distinct commits, so a
+    // reviewer's checkout move stays observable even when git's second-granularity dates would collide.
+    return await run('commit-tree', tree, '-p', 'HEAD', '-m', `orch snapshot of ${repo} (HEAD plus its uncommitted changes) at ${new Date().toISOString()}`);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -294,7 +298,7 @@ function commandPathValues(command: string): string[] {
 
 async function defaultCommandOf(pid: number): Promise<string> {
   try {
-    return (await exec('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000, windowsHide: true })).stdout.trim();
+    return (await exec(process.env.ORCH_TEST_PS ?? '/bin/ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000, windowsHide: true })).stdout.trim();
   } catch {
     return '';
   }
@@ -625,13 +629,21 @@ function runProvisionCommand(command: string, args: string[], dir: string, env: 
     : runStep(command, args, dir, env, timeoutMs);
 }
 
+function codegraphInitEnabled(options?: { codegraphInit?: boolean }): boolean {
+  return options?.codegraphInit !== false;
+}
+
+function indexSetupLines(setup: string[], options?: { codegraphInit?: boolean }): string[] {
+  return setup.filter(line => codegraphInitEnabled(options) || !line.includes('codegraph init'));
+}
+
 /**
  * Run orch's worktree setup inside `dir`. A step that exits non-zero
  * stops provisioning and fails the seat: a coder without node_modules cannot
  * run the checks its brief asks for. The setup lines guard their own optional
  * parts with `|| true`.
  */
-export async function provisionWorktree(main: string, dir: string, timeoutMs = 20 * 60_000): Promise<{ ok: boolean; steps: ProvisionStep[] }> {
+export async function provisionWorktree(main: string, dir: string, timeoutMs = 20 * 60_000, options?: { codegraphInit?: boolean }): Promise<{ ok: boolean; steps: ProvisionStep[] }> {
   const config = path.join('ops', 'orchestrator', 'worktree-setup.json');
   let setup: string[] = [];
   let gateMarkers: string[] | undefined;
@@ -647,8 +659,9 @@ export async function provisionWorktree(main: string, dir: string, timeoutMs = 2
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
+  setup = indexSetupLines(setup, options);
   const bash = await bashExecutable();
-  const env = { ...process.env, ORCH_SOURCE_CHECKOUT_PATH: main };
+  const env = { ...process.env, ORCH_SOURCE_CHECKOUT_PATH: main, ORCH_AUTO_CODEGRAPH_INIT: String(codegraphInitEnabled(options)) };
   const steps: ProvisionStep[] = [];
   const seedAt = setup.findIndex(line => line.includes('codegraph init'));
   for (const [index, line] of setup.entries()) {

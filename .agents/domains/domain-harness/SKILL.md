@@ -1,6 +1,6 @@
 ---
 name: domain-harness
-description: Load when editing the agent harness itself — the memory store and its scripts, RTK routing, the skills tree and its installers. Holds harness gotchas.
+description: Load when editing the agent harness itself — orchestration, bootstrap and installers, RTK routing, the skills tree, mods and hooks. Holds harness gotchas. The memory service and its records live in domain-memory.
 files:
   - .codex/**
   - .claude/agents/**
@@ -9,7 +9,6 @@ files:
   - .claude/scripts/**
   - .claude/skill-compass/**
   - .claude/settings*.json
-  - scripts/memory/**
   - scripts/harness-report/**
   - scripts/lib/install-*.mjs
   - scripts/lib/harness-config.mjs
@@ -25,7 +24,6 @@ files:
   - scripts/check-mcp-delivery.mjs
   - ops/bootstrap/**
   - ops/orchestrator/**
-  - ops/memory-nas/**
   - ops/harness-kit/**
   - ops/routines/**
   - ops/claude-mods/**
@@ -79,10 +77,10 @@ while four lessons about that very file sat in the store. This domain is the rou
   An ssh alias, a checkout path or a disk name is a machine value and must not
   sit in the canon as a bare rule — `ungatedMachineBoundEntries` in
   `ops/bootstrap/permissions-lib.mjs` is the sensor.
-- `scripts/memory/*` — the memory store, its lesson capture/promotion and the domain routing
-  that decides which lessons a file gets.
 - `ops/bootstrap/*` — installers. Configuration here is GENERATED into runtimes; editing an
-  installed copy is lost on the next run.
+  installed copy is lost on the next run. The memory service installers
+  (`ops/bootstrap/install-memory.mjs`, `scripts/lib/memory-installer.mjs`) and the
+  store itself (`scripts/memory/**`) are routed to domain-memory.
 - No member exemptions: every seat gets session inject and lessons; the
   code-intel order hook is wired for the lead runtimes only (`CODE_INTEL_LEADS`
   in `install-harness.mjs`: claude, glm-lead, zcode) plus codex, kimi and grok
@@ -110,7 +108,7 @@ while four lessons about that very file sat in the store. This domain is the rou
   deny is a contract change: `scripts/check-hook-topology.mjs` fails on
   `permissionDecision:"deny"` in either file.
 - Harness cost policy (operator, 2026-07-31): no needless multi-seat rounds for small
-  closures — an independent review through orch-team only for a moved tree or a new
+  closures — an independent review through orch only for a moved tree or a new
   dimension, not for a question that is just about evidence; burn lives in marathon
   sessions, not in hooks (~1.5-5% of cache-read).
 

@@ -55,6 +55,16 @@ test('off-route lessons use the sole explicit domain, including bare names; ambi
     /selected route domain-platform-shell conflicts with sole explicit candidate domain-harness/);
 });
 
+test('a move of a merged historical body passes the gate; capturing it is refused', async () => {
+  const merged = `${candidate.body}\n\n## Merged in from #4110\n- trigger: When merging\n- rule: The merged lesson keeps its history.\n- why: A historical merge carries two field sets.\n- evidence: #4110`;
+  // A move changes links only, so the unchanged body is not re-judged (gateMovedLesson, #6126).
+  const moved = await gateNewLesson({ ...candidate, body: merged }, deps({ mode: 'move' }));
+  assert.equal(moved.status, 'active');
+  assert.equal(moved.gate.v, 1);
+  assert.equal(moved.anchor, candidate.links.anchor);
+  await assert.rejects(gateNewLesson({ ...candidate, body: merged }, deps()), /lesson trigger is duplicated/);
+});
+
 test('catchall accepts platform-shell lessons but refuses a different stored domain before Jev', async () => {
   const floor = { order: [{ glob: '**', domain: 'domain-platform-shell', spec: 0 }] };
   const links = { ...candidate.links, domain: 'domain-platform-shell' };

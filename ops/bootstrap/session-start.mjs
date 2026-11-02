@@ -12,19 +12,21 @@
 // Contract with the host (learned from the 2026-07-28 rollback, memory #255):
 //   - exit 0 ALWAYS: a broken check must never break the session;
 //   - bounded output: diagnostics capped at OUTPUT_BUDGET_BYTES; lead rules, and the STE rule block while the language switch is not off, reserved in full;
-//   - quiet: nothing on stderr, no interactive prompts, hard timeouts.
+//   - quiet: nothing on stderr, no interactive prompts, hard timeouts (the one
+//     exception, task 3459 C9: a refused install settings document adds a single
+//     fixed-category stderr line for a lead; see adhdRulesVerdict below).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forgetDeliveredLessons } from './domain-lessons-hook.mjs';
 import { spawnPlan } from '../../scripts/memory/lesson-lib.mjs';
 import { installerCanonDir, supportLeadInstalled } from '../../scripts/git-env.mjs';
 import { formatLine, isStale, readCache } from '../usage-cache.mjs';
-import { effectiveLeadSkills, readHarnessConfig } from '../../scripts/lib/harness-config.mjs';
+import { effectiveLeadSkills, readHarnessConfig, readInstallSettings } from '../../scripts/lib/harness-config.mjs';
 
 const PROBE_TIMEOUT_MS = 4000;
 const OUTPUT_BUDGET_BYTES = 6 * 1024;
@@ -182,6 +184,9 @@ function leadChatJoinLines(event, env) {
   if (typeof session !== 'string' || session.trim() === '' || /[\r\n]/.test(session)) return [];
   return [
     `session_id: ${session}`,
+    // Task 3439: the board-first hook refuses a Claude lead's first orch call until the board is open;
+    // task 3448: after /clear the tab may already be open — select it instead of opening a second one.
+    'Open the orch board before any orch call: call tabs_context first; if a board tab (origin http://127.0.0.1:7760) is open, tabs_select it; only when none exists, preview_start {url: "http://127.0.0.1:7760/"} (Codex desktop: open the same URL).',
     `chat_join {handle: "<track slug>", session: "${session}"} — the handle is the lead's track slug.`,
     'For chat_join also pass desktop: get_session "self" field sessionId; omit desktop when that tool is unavailable.',
   ];
@@ -202,6 +207,29 @@ function harnessConfigFaultLine(error, file) {
     return `WARNING: harness config: the file is not valid JSON: ${file}\n`;
   }
   return `WARNING: harness config: the reader refuses the config: ${file}; the installer prints the reason\n`;
+}
+
+/**
+ * lead.adhdRules (task 3459 C9): the install settings document's verdict on the
+ * i-have-adhd delivery, combined with the checkout config's plainStyle verdict.
+ * Plain Node only — readInstallSettings from the plain-JS entry, never orch
+ * TypeScript. The one permitted fail-open (named in
+ * ops/orchestrator/src/settings/CONTRACT.md): a refused document or an invalid
+ * stored value keeps today's behaviour for the key (rules on) and adds one
+ * fixed-category line for stderr. Never the reader's message: it quotes the file.
+ */
+function adhdRulesVerdict(env, home, suppressRules) {
+  const stateDir = env.ORCH_STATE_DIR ? resolve(env.ORCH_STATE_DIR) : join(home, '.local', 'state', 'orch');
+  const file = join(stateDir, 'settings.json');
+  try {
+    const { document } = readInstallSettings(stateDir);
+    const stored = document.values['lead.adhdRules'];
+    if (stored === undefined) return { suppress: suppressRules, fault: '' };
+    if (stored === false) return { suppress: true, fault: '' };
+    return { suppress: suppressRules, fault: `WARNING: install settings: lead.adhdRules has an invalid stored value: ${file}\n` };
+  } catch {
+    return { suppress: suppressRules, fault: `WARNING: install settings: the reader refuses the document: ${file}; the settings store prints the reason\n` };
+  }
 }
 async function main() {
   // A compaction keeps the session id and drops what the context held, so the
@@ -367,6 +395,7 @@ async function main() {
   // category and the config path, never the reader's message.
   let operatorRules = '';
   let harnessConfigFault = '';
+  let installSettingsFault = '';
   if (!process.env.ORCH_SEAT_ID) {
     let suppressRules = false;
     try {
@@ -375,6 +404,12 @@ async function main() {
     } catch (error) {
       harnessConfigFault = harnessConfigFaultLine(error, join(repoRoot, 'ops', 'bootstrap', 'harness.config.json'));
     }
+    // The install settings document's lead.adhdRules verdict rides the same suppression;
+    // the helper owns every decision so main() gains no branch. Corrupt document → the
+    // fault line goes to stderr and the rules stay on (the one permitted fail-open).
+    const adhd = adhdRulesVerdict(process.env, homedir(), suppressRules);
+    suppressRules = adhd.suppress;
+    installSettingsFault = adhd.fault;
     if (!suppressRules) {
       try {
         const body = readFileSync(join(repoRoot, '.agents', 'skills', 'i-have-adhd', 'SKILL.md'), 'utf8')
@@ -622,6 +657,9 @@ async function main() {
   process.stdout.write(harnessConfigFault
     ? `${delivered}${delivered.endsWith('\n') ? '' : '\n'}${harnessConfigFault}`
     : delivered);
+  // Empty unless the install settings reader refused the document (leads only):
+  // writing zero bytes keeps main() branch-free and stderr quiet in every other run.
+  process.stderr.write(installSettingsFault);
 }
 
 // Run only when this file IS the program. Without the guard, importing it to

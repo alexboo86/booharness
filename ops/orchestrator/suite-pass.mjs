@@ -20,12 +20,13 @@ export function orchSuiteTests(repo) {
 }
 
 /** Each test's own inputs: itself, every file that it imports or names in a
- * string and, for a test that reads the skill map, each role-default SKILL.md.
+ * string (excluding whole-statement type-only imports/re-exports) and, for a
+ * test that reads the skill map, each role-default SKILL.md.
  * `contents` overrides working-tree bytes (null means absent). */
 export function suiteInputs(repo, tests, contents = new Map()) {
   const edges = new Map();
   const files = relativeImportFiles(repo, tests, {
-    allowMissing: true, includeFileLiterals: true, contents, edges,
+    allowMissing: true, includeFileLiterals: true, skipTypeOnly: true, contents, edges,
   });
   // seatContext reads these interpolated paths; match its skill-name filter. It
   // reads only a seat role's list: `lead` and `advisor` defaults reach no seat, and
@@ -56,6 +57,23 @@ export function suiteInputs(repo, tests, contents = new Map()) {
   return { files, inputs };
 }
 
+/** Suite inputs kept in the commit selector but left out of the restart hash. */
+function notHashed(name) {
+  // Knowledge pages are prose, not executable code or configuration. Literal
+  // paths in context/security tests reach them incidentally; doc-only merges
+  // must not starve the restart record during a long run. Keep them in the
+  // commit selector, but omit their bytes AND presence from the shared hash
+  // used before/after the suite and at restart. Code, fixtures and skills
+  // (including code under knowledge/) still invalidate the record.
+  if (/^\.agents\/domains\/[^/]+\/knowledge(?:\.md|\/.*\.md)$/i.test(name)) return true;
+  // Git's own metadata is never suite code. A fixture literal such as '.git/index'
+  // names the shared checkout's index, which every other lead's git command
+  // rewrites, so it voided each pass record (task 2779). The codegraph index is
+  // a derived cache that its sync rewrites mid-run; a fixture literal naming it
+  // voided every whole-suite pass the same way (task 3490).
+  return ['.git', '.codegraph'].some((dir) => name === dir || name.startsWith(`${dir}/`));
+}
+
 /** sha256 of restart-relevant suite inputs, absent ones included. */
 export function suiteHash(repo) {
   const { files, inputs } = suiteInputs(repo, orchSuiteTests(repo));
@@ -63,17 +81,7 @@ export function suiteHash(repo) {
   for (const reached of inputs.values()) for (const name of reached) names.add(name);
   const hash = createHash('sha256');
   for (const name of [...names].sort()) {
-    // Knowledge pages are prose, not executable code or configuration. Literal
-    // paths in context/security tests reach them incidentally; doc-only merges
-    // must not starve the restart record during a long run. Keep them in the
-    // commit selector, but omit their bytes AND presence from the shared hash
-    // used before/after the suite and at restart. Code, fixtures and skills
-    // (including code under knowledge/) still invalidate the record.
-    if (/^\.agents\/domains\/[^/]+\/knowledge(?:\.md|\/.*\.md)$/i.test(name)) continue;
-    // Git's own metadata is never suite code. A fixture literal such as '.git/index'
-    // names the shared checkout's index, which every other lead's git command
-    // rewrites, so it voided each pass record (task 2779).
-    if (name === '.git' || name.startsWith('.git/')) continue;
+    if (notHashed(name)) continue;
     let bytes = files.get(name);
     if (bytes === undefined) {
       try { bytes = readFileSync(path.join(repo, name)); } catch (error) {
@@ -102,6 +110,9 @@ export function writeSuitePass(stateDir, hash, repo) {
 /** Why this checkout may not be restarted onto, or null when the suite passed on it. */
 export function suitePassRefusal(checkout, stateDir) {
   const repo = path.resolve(checkout);
+  // An installed kit ships no orch tests (build-kit leaves them out) and no check:orch-tests:
+  // there is no suite to have passed, and the remedy below would name a missing command.
+  if (orchSuiteTests(repo).length === 0) return null;
   const remedy = `run npm run check:orch-tests in ${repo}, or pass --no-suite "<reason>"`;
   const hash = suiteHash(repo);
   const tree = `tree ${repo} has ${hash.slice(0, 16)}`;

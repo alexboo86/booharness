@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
 import { homeReader } from './home-read-lib.mjs';
 import { checkLeadChatWiring } from './lib/check-lead-chat-wiring.mjs';
 import { checkKimiHookWiring } from './lib/check-kimi-hook-wiring.mjs';
+import { auditSeatStash } from './lib/check-seat-stash-topology.mjs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -69,6 +70,10 @@ const read = (p) => readFileSync(p, 'utf8');
 /// copies of one guard is how the third one gets written wrong.
 const skipped = [];
 const readHome = homeReader(skipped);
+// Task 3458: a measured absence that is neither green nor red — a home with
+// no settings.json has no hooks to audit. Printed as `note:` lines with the
+// report, never folded into the verdict.
+const notes = [];
 
 /**
  * The TOML runtimes used to be read by `svod hooks-topology`, a strict TOML
@@ -144,7 +149,21 @@ for (const home of [
   if (!existsSync(settingsPath)) continue;
   const settingsText = readHome(settingsPath, 'native rtk hook + code-intel wiring');
   if (settingsText === null) continue;
-  const settings = JSON.parse(settingsText);
+  // Task 3458: a settings.json that exists but does not parse is a named
+  // failure, never a crash — the bare JSON.parse here once killed the whole
+  // sensor before a single section could report (same class as the
+  // codex/hooks-json-parse guard further down).
+  let settings = null;
+  try {
+    settings = JSON.parse(settingsText);
+  } catch (error) {
+    check(false, `${settingsPath} — settings.json is not valid JSON: ${error.message}`);
+    continue;
+  }
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+    check(false, `${settingsPath} — settings.json is not a JSON object, so no hooks can be wired in it`);
+    continue;
+  }
   const bashHooks = (settings.hooks?.PreToolUse ?? [])
     .filter((group) => String(group.matcher ?? '').split('|').includes('Bash'))
     .flatMap((group) => group.hooks ?? [])
@@ -748,236 +767,10 @@ rmSync(contextLinkHook, { force: true });
 rmSync(contextLinkDir, { force: true });
 rmSync(contextDir, { recursive: true, force: true });
 
-// 3d. A native orch seat may not rewrite the shared stash stack (task 1999,
-// decision #14007). The installer wires the hook into the claude runtime's
-// settings.json only; a glm seat is covered by that same file exactly while
-// glm.env (~/.local/state/orch/providers.json) names no other
-// CLAUDE_CONFIG_DIR. Like 3c the pin is a run, not a grep: the probes below
-// execute the hook itself, including through symlinks, malformed payloads and
-// quoted spellings (review 2026-10-08). The live-wiring check at the end is red
-// until the operator's next installer run lands the hook — expected right after
-// this change, a defect after it — and when the hook IS wired, the wired command
-// itself must name an existing script and is fired live.
-const stashWires = installerText.split('\n').filter((line) => line.includes('seat-stash-hook.mjs'));
-check(
-  stashWires.length > 0 && stashWires.every((line) => !/\bcodex\b|\bkimi\b|\bgrok\b/.test(line)),
-  'install-harness.mjs must wire seat-stash-hook.mjs for the claude runtime only, not codex, kimi or grok',
-);
-const stashName = installerText.indexOf('seat-stash-hook.mjs');
-check(
-  stashName >= 0 && /if \(target\.runtime === 'claude'\) \{\s*seatStash = ensureHook\(\s*settings\.hooks,\s*'PreToolUse',\s*'Bash',\s*'seat-stash-hook\.mjs'/.test(installerText),
-  'seat-stash-hook.mjs must sit in the claude-only installer branch',
-);
-check(
-  /ensureHook\(\s*settings\.hooks,\s*'PreToolUse',\s*'Bash',\s*'seat-stash-hook\.mjs'/.test(installerText),
-  'seat-stash-hook.mjs must be wired as PreToolUse on Bash',
-);
-const stashHook = join(REPO, 'ops', 'bootstrap', 'seat-stash-hook.mjs');
-const stashSeatEnv = { ...process.env, ORCH_SEAT_ID: 'probe', SEAT_POLICY_ROLE: 'coder' };
-const stashLeadEnv = { ...process.env };
-delete stashLeadEnv.ORCH_SEAT_ID;
-delete stashLeadEnv.SEAT_POLICY_ROLE;
-const stashProbe = (command, env, hookPath = stashHook) => spawnSync(process.execPath, [hookPath], {
-  input: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
-  encoding: 'utf8',
-  env,
-  timeout: 20000,
-});
-const stashRawProbe = (raw, env, hookPath = stashHook) => spawnSync(process.execPath, [hookPath], {
-  input: raw,
-  encoding: 'utf8',
-  env,
-  timeout: 20000,
-});
-const stashDenied = (probe) => probe.status === 0 && /"permissionDecision":"deny"/.test(probe.stdout || '');
-const stashSilent = (probe) => probe.status === 0 && !(probe.stdout || '').trim();
-check(
-  stashDenied(stashProbe('git stash', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat bare git stash',
-);
-check(
-  stashDenied(stashProbe("git stash pop # don't", stashSeatEnv)),
-  'seat-stash-hook.mjs must deny `git stash pop # don\'t` — split retries with the comment removed (task 2051)',
-);
-check(
-  stashDenied(stashProbe('rtk git stash pop', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat rtk-wrapped git stash pop',
-);
-check(
-  stashDenied(stashProbe('bash -c "git stash pop"', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat stash pop wrapped in bash -c',
-);
-check(
-  stashDenied(stashProbe('git -c core.editor=vim stash pop', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat stash pop behind a git -c value (review 2026-10-04)',
-);
-check(
-  stashDenied(stashProbe('git sta"sh" pop', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat git sta"sh" pop — the guard, not a substring, decides (review 2026-10-08)',
-);
-check(
-  stashDenied(stashProbe('git sta\\sh pop', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat git sta\\sh pop — the guard, not a substring, decides (review 2026-10-08)',
-);
-check(
-  stashDenied(stashRawProbe('{not json git stash pop', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat Bash payload it cannot parse when its raw text names stash (review 2026-10-08)',
-);
-check(
-  stashSilent(stashRawProbe('{not json', stashSeatEnv)),
-  'seat-stash-hook.mjs must stay silent on an unparseable payload that does not name stash',
-);
-check(
-  stashDenied(stashRawProbe('{"tool_name":"Bash","tool_input":"git stash pop"}', stashSeatEnv)),
-  'seat-stash-hook.mjs must deny a seat whose tool_input is a plain string naming stash (review 2026-10-08)',
-);
-check(
-  stashSilent(stashRawProbe('{"tool_name":"Read","tool_input":{"file_path":"docs/stash-notes.md"}}', stashSeatEnv)),
-  'seat-stash-hook.mjs must not judge a payload naming another tool',
-);
-// Invoked through a symlinked file or directory the body must still run
-// (review 2026-10-08): the hook's main-module guard compares real paths.
-const stashLinkDir = join(realpathSync(tmpdir()), `seat-stash-linkdir-${process.pid}`);
-rmSync(stashLinkDir, { force: true });
-symlinkSync(realpathSync(tmpdir()), stashLinkDir);
-const stashLinkHook = join(stashLinkDir, `seat-stash-link-${process.pid}.mjs`);
-symlinkSync(stashHook, stashLinkHook);
-check(
-  stashDenied(stashProbe('git stash pop', stashSeatEnv, stashLinkHook)),
-  'seat-stash-hook.mjs must deny a stash pop when invoked through a symlinked path (review 2026-10-08)',
-);
-rmSync(stashLinkHook, { force: true });
-rmSync(stashLinkDir, { force: true });
-check(
-  stashSilent(stashProbe('git stash list', stashSeatEnv)),
-  'seat-stash-hook.mjs must pass a seat git stash list',
-);
-check(
-  stashSilent(stashProbe('git stash show', stashSeatEnv)),
-  'seat-stash-hook.mjs must pass a seat git stash show',
-);
-check(
-  stashSilent(stashProbe('git stash pop', stashLeadEnv)),
-  'seat-stash-hook.mjs must never deny a lead',
-);
-check(
-  stashSilent(stashProbe('npm run lint', stashSeatEnv)),
-  'seat-stash-hook.mjs must pass a seat command that never mentions stash',
-);
-check(
-  stashSilent(stashProbe('', stashSeatEnv)),
-  'seat-stash-hook.mjs must stay silent on empty stdin',
-);
-// Fail closed, pinned by breaking the import on purpose in a temp copy: the
-// real hook file is never touched. realpathSync because a symlinked tmpdir
-// (macOS /tmp) would defeat the hook's main-module guard.
-const stashFailClosedHook = join(realpathSync(tmpdir()), `seat-stash-failclosed-${process.pid}.mjs`);
-writeFileSync(stashFailClosedHook, read(stashHook).replace('../orchestrator/src/seat-guard.ts', '/nonexistent-seat-guard.ts'));
-check(
-  stashDenied(spawnSync(process.execPath, [stashFailClosedHook], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git stash' } }),
-    encoding: 'utf8',
-    env: stashSeatEnv,
-    timeout: 20000,
-  })),
-  'seat-stash-hook.mjs must deny a seat git stash even when the seat-guard import breaks (fail closed)',
-);
-check(
-  stashDenied(spawnSync(process.execPath, [stashFailClosedHook], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git sta"sh" pop' } }),
-    encoding: 'utf8',
-    env: stashSeatEnv,
-    timeout: 20000,
-  })),
-  'seat-stash-hook.mjs must deny a quoted stash spelling even when the seat-guard import breaks (review 2026-10-08)',
-);
-check(
-  stashSilent(spawnSync(process.execPath, [stashFailClosedHook], {
-    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'npm run lint' } }),
-    encoding: 'utf8',
-    env: stashSeatEnv,
-    timeout: 20000,
-  })),
-  'a broken seat-guard import must not touch commands without stash after quote and backslash removal',
-);
-rmSync(stashFailClosedHook, { force: true });
-// The coverage claim itself: glm seats read ~/.claude/settings.json only
-// while glm.env names no other CLAUDE_CONFIG_DIR.
-const orchProvidersPath = join(HOME, '.local', 'state', 'orch', 'providers.json');
-if (existsSync(orchProvidersPath)) {
-  const providersText = readHome(orchProvidersPath, 'glm seat CLAUDE_CONFIG_DIR coverage');
-  if (providersText !== null) {
-    let glmEnv = {};
-    try { glmEnv = JSON.parse(providersText)?.glm?.env ?? {}; } catch { glmEnv = {} }
-    const configDir = typeof glmEnv.CLAUDE_CONFIG_DIR === 'string'
-      ? glmEnv.CLAUDE_CONFIG_DIR.replace(/^~(?=[\\/]|$)/, HOME)
-      : undefined;
-    check(
-      configDir === undefined || configDir === join(HOME, '.claude'),
-      `${orchProvidersPath} — glm.env names CLAUDE_CONFIG_DIR=${String(glmEnv.CLAUDE_CONFIG_DIR)}; seat-stash-hook.mjs is wired into ~/.claude/settings.json only, so a glm seat with another config dir escapes the stash guard`,
-    );
-  }
-}
-// The live wiring. Gated on the claude HOME being present on this machine,
-// not on settings.json: a claude home whose settings carry no stash hook is
-// the red line (lesson #10952). When wired, the wired command's script must
-// exist — a hook pointing at a dead path is not wired — and the wired command
-// itself is fired live below.
-// The script path of a wired seat-stash command, parsed the way hookCommand
-// writes it (ops/bootstrap/install-harness.mjs:937-940): a double-quoted path
-// that may contain spaces. The unquoted form is read too, for hand-written
-// wiring. hookCommand quotes because paths keep spaces; an extraction that
-// stops at the first space red-flagged a correct install (review 2026-10-10).
-const wiredStashScript = (command) => (String(command).match(/"([^"]*seat-stash-hook\.mjs)"/) || [])[1]
-  ?? (String(command).match(/(?:^|\s)([^\s"]*seat-stash-hook\.mjs)/) || [])[1]
-  ?? '';
-check(
-  wiredStashScript('node "/x/checkout with space/ops/bootstrap/seat-stash-hook.mjs"') === '/x/checkout with space/ops/bootstrap/seat-stash-hook.mjs',
-  'the wired-script extraction must keep a quoted path with spaces (review 2026-10-10)',
-);
-check(
-  wiredStashScript('node /x/plain/seat-stash-hook.mjs') === '/x/plain/seat-stash-hook.mjs'
-    && wiredStashScript('node "/x/other with space/plain.mjs"') === ''
-    && wiredStashScript('echo no script here') === '',
-  'the wired-script extraction must read the unquoted form and name nothing when no script is present',
-);
-const stashSettingsPath = join(HOME, '.claude', 'settings.json');
-let wiredStashCommand = '';
-if (existsSync(join(HOME, '.claude'))) {
-  const stashSettingsText = readHome(stashSettingsPath, 'seat stash hook wiring');
-  if (stashSettingsText !== null) {
-    let wiredStashCommands = [];
-    try {
-      wiredStashCommands = (JSON.parse(stashSettingsText)?.hooks?.PreToolUse ?? [])
-        .filter((group) => String(group.matcher ?? '').split('|').includes('Bash'))
-        .flatMap((group) => group.hooks ?? [])
-        .map((hook) => String(hook.command ?? ''))
-        .filter((command) => command.includes('seat-stash-hook.mjs'));
-    } catch { wiredStashCommands = []; }
-    check(
-      wiredStashCommands.length > 0,
-      `${stashSettingsPath} — seat-stash-hook.mjs must be wired on PreToolUse(Bash); run node ops/bootstrap/install-harness.mjs from the main checkout`,
-    );
-    const wiredScript = wiredStashCommands.map(wiredStashScript).find(Boolean) ?? '';
-    check(
-      wiredStashCommands.length === 0 || (wiredScript && existsSync(wiredScript)),
-      `${stashSettingsPath} — the wired seat-stash command must name a script that exists (${wiredStashCommands.length === 0 ? 'nothing wired — see the line above' : wiredScript || 'no script path found in the command'})`,
-    );
-    wiredStashCommand = wiredStashCommands[0] ?? '';
-  }
-}
-if (wiredStashCommand) {
-  check(
-    stashDenied(spawnSync(wiredStashCommand, {
-      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git stash pop' } }),
-      encoding: 'utf8',
-      env: stashSeatEnv,
-      timeout: 20000,
-      shell: true,
-    })),
-    'the WIRED seat-stash command must deny a seat git stash pop',
-  );
-}
+// 3d. The seat-stash audit moved to scripts/lib/check-seat-stash-topology.mjs
+// (task 3458 follow-up: this file crossed the 1500-line large-file ratchet).
+// Pure move — same checks, same order, same labels.
+auditSeatStash({ REPO, HOME, installerText, check, read, readHome, notes });
 
 // 3e. Recursive forced deletion is refused by a HOOK, not a permission rule
 // (decisions #14075/#14077): any Bash rule in permissions.deny keeps the
@@ -1365,6 +1158,117 @@ check(
   }`,
 );
 
+// Operator order 2026-10-30: the board-first rule (orch SKILL.md:12,
+// decisions #10530/#21159) is enforced by lead-board-first-hook.mjs, wired for
+// the Claude lead only — the browser pane the refusal names is the Claude
+// desktop app's. Pinned from the syntax tree like the worktree wire above (a
+// comment or string naming the hook is not a call), with the behavior owned by
+// the hook's own suite rather than duplicate probes. No live must-be-wired
+// line here on purpose: the operator installs after review, and the live
+// homes' reds would say "installer not run", which is the lead's step, not a
+// defect in this tree.
+let boardWiringValid = false;
+if (worktreeInstallerSf && worktreeInstallerSf.parseDiagnostics.length === 0) {
+  const findNodes = (root, predicate) => {
+    const found = [];
+    const walk = (node) => {
+      if (predicate(node)) found.push(node);
+      node.forEachChild(walk);
+    };
+    walk(root);
+    return found;
+  };
+  const literal = (node, value) => node && ts.isStringLiteral(node) && node.text === value;
+  const member = (node, objectName, propertyName) => node && ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === objectName
+    && node.name.text === propertyName;
+  const isBoardWire = (node) => ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === 'ensureHook'
+    && literal(node.arguments[3], 'lead-board-first-hook.mjs');
+  // Task 3448: TWO wires — the PreToolUse refusal plus PostToolUse tabs_context, which records the board mark on the tab /clear left open.
+  const boardHookCommand = (command) => command && ts.isCallExpression(command)
+    && ts.isIdentifier(command.expression) && command.expression.text === 'hookCommand'
+    && command.arguments.length === 2 && member(command.arguments[0], 'ctx', 'repo')
+    && literal(command.arguments[1], 'lead-board-first-hook.mjs');
+  const boardWireValid = (wire, event, matcher) => wire.arguments.length === 5
+    && member(wire.arguments[0], 'settings', 'hooks')
+    && literal(wire.arguments[1], event) && literal(wire.arguments[2], matcher)
+    && boardHookCommand(wire.arguments[4]);
+  const boardWires = findNodes(worktreeInstallerSf, isBoardWire);
+  const claudeBranches = findNodes(worktreeInstallerSf, (node) => ts.isIfStatement(node)
+    && ts.isBinaryExpression(node.expression)
+    && node.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    && member(node.expression.left, 'target', 'runtime')
+    && literal(node.expression.right, 'claude'));
+  const inClaudeBranch = (wire) => claudeBranches.some((branch) => findNodes(branch.thenStatement, isBoardWire).includes(wire));
+  boardWiringValid = boardWires.length === 2 && boardWires.every(inClaudeBranch)
+    && boardWires.some((wire) => boardWireValid(wire, 'PreToolUse', 'mcp__orch__.*|mcp__Claude_Browser__preview_start|mcp__Claude_Browser__navigate'))
+    && boardWires.some((wire) => boardWireValid(wire, 'PostToolUse', 'mcp__Claude_Browser__tabs_context'));
+}
+check(
+  boardWiringValid,
+  'install-harness.mjs must wire lead-board-first-hook.mjs exactly twice inside the Claude-only branch: PreToolUse on mcp__orch__.* and the Claude browser tools, and PostToolUse on mcp__Claude_Browser__tabs_context (operator order 2026-10-30; task 3448)',
+);
+// Reuse the primary behavioral owner rather than maintaining duplicate probes.
+const boardProbe = spawnSync(process.execPath, [
+  '--test', '--test-timeout=60000', '--test-force-exit',
+  join(REPO, 'scripts', 'test-lead-board-first-hook.mjs'),
+], {
+  encoding: 'utf8',
+  timeout: 60000,
+});
+check(
+  boardProbe.status === 0,
+  `lead-board-first-hook.mjs must refuse the session's first mcp__orch__* call naming preview_start on 127.0.0.1:7760, pass after one refusal, a board open or a tabs_context result listing a board tab, and exempt seats: ${
+    boardProbe.status === 0 ? '' : (boardProbe.stderr || boardProbe.stdout || boardProbe.error?.message || '').trim().slice(-300)
+  }`,
+);
+
+// Task 3440: only the Claude lead's lessons matcher names the orch seat tools (the seat-brief gate);
+// pinned from the syntax tree like the board wire, its behavior owned by the hook's own suite.
+let seatGateWiringValid = false;
+if (worktreeInstallerSf && worktreeInstallerSf.parseDiagnostics.length === 0) {
+  const findNodes = (root, predicate, found = []) => {
+    if (predicate(root)) found.push(root);
+    root.forEachChild((node) => { findNodes(node, predicate, found); });
+    return found;
+  };
+  const literal = (node, value) => node && ts.isStringLiteral(node) && node.text === value;
+  const member = (node, objectName, propertyName) => node && ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === objectName && node.name.text === propertyName;
+  const SEAT_MATCHER = 'Read|Edit|Write|NotebookEdit|mcp__orch__seat_create|mcp__orch__seat_prompt';
+  const isLessonsWire = (node) => ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === 'ensureHook'
+    && literal(node.arguments[3], 'domain-lessons-hook.mjs');
+  const lessonsWires = findNodes(worktreeInstallerSf, isLessonsWire);
+  const matcherCall = (node) => ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === 'lessonsMatcherFor'
+    && member(node.arguments[0], 'target', 'runtime');
+  const matcherFor = findNodes(worktreeInstallerSf, (node) => ts.isFunctionDeclaration(node)
+    && node.name && node.name.text === 'lessonsMatcherFor')[0];
+  const literalsOf = (root) => findNodes(root, (node) => ts.isStringLiteral(node)).map((node) => node.text);
+  const claudeReturn = matcherFor && findNodes(matcherFor, (node) => ts.isIfStatement(node) && ts.isBinaryExpression(node.expression)
+    && node.expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    && ts.isIdentifier(node.expression.left) && node.expression.left.text === 'runtime' && literal(node.expression.right, 'claude'));
+  seatGateWiringValid = matcherFor !== undefined
+    && lessonsWires.some((wire) => wire.arguments.length === 5
+      && matcherCall(wire.arguments[2]))
+    && literalsOf(matcherFor).filter((text) => text === SEAT_MATCHER).length === 1
+    && literalsOf(matcherFor).filter((text) => text.includes('mcp__orch__seat_')).length === 1
+    && literalsOf(matcherFor).includes('Read|Edit|Write|NotebookEdit')
+    && literalsOf(matcherFor).includes('Edit|Write|NotebookEdit')
+    && claudeReturn !== undefined && claudeReturn.length === 1
+    && findNodes(claudeReturn[0].thenStatement, (node) => literal(node, SEAT_MATCHER)).length === 1;
+}
+check(seatGateWiringValid, 'install-harness.mjs must build the domain-lessons matcher through lessonsMatcherFor, returning the seat-tool matcher only inside the Claude branch (task 3440)');
+const seatGateProbe = spawnSync(process.execPath, [join(REPO, 'scripts', 'test-domain-lessons-hook.mjs')], { encoding: 'utf8', timeout: 120000 });
+check(
+  seatGateProbe.status === 0,
+  `domain-lessons-hook.mjs must deliver lessons/pages/modules once per session and refuse a seat brief on an unmap'd domain, fail open on a broken map, exempt seats and re-deny after compaction (task 3440): ${
+    seatGateProbe.status === 0 ? '' : (seatGateProbe.stderr || seatGateProbe.stdout || seatGateProbe.error?.message || '').trim().slice(-300)
+  }`,
+);
+
 // 4. Contract mirror.
 check(
   read(join(REPO, 'CLAUDE.md')) === read(join(REPO, 'AGENTS.md')),
@@ -1374,7 +1278,9 @@ check(
 for (const label of ok) console.log(`ok: ${label}`);
 // Printed BEFORE the verdict and never folded into it: a check nobody could
 // take is neither a pass nor a defect, and the reader has to be able to tell
-// which of the three it is.
+// which of the three it is. A `note:` line is a fourth, measured absence:
+// what is (no settings.json — no hooks installed here), not what failed.
+for (const label of notes) console.log(`note: ${label}`);
 for (const label of skipped) console.log(`skip: ${label}`);
 if (failures.length) {
   console.error('');

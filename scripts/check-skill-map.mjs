@@ -5,127 +5,35 @@
 // characters (a shell-quoted "\b" once became a backspace and matched nothing).
 // The skills key is class and requires data: each canon directory has one entry,
 // and a core or product class must match the first list that claims that skill.
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { isMain } from './lib/is-main.mjs';
+import { excludedSkillNames, listSkillDirs, mcpServerIds, skillProblems } from './lib/harness-config.mjs';
+export { CLASSES, STACKS, excludedSkillNames, listClass, listSkillDirs, mcpServerIds, skillProblems } from './lib/harness-config.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-export const CLASSES = Object.freeze(['core', 'product', 'lead', 'stack', 'method']);
-export const STACKS = Object.freeze(['rust', 'clickhouse', 'qt', 'tauri', 'web']);
-const BIN = /^bin:[A-Za-z0-9][A-Za-z0-9+._-]*$/;
-const ENTRY_KEYS = new Set(['class', 'stack', 'requires']);
-
-/** The product-skill list, read from the file the kit builder reads (ops/harness-kit/excluded-skills.json), so the check judges that set, not a copy. */
-export function excludedSkillNames(source) {
-  const names = JSON.parse(String(source));
-  if (!Array.isArray(names) || names.some((name) => typeof name !== 'string' || !name)) throw new Error('excluded-skills.json must be an array of skill names');
-  if (!names.length) throw new Error('excluded-skills.json is empty');
-  return new Set(names);
-}
-
-/** Server ids a requires token may name. A key starting with _ is a note, not a server. */
-export function mcpServerIds(registry) {
-  const servers = registry && typeof registry === 'object' ? registry.servers : null;
-  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return new Set();
-  return new Set(Object.keys(servers).filter((id) => !id.startsWith('_')));
-}
-
-/**
- * Real skill directories. A symlink is refused: it is not a directory of this tree
- * (a link named like a skill would admit a file from outside the directory).
- */
-export function listSkillDirs(skillsRoot, fs = { readdirSync, lstatSync }) {
-  const names = [];
+/** Product walls (task 3555): every walled domain exists and names canon skills. */
+function noTriggerSkillProblems(map, domainDirs, canon) {
   const problems = [];
-  for (const name of fs.readdirSync(skillsRoot)) {
-    const st = fs.lstatSync(join(skillsRoot, name));
-    if (st.isSymbolicLink()) {
-      problems.push(`skills: "${name}" is a symlink, not a directory`);
-      continue;
-    }
-    if (st.isDirectory()) names.push(name);
-  }
-  return { names, problems };
-}
-
-/** First list that claims the skill. Overlap is not a union: roleDefaults wins, then the kit exclusion, then the lead set. */
-export function listClass(name, roleDefaults, excluded, leadInstalled) {
-  if (roleDefaults.has(name)) return 'core';
-  if (excluded.has(name)) return 'product';
-  if (leadInstalled.has(name)) return 'lead';
-  return null;
-}
-
-function tokenProblem(token, mcpIds) {
-  if (typeof token !== 'string' || !token) return 'is outside the vocabulary';
-  if (BIN.test(token)) return null;
-  if (token.startsWith('mcp:')) {
-    const id = token.slice(4);
-    if (!mcpIds.has(id)) return `is an unknown mcp id "${id}"`;
-    return null;
-  }
-  if (token === 'service:jev' || token === 'service:clickhouse' || token === 'host:win' || token === 'input:image') return null;
-  return 'is outside the vocabulary';
-}
-
-/**
- * Refusals for the skills key. skillNames is the set of real directories.
- * excluded is the kit list from ops/harness-kit/excluded-skills.json. mcpIds is the server-id set.
- */
-export function skillProblems({ map, skillNames, excluded, mcpIds }) {
-  const problems = [];
-  const skills = map.skills;
-  const entries = skills && typeof skills === 'object' && !Array.isArray(skills) ? skills : null;
-  if (!entries) problems.push('skills: must be an object');
-  const roleDefaults = new Set(Object.values(map.roleDefaults ?? {}).filter(Array.isArray).flat());
-  const leadInstalled = new Set(Array.isArray(map.leadInstalledSkills) ? map.leadInstalledSkills : []);
-  const dirs = new Set(skillNames);
-  for (const name of [...dirs].sort()) {
-    if (!entries || !Object.hasOwn(entries, name)) problems.push(`skills: no entry for directory "${name}"`);
-  }
-  if (!entries) return problems;
-  for (const name of Object.keys(entries).sort()) {
-    if (!dirs.has(name)) problems.push(`skills: entry "${name}" has no directory`);
-    const entry = entries[name];
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      problems.push(`skills.${name}: entry must be an object`);
-      continue;
-    }
-    for (const key of Object.keys(entry)) {
-      if (!ENTRY_KEYS.has(key)) problems.push(`skills.${name}: unknown key "${key}"`);
-    }
-    if (!CLASSES.includes(entry.class)) {
-      problems.push(`skills.${name}: class ${JSON.stringify(entry.class)} is outside the vocabulary`);
-    } else {
-      const expected = listClass(name, roleDefaults, excluded, leadInstalled);
-      if (expected && entry.class !== expected) {
-        problems.push(`skills.${name}: class ${entry.class} disagrees with ${expected} (first matching list)`);
-      }
-      if (!expected && (entry.class === 'core' || entry.class === 'product' || entry.class === 'lead')) {
-        problems.push(`skills.${name}: class ${entry.class} but it is not in that list`);
-      }
-      if (entry.class === 'stack') {
-        if (!STACKS.includes(entry.stack)) problems.push(`skills.${name}: stack ${JSON.stringify(entry.stack)} is outside the vocabulary`);
-      } else if (Object.hasOwn(entry, 'stack')) {
-        problems.push(`skills.${name}: stack is only valid when class is stack`);
-      }
-    }
-    if (!Array.isArray(entry.requires)) {
-      problems.push(`skills.${name}: requires must be a list`);
-    } else {
-      const seen = new Set();
-      for (const token of entry.requires) {
-        const why = tokenProblem(token, mcpIds);
-        if (why) problems.push(`skills.${name}: requires ${JSON.stringify(token)} ${why}`);
-        else if (seen.has(token)) problems.push(`skills.${name}: requires ${JSON.stringify(token)} is duplicated`);
-        else seen.add(token);
-      }
-    }
+  for (const [d, list] of Object.entries(map.noTriggerSkills ?? {})) {
+    if (!domainDirs.includes(`domain-${d}`)) problems.push(`noTriggerSkills: no .agents/domains/domain-${d}`);
+    if (!Array.isArray(list)) { problems.push(`noTriggerSkills.${d}: not a list`); continue; }
+    for (const n of list) if (!canon.has(n)) problems.push(`noTriggerSkills.${d}: unknown skill "${n}"`);
   }
   return problems;
 }
 
+/** Product words (task 3555): the fileless wall's words are non-empty strings keyed by an existing domain. */
+function noTriggerBriefWordProblems(map, domainDirs) {
+  const problems = [];
+  for (const [d, words] of Object.entries(map.noTriggerBriefWords ?? {})) {
+    if (!domainDirs.includes(`domain-${d}`)) problems.push(`noTriggerBriefWords: no .agents/domains/domain-${d}`);
+    if (!Array.isArray(words)) { problems.push(`noTriggerBriefWords.${d}: not a list`); continue; }
+    for (const w of words) if (typeof w !== 'string' || !w.trim()) problems.push(`noTriggerBriefWords.${d}: not a word "${w}"`);
+  }
+  return problems;
+}
 function run() {
   const map = JSON.parse(readFileSync(join(root, '.agents/domains/_skill-map.json'), 'utf8'));
   const canon = new Set(readdirSync(join(root, '.agents/skills')));
@@ -149,6 +57,7 @@ function run() {
       names(`domains.${d}.${r}`, list);
     }
   }
+  problems.push(...noTriggerSkillProblems(map, domainDirs, canon), ...noTriggerBriefWordProblems(map, domainDirs));
   for (const d of domainDirs) if (!map.domains?.[d.replace(/^domain-/, '')]) problems.push(`domains: ${d} has no entry`);
   for (const t of map.triggers ?? []) {
     names(`triggers.${t.id}`, t.skills);

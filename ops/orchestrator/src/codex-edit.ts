@@ -17,7 +17,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readHost, readHosts, type RemoteHost } from './config.ts';
+import { readHost, type RemoteHost } from './config.ts';
 import { localNodeExecutable } from './shared.entry.ts';
 
 type Pins = { package: string; version: string; integrity: string; extension: string; config: { enabled: boolean; models: string[] } };
@@ -38,21 +38,6 @@ export type CodexEditSeat = {
 /** A stock Pi seat that edits: family codex, full access, no stand arm. */
 export function codexEditWanted(seat: CodexEditSeat): boolean {
   return seat.family === 'codex' && seat.access === 'full' && (seat.harness === undefined || seat.harness === 'pi') && seat.standArm === undefined;
-}
-
-/** Why a win32 target never loads codex-edit (task 1956): the pinned toolkit's apply_patch workspace guard compares forward-slash prefixes, so node:path's backslashes make it refuse every nested path with "Parent path escapes workspace". */
-export const CODEX_EDIT_WIN32_WITHHELD = 'codex-edit is not eligible on win32 hosts: the pinned @maxiaochao/pi-toolkit apply_patch refuses every nested Windows path with "Parent path escapes workspace" (task 1956)';
-
-/**
- * Platform eligibility beside codexEditWanted (task 1956, CODEX_EDIT_WIN32_WITHHELD):
- * a seat whose target platform is win32 keeps Pi's built-in edit and write. The
- * host registry is resolved without throwing — an unreadable or unknown host keeps
- * today's answer (eligible), because provisioning and every start still fail loudly
- * on their own readHost. Nothing already installed is uninstalled.
- */
-export function codexEditEligible(host: string | undefined, stateDir?: string): boolean {
-  if (host === undefined) return process.platform !== 'win32';
-  try { return readHosts(stateDir)[host]?.platform !== 'win32'; } catch { return true; }
 }
 
 /** The pinned model ids the extension activates for (the config.json orch writes). */

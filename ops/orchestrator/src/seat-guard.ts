@@ -12,6 +12,8 @@
 import { homedir } from 'node:os';
 import { isAbsolute, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { loadConfig } from './config.ts';
 import { quoteShellPath } from './role-policy.ts';
 import { heavy, toolName } from '../build-gate.mjs';
 
@@ -165,6 +167,12 @@ export function refuseReadOnly(command: string, standArm?: string): string | nul
  *  reviewer-codex-382aee.1). */
 type QuotedSegment = { words: string[]; single: boolean[] };
 
+/** Inside double quotes Bash removes a backslash only before $, `, ", \ or newline. */
+function doubleQuotedEscape(next: string): string {
+  if (next === '\n') return '';
+  return '$`"\\'.includes(next) ? next : `\\${next}`;
+}
+
 /** Top-level segments at `&&`, `||`, `;`, `|`, `&` and newlines, outside quotes. */
 function splitCore(command: string): QuotedSegment[] | null {
   const out: QuotedSegment[] = [];
@@ -191,7 +199,7 @@ function splitCore(command: string): QuotedSegment[] | null {
     if (quote) {
       if (ch === quote) quote = null;
       else if (ch === '\\' && quote === '"' && i + 1 < command.length) {
-        if (command[i + 1] !== '\n') word += command[i + 1];
+        word += doubleQuotedEscape(command[i + 1]);
         wordSingle = false;
         i += 1;
       } else {
@@ -290,6 +298,12 @@ const REDIRECT = /^(\d*|&)(>>?|<)/;
 /** Stream-only redirections that write nothing: `2>&1`, `>&2`, `2>/dev/null`. */
 const HARMLESS_REDIRECT = /^\d*>&\d$|^(\d*|&)>>?\/dev\/null$/;
 
+function refuseAfterCd(words: string[]): string | null {
+  if (words[0] === 'sqlite3') return `${SQLITE_REFUSAL}; refused after a directory change`;
+  if (words[0] === 'node' && !isAbsolute(words[1] ?? '')) return 'node relative script after a directory change';
+  return null;
+}
+
 function refuseSegment(input: string[], standArm?: string, directory?: { changed: boolean }, inputSingle?: boolean[]): string | null {
   const words: string[] = [];
   const singles: boolean[] = [];
@@ -306,7 +320,10 @@ function refuseSegment(input: string[], standArm?: string, directory?: { changed
   }
   if (!words.length) return null;
   if (ASSIGNMENT.test(words[0])) return 'environment assignment before a command';
-  if (directory?.changed && words[0] === 'node' && !isAbsolute(words[1] ?? '')) return 'node relative script after a directory change';
+  if (directory?.changed) {
+    const why = refuseAfterCd(words);
+    if (why) return why;
+  }
   const why = refuseProgram(words, standArm, singles);
   // Use the parsed program, not mentions of cd in a reader's arguments.
   if (!why && directory && words[0] === 'cd') directory.changed = true;
@@ -333,8 +350,8 @@ const RTK_READ: Record<string, string | null> = {
 };
 
 // Pi loads this extension from orch's checkout but starts Bash in the seat cwd.
-const ORCH_SCRIPT = resolve(process.cwd(), 'ops/orchestrator/src/main.ts');
-const ORCH_LOADED_SCRIPT = fileURLToPath(new URL('./main.ts', import.meta.url));
+const ORCH_SCRIPT = resolve(process.cwd(), 'ops/orchestrator/src/main.ts'); // suite-inputs: path only, not a load
+const ORCH_LOADED_SCRIPT = fileURLToPath(new URL('./main.ts', import.meta.url)); // suite-inputs: path only, not a load
 const ORCH_READ_FORMS = `node is not a read-only orch invocation; allowed forms with node ops/orchestrator/src/main.ts or node ${quoteShellPath(ORCH_LOADED_SCRIPT.replaceAll('\\', '/'))}: status; pick-stats [--json]; wait <turn> [--json]`;
 
 /** Fixed read-only CLI grammar, not Node's general flag/script runner (decision #14672). */
@@ -626,6 +643,11 @@ const SED_RANGE = /^\d+(,\d+)?p$/;
  *  `$`, tilde, `!`, escapes, brackets, `=` or quotes. */
 const SED_OPERAND_SAFE = /^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/;
 
+/** A non-option operand is safe only as a single-quoted literal or shell-inert text. */
+function literalOrInert(word: string, single: boolean, inert: RegExp): boolean {
+  return word !== '' && !word.startsWith('-') && (single || inert.test(word));
+}
+
 /** Task 2676: seats read line ranges of a file — only `-n`, one script that is exactly a
  *  line number or range then `p` (any w/W/r/R/e, `;`, newline or regex address fails the
  *  pattern), and file operands bash cannot expand into another word: `sed -n '1p'
@@ -636,12 +658,97 @@ function refuseSedRun(words: string[], singles?: boolean[]): string | null {
   if (words[1] !== '-n' || !SED_RANGE.test(words[2] ?? '') || words.length <= 3) return 'sed is not on the read-only list';
   for (let i = 3; i < words.length; i += 1) {
     const operand = words[i];
-    const literal = singles?.[i] === true && operand !== '' && !operand.startsWith('-');
-    if (literal || SED_OPERAND_SAFE.test(operand)) continue;
+    if (literalOrInert(operand, singles?.[i] === true, SED_OPERAND_SAFE)) continue;
     return 'sed is not on the read-only list';
   }
   return null;
 }
+
+/** Task 3456: read-only seats measure orch.sqlite through exactly one sqlite3 form:
+ *  `sqlite3 -safe -readonly -json -header <stateDir>/orch.sqlite '<one SELECT or PRAGMA>'`.
+ *  `-safe` (sqlite3 >= 3.37) disables dot-commands, ATTACH and load_extension() in the CLI;
+ *  the guard pins the flags, the database path and the statement so nothing else can run. */
+export type SqliteVersionProbe = () => string | null;
+const liveSqliteVersionProbe: SqliteVersionProbe = () => {
+  try {
+    return execFileSync('sqlite3', ['-version'], { encoding: 'utf8', timeout: 10_000 }).trim();
+  } catch {
+    return null;
+  }
+};
+let sqliteVersionProbe: SqliteVersionProbe | null = null; // null: probe the real binary
+let sqliteVersionOk: boolean | null = null; // the probe runs at most once per process
+
+/** Tests inject a probe so they need no sqlite3 binary; null restores the live probe. Resets the cache. */
+export function setSqliteVersionProbe(probe: SqliteVersionProbe | null): void {
+  sqliteVersionProbe = probe;
+  sqliteVersionOk = null;
+}
+
+function sqliteSafeAvailable(): boolean {
+  if (sqliteVersionOk === null) {
+    const output = (sqliteVersionProbe ?? liveSqliteVersionProbe)() ?? '';
+    const version = /^(\d+)\.(\d+)/.exec(output.trim());
+    sqliteVersionOk = version !== null && (Number(version[1]) > 3 || (Number(version[1]) === 3 && Number(version[2]) >= 37));
+  }
+  return sqliteVersionOk;
+}
+
+const SQLITE_REQUIRED_FLAGS = ['-safe', '-readonly', '-json', '-header'];
+const SQLITE_REFUSAL = `sqlite3 is only allowed as: sqlite3 -safe -readonly -json -header <state-dir>/orch.sqlite '<one SELECT or PRAGMA statement>'`;
+/** An unquoted operand bash cannot expand into another word (lesson 18546); `:` for a Windows drive. */
+const SQLITE_OPERAND_SAFE = /^[A-Za-z0-9._/:-][A-Za-z0-9._/:-]*$/;
+
+/** True when every required flag is present exactly once: -cmd, -init, -A, -zip, -batch, `--` and repeats all fail. */
+function sqliteFlagsExact(flags: readonly string[]): boolean {
+  return flags.length === SQLITE_REQUIRED_FLAGS.length && SQLITE_REQUIRED_FLAGS.every((flag) => flags.includes(flag));
+}
+
+/** Every operand is a fully single-quoted literal or inert text, and starts with neither `.` (a
+ *  dot-command) nor `-` (option restart) — judged as bash expands it (lesson 18546). */
+function sqliteOperandsSafe(operands: readonly { word: string; single: boolean }[]): boolean {
+  return operands.every(({ word, single }) => !word.startsWith('.') && literalOrInert(word, single, SQLITE_OPERAND_SAFE));
+}
+
+/** The database is the orch state db, lexically and absolutely; `..` segments and relative paths
+ *  fail closed, so a preceding cd can never change which file is opened (lesson 14682). */
+function sqliteDbAllowed(word: string): boolean {
+  return isAbsolute(word) && !word.split(/[\\/]/).includes('..') && resolve(word) === loadConfig().dbFile;
+}
+
+/** One single-line SELECT or PRAGMA statement: no `;` chaining, no second statement or dot-command
+ *  on a newline, no ATTACH/VACUUM/load_extension( anywhere (-safe already blocks those; belt and braces). */
+function sqliteStatementAllowed(sql: string): boolean {
+  return /^(select|pragma)\b/i.test(sql) && !/[;\r\n]/.test(sql) && !/\battach\b|\bvacuum\b|load_extension\s*\(/i.test(sql);
+}
+
+/** sqlite3's argv split into flags and operands; a lone `-` (stdin to sqlite3) is an operand and fails the path check. */
+function splitSqliteArgs(words: string[], singles?: boolean[]): { flags: string[]; operands: { word: string; single: boolean }[] } {
+  const flags: string[] = [];
+  const operands: { word: string; single: boolean }[] = [];
+  const args = words.slice(1);
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i].startsWith('-') && args[i] !== '-') flags.push(args[i]);
+    else operands.push({ word: args[i], single: singles?.[i + 1] === true });
+  }
+  return { flags, operands };
+}
+
+function refuseSqliteRun(words: string[], singles?: boolean[]): string | null {
+  if (!sqliteSafeAvailable()) return `${SQLITE_REFUSAL}; the sqlite3 -version probe did not report >= 3.37, where -safe exists`;
+  const { flags, operands } = splitSqliteArgs(words, singles);
+  if (!sqliteFlagsExact(flags)) return SQLITE_REFUSAL;
+  if (operands.length !== 2 || !sqliteOperandsSafe(operands)) return SQLITE_REFUSAL;
+  if (!sqliteDbAllowed(operands[0].word)) return SQLITE_REFUSAL;
+  if (!sqliteStatementAllowed(operands[1].word)) return SQLITE_REFUSAL;
+  return null;
+}
+
+/** Readers with their own argument grammar, judged before refuseProgram's switch (keeps its complexity flat). */
+const GRAMMAR_READERS: Record<string, (words: string[], singles?: boolean[]) => string | null> = {
+  sed: refuseSedRun,
+  sqlite3: refuseSqliteRun,
+};
 
 function refuseProgram(words: string[], standArm?: string, singles?: boolean[]): string | null {
   // A bare name only: `./cat` or `/tmp/x/rg` is whatever file sits there, not the reader on PATH
@@ -655,6 +762,7 @@ function refuseProgram(words: string[], standArm?: string, singles?: boolean[]):
     if (name === 'sort' && args.some((a) => /^--compress-program(=|$)/.test(a))) return 'sort --compress-program runs a program';
     return null;
   }
+  if (Object.hasOwn(GRAMMAR_READERS, name)) return GRAMMAR_READERS[name](words, singles);
   switch (name) {
     case 'node':
       return refuseOrchRead(args);
@@ -673,8 +781,6 @@ function refuseProgram(words: string[], standArm?: string, singles?: boolean[]):
       const inner = RTK_READ[sub];
       return inner === null ? null : refuseProgram([inner, ...args.slice(1)], standArm);
     }
-    case 'sed':
-      return refuseSedRun(words, singles);
     case 'rg':
       return args.some((a) => /^--pre(-glob)?(=|$)/.test(a)) ? 'rg --pre runs a program' : null;
     case 'find':

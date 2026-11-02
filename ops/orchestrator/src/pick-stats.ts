@@ -111,6 +111,87 @@ type Review = {
   dismissed: number[];
 };
 
+export type QualityReviewSample = { successes: number; sample: number; share: number | null };
+export type QualityReviewStats = {
+  coders: Map<string, QualityReviewSample>; reviewers: Map<string, QualityReviewSample>;
+  attribution: { reviewerSeats: number; missingAuthor: number; unknownAuthor: number; validReviews: number };
+};
+/** Collision-free key for the recorded family/model/effort, including unknown values. */
+export const qualityProfileKey = (family: string, data: { model?: unknown; effort?: unknown }): string =>
+  JSON.stringify([family, typeof data.model === 'string' ? data.model : null, typeof data.effort === 'string' ? data.effort : null]);
+
+type QualityReview = { seat: string; family: string; data: Record<string, unknown>; created: string; at: string; turn: string; report: Record<string, unknown> };
+
+/** First valid verdict per reviewer seat, in reviewer creation order, not report arrival order. */
+function qualityReviews(db: DatabaseSync): QualityReview[] {
+  const rows = db.prepare(`SELECT s.id AS seat, s.family, s.data, s.created_at AS created,
+    t.id AS turn, t.created_at AS at, t.status, t.text FROM seats s JOIN turns t ON t.seat_id = s.id
+    WHERE s.role = 'reviewer' AND t.started_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM seats a WHERE a.id = json_extract(s.data, '$.author') AND a.role = 'coder')
+    ORDER BY s.created_at, s.id, t.seq`).all() as
+    { seat: string; family: string; data: string; created: string; at: string; turn: string; status: string; text: string | null }[];
+  const seen = new Set<string>();
+  return rows.flatMap((row) => {
+    if (seen.has(row.seat)) return [];
+    const report = reviewerReport(row.status, row.text);
+    if (!report) return [];
+    seen.add(row.seat);
+    return [{ ...row, data: JSON.parse(row.data) as Record<string, unknown>, report }];
+  });
+}
+
+function foldQualitySample(cells: Map<string, QualityReviewSample>, key: string, successes: number, sample: number): void {
+  const cell = cells.get(key) ?? { successes: 0, sample: 0, share: null };
+  cell.successes += successes;
+  cell.sample += sample;
+  cell.share = cell.sample ? cell.successes / cell.sample : null;
+  cells.set(key, cell);
+}
+
+/** Accepted dismissals only: neither a reviewer's reproduced:true nor reproduced:false is adjudication. */
+function dismissalSample(review: QualityReview): { successes: number; sample: number } {
+  const findings = review.report.findings as Record<string, unknown>[];
+  const dismissed = new Set(dismissedFindings(review.data, review.turn, findings));
+  const serious = new Set(findings.flatMap((finding, i) => finding.severity === 'blocker' || finding.severity === 'major' ? [i] : []));
+  for (const i of dismissed) serious.add(i);
+  return { successes: dismissed.size, sample: serious.size };
+}
+
+/** Coder population matches roleStats: distinct seats with started turns in [since, until).
+ * Only reviewed coders enter first-pass approval's denominator. Unreviewed seats stay unknown.
+ * Reviewer dismissal samples use the first valid report's turn-created window. */
+export function qualityReviewStats(db: DatabaseSync, since: string, until: string): QualityReviewStats {
+  const coders = db.prepare(`SELECT DISTINCT s.id, s.family, s.data FROM seats s JOIN turns t ON t.seat_id = s.id
+    WHERE s.role = 'coder' AND t.started_at IS NOT NULL AND t.created_at >= ? AND t.created_at < ?`).all(since, until) as
+    { id: string; family: string; data: string }[];
+  const reviews = qualityReviews(db);
+  const first = new Map<string, QualityReview>();
+  for (const review of reviews) {
+    if (typeof review.data.author === 'string' && !first.has(review.data.author)) first.set(review.data.author, review);
+  }
+  const result: QualityReviewStats = { coders: new Map(), reviewers: new Map(), attribution: qualityAttribution(db, since, until) };
+  for (const coder of coders) {
+    const review = first.get(coder.id);
+    if (review) foldQualitySample(result.coders, qualityProfileKey(coder.family, JSON.parse(coder.data)), Number(review.report.verdict === 'APPROVE'), 1);
+  }
+  for (const review of reviews) {
+    if (review.at < since || review.at >= until) continue;
+    result.attribution.validReviews++;
+    const counts = dismissalSample(review);
+    foldQualitySample(result.reviewers, qualityProfileKey(review.family, review.data), counts.successes, counts.sample);
+  }
+  return result;
+}
+
+function qualityAttribution(db: DatabaseSync, since: string, until: string): QualityReviewStats['attribution'] {
+  const rows = db.prepare(`SELECT DISTINCT s.id, json_extract(s.data, '$.author') AS author, a.role AS authorRole
+    FROM seats s JOIN turns t ON t.seat_id = s.id LEFT JOIN seats a ON a.id = json_extract(s.data, '$.author')
+    WHERE s.role = 'reviewer' AND t.started_at IS NOT NULL AND t.created_at >= ? AND t.created_at < ?`).all(since, until) as
+    { id: string; author: unknown; authorRole: string | null }[];
+  return { reviewerSeats: rows.length, missingAuthor: rows.filter((row) => typeof row.author !== 'string' || !row.author).length,
+    unknownAuthor: rows.filter((row) => typeof row.author === 'string' && !!row.author && row.authorRole !== 'coder').length, validReviews: 0 };
+}
+
 /** Indexes of a reviewer turn's findings that an accepted support round withdrew or downgraded from blocker/major. */
 function dismissedFindings(data: Record<string, unknown>, turnId: string, findings: Record<string, unknown>[]): number[] {
   const round = (data.supportRounds as Record<string, { asked?: { finding: number; severity: string }[]; outcome?: string }> | undefined)?.[turnId];

@@ -24,6 +24,7 @@ There is no single barrel. The registry entry is the shared codex-edit installer
 - `CODEX_EDIT_CONFIG` — required extension configuration, including eligible models.
 - `CODEX_EDIT_FILES` — required package resources.
 - `CODEX_EDIT_HASHES` — expected resource digests.
+- `CODEX_EDIT_PATCH` — the one exact-text patch (find/replace/sha256) the installer applies to the verified `index.ts` after `npm ci` (task 3527: upstream's forward-slash workspace guard refuses every nested path on win32); `--check` compares `index.ts` against the patched sha256 and every other file against its tarball hash.
 - `CODEX_EDIT_PACKAGE_DIRECTORY` — extension directory relative to the install prefix.
 - `stockCodexEditPrefix` — resolves the shared stock prefix beneath the orchestrator state directory.
 - `codexEditExtension` — resolves the extension entry path for a prefix.
@@ -62,6 +63,7 @@ The other operator entrypoints are `install.mjs`, `smoke.mjs`, `run.mjs`, `repor
 - Managed install targets stay below a real prefix: writes reject linked components/escapes; removal can unlink a linked leaf but refuses linked ancestors. The separately checked tarball cache may be outside the prefix. Source: `ops/ab-stand/codex-edit-install.mjs` containment helpers and `verifiedTarball`.
 - A verification refusal is a reason string, not an uncaught containment exception; `--check` prints a verdict and performs no repair. Source: `codexEditProblem` and the entry CLI in `ops/ab-stand/codex-edit-install.mjs`.
 - Downloaded codex-edit tarballs must match the committed integrity before installation. Source: `verifiedTarball` in `ops/ab-stand/codex-edit-install.mjs`.
+- The pinned patch is applied only to the bytes `npm ci` extracted from the verified tarball, refuses unless its text is found exactly once, and a stale (unpatched or otherwise differing) install fails `--check` and is repaired by `--ensure`. Source: `CODEX_EDIT_PATCH` in `ops/ab-stand/codex-edit-install.mjs`.
 - Stand extension installations use pinned arm-local state rather than changing stock worker profiles. Source: `.agents/domains/domain-harness/knowledge/isolated-a-b-stand-task-1452.md` and `ops/ab-stand/README.md`.
 - Readiness/smoke evidence is arm-specific: package presence alone does not prove the replaced tool or MCP operation worked. Source: `.agents/domains/domain-harness/knowledge/isolated-a-b-stand-task-1452.md`.
 

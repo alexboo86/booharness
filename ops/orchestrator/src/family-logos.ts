@@ -1,10 +1,11 @@
 // Static, trusted artwork only; never construct SVG markup from board data.
 // Simple Icons licence: https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md
-// Brand names and marks remain their owners' trademarks. Geometry is unchanged;
-// fills inherit currentColor; vendor favicon backgrounds/effects are omitted.
+// Brand names and marks remain their owners' trademarks. Mark geometry is unchanged;
+// the board draws each mark as a cartoon sticker (operator 2026-10-30): brand colour,
+// ink outline under the fill, a tinted tile with a hard offset shadow.
 // viewBoxes are geometry bounds padded to centered squares (rounded to 0.001);
 // recompute with: node scripts/render-orch-family-logos.mjs --measure
-export const FAMILY_LOGOS: Readonly<Record<string, string>> = {
+const MARKS: Readonly<Record<string, string>> = {
   // Source: https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/anthropic.svg
   // Licence: CC0-1.0 (Simple Icons).
   claude: "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z\" /></svg>",
@@ -30,3 +31,31 @@ export const FAMILY_LOGOS: Readonly<Record<string, string>> = {
   // Licence: CC0-1.0 (Simple Icons; Xiaomi parent-brand mark for MiMo).
   mimo: "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 0C8.016 0 4.756.255 2.493 2.516.23 4.776 0 8.033 0 12.012c0 3.98.23 7.235 2.494 9.497C4.757 23.77 8.017 24 12 24c3.983 0 7.243-.23 9.506-2.491C23.77 19.247 24 15.99 24 12.012c0-3.984-.233-7.243-2.502-9.504C19.234.252 15.978 0 12 0zM4.906 7.405h5.624c1.47 0 3.007.068 3.764.827.746.746.827 2.233.83 3.676v4.54a.15.15 0 0 1-.152.147h-1.947a.15.15 0 0 1-.152-.148V11.83c-.002-.806-.048-1.634-.464-2.051-.358-.36-1.026-.441-1.72-.458H7.158a.15.15 0 0 0-.151.147v6.98a.15.15 0 0 1-.152.148H4.906a.15.15 0 0 1-.15-.148V7.554a.15.15 0 0 1 .15-.149zm12.131 0h1.949a.15.15 0 0 1 .15.15v8.892a.15.15 0 0 1-.15.148h-1.949a.15.15 0 0 1-.151-.148V7.554a.15.15 0 0 1 .151-.149zM8.92 10.948h2.046c.083 0 .15.066.15.147v5.352a.15.15 0 0 1-.15.148H8.92a.15.15 0 0 1-.152-.148v-5.352a.15.15 0 0 1 .152-.147Z\" /></svg>",
 };
+
+const INK = '#0A0A0A';
+
+/** Brand colour of the mark, the tint of its tile and, for thin-line marks, a lighter outline. */
+const STICKERS: Readonly<Record<string, readonly [string, string, number?]>> = {
+  claude: ['#D97757', '#FBE3D6'],
+  codex: ['#10A37F', '#DDF3EC', 0.045],
+  glm: ['#3B5BFF', '#E0E6FF'],
+  grok: ['#2B2B2B', '#FFE08A', 0.04],
+  kimi: ['#2747C8', '#DCE7FF'],
+  opencode: ['#4B5563', '#DDF5E3'],
+  qwen: ['#7559F5', '#ECE6FF'],
+  mimo: ['#FF6A00', '#FFE6D2'],
+};
+
+function sticker(mark: string, [colour, tile, weight = 0.1]: readonly [string, string, number?]): string {
+  const [, viewBox, inner] = mark.match(/^<svg viewBox="([^"]+)"[^>]*>([\s\S]*)<\/svg>$/)!;
+  const outline = (Number(viewBox.split(' ')[2]) * weight).toFixed(3);
+  return '<svg viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg">'
+    + `<rect x="3.5" y="3.5" width="27" height="27" rx="7.5" fill="${INK}"/>`
+    + `<rect x="1.5" y="1.5" width="27" height="27" rx="7.5" fill="${tile}" stroke="${INK}" stroke-width="1.5"/>`
+    + `<svg x="6" y="6" width="18" height="18" viewBox="${viewBox}">`
+    + `<g fill="${colour}" stroke="${INK}" stroke-width="${outline}" stroke-linejoin="round" paint-order="stroke">${inner}</g></svg></svg>`;
+}
+
+export const FAMILY_LOGOS: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(MARKS).map(([family, mark]) => [family, sticker(mark, STICKERS[family])]),
+);

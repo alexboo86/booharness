@@ -27,7 +27,7 @@ The harness home holds the tools and shared methods; adopted repositories hold t
 The recommended installation session is the **Claude Code desktop app with local terminal access**. The agent handles commands and opens sign-in windows; the owner approves installation changes and completes logins. The install prompt is:
 
 ```text
-Clone https://github.com/alexboo86/booharness.git into ~/Developer/harness if it is absent. Read INSTALL.md there in full and install BooHarness by its instructions.
+On macOS, before any git command, run xcode-select -p. If it fails, run xcode-select --install and stop: tell me to rerun this prompt after Command Line Tools installation finishes. Clone https://github.com/alexboo86/booharness.git into ~/Developer/harness if it is absent. Read INSTALL.md there in full and install BooHarness by its instructions.
 ```
 
 ![Installation flow](img/install-flow.svg)
@@ -160,19 +160,13 @@ The installer registers these Claude Code mods from `ops/claude-mods/`:
 
 | Mod | Behaviour and limit |
 |---|---|
-| `orch-board` | Opens the board beside the conversation. Desktop shows cards and forms; the terminal surface shows a text summary. Requires local orch. |
+| `lead-wake` | Wakes an idle lead on orch chat posts by submitting the released batch as a prompt. Requires local orch and a live session binding; no pane or surface. |
 | `handover` | Provides `mcp__handover__run` to queue the next lead session's prompt. Requires Claude's mod APIs. |
 | `collision-guard` | Asks before an edit touches a file recently changed by another open chat. Without an attached UI surface the edit proceeds; this is not a file lock. |
 | `delay-no-more` | Controls deferred tool search with configured `eager`/`defer` patterns. Empty defaults change nothing. |
 | `secrets-veil` | Masks secret values in tool results and withholds a result if masking fails. It cannot guarantee recognition of every possible secret. |
 
-![Claude Code desktop pane: leads](img/desktop-leads.svg)
-
-![Claude Code desktop pane: seats](img/desktop-seats.svg)
-
-![Claude Code desktop pane: lead chat](img/desktop-chat.svg)
-
-The pictures show a real run with private names replaced. Registering mod folders is not proof that the app loaded them. Windows mod loading is untested. These are Claude Code mods, not Pi or Codex extensions.
+Registering mod folders is not proof that the app loaded them. Windows mod loading is untested. These are Claude Code mods, not Pi or Codex extensions.
 
 ### Codegraph, rtk and ast-grep
 

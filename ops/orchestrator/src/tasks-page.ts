@@ -2,9 +2,8 @@
  * The read-only Tasks board view (task 2189, operator decision #15090; ops/orchestrator/TASKS-BOARD.md).
  *
  * One template string like DASHBOARD_HTML: no framework, no build step, no external URL, served by the
- * lead's wiring at GET /tasks. It reuses the board's CSS tokens and classes; those live inline inside
- * DASHBOARD_HTML's own template literal and are not exported, so the tokens and the classes this page
- * reuses are copied verbatim here (see the report).
+ * lead's wiring at GET /tasks. Shared BooHarness tokens and navigation come from pult-shell.
+ * Task cards, filters and the drawer remain local to this view.
  *
  * The whole page sits inside a TypeScript template literal, so the browser JS and CSS use quotes and
  * concatenation only: a backtick or ${...} would close or interpolate the outer string (memory #14831).
@@ -14,38 +13,26 @@
  * (#task-new in the header, #task-actions in the drawer) and listens for the tasks:drawer event.
  * Card/column and right-panel composition adapted from tcarac/taskboard (MIT).
  */
+import { PULT_FONTS, PULT_STYLES, pultHeader } from './pult-shell.ts';
+
 export const TASKS_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>orch tasks</title>
+${PULT_FONTS}
 <style>
-:root {
-  color-scheme: light dark;
-  --bg: #f4f4f2; --surface: #fcfcfb; --raised: #ffffff; --ink: #1c1c1a; --ink-2: #4a4a45; --muted: #85847d;
-  --line: #e4e3de; --track: #ebeae5; --accent: #465e80; --accent-soft: #e9edf3; --badge-ink: #304760; --badge-muted: #67665f;
-  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #bc3030; --critical-soft: #fbeaea; --on-critical: #ffffff; --warning-soft: #fdf4e1;
-  --shadow: 0 1px 2px rgba(0,0,0,.05);
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #121211; --surface: #1a1a19; --raised: #1f1f1d; --ink: #edece7; --ink-2: #c3c2bb; --muted: #8d8c85;
-    --line: #2d2c29; --track: #2a2926; --accent: #aabbd5; --accent-soft: #28313d; --badge-ink: #d9e3f1; --badge-muted: #aaa9a0; --critical: #ec8c8c; --critical-soft: #3a1f1f; --on-critical: #121211; --warning-soft: #3a3120;
-    --shadow: none; }
-}
+${PULT_STYLES}
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: .8125rem/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
 main { height: 100dvh; display: flex; flex-direction: column; padding: 0 1.5rem 1rem; }
-header { display: flex; align-items: center; gap: 1rem; margin: 0 -1.5rem; padding: 1rem 1.5rem; border-bottom: thin solid var(--line); background: var(--surface); flex-wrap: wrap; }
-.page-nav { display: inline-flex; border: thin solid var(--line); border-radius: .5rem; overflow: hidden; flex: none; }
-.page-nav a { color: var(--ink-2); padding: .375rem .875rem; text-decoration: none; font-weight: 600; }
-.page-nav a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
-.page-nav a:hover { background: var(--track); }
-.page-nav a:focus-visible { outline: thin solid var(--accent); outline-offset: -.2rem; }
-.brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
+header { flex-shrink: 0; }
+.pult-top { margin: 0 -1.5rem; flex-shrink: 0; }
+.tasks-toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding-top: 1rem; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
 .dot.off { background: var(--critical); }
-.summary { display: flex; gap: .75rem; flex-wrap: wrap; margin-left: auto; }
+.summary { display: flex; gap: .75rem; flex-wrap: wrap; margin-right: auto; }
 .stat { background: var(--raised); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--ink-2); }
 .stat b { color: var(--ink); }
 a.stat { text-decoration: none; }
@@ -56,7 +43,7 @@ a.stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
 .chip { font-size: 11px; line-height: 18px; padding: 0 8px; border-radius: 999px; white-space: nowrap; background: var(--accent-soft); color: var(--accent); font-weight: 600; flex: none; }
 .chip .dot { width: 6px; height: 6px; }
-.chip.lead.none { background: var(--track); color: var(--badge-muted); font-weight: 600; }
+.chip.lead.none { background: var(--neutral-fill); color: var(--badge-muted); font-weight: 600; }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); white-space: nowrap; flex: none; }
 .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .state.open::before { background: var(--accent); }
@@ -70,7 +57,7 @@ a.stat:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .badge.prio { font-weight: 700; }
 .badge.P0 { background: var(--critical-soft); color: var(--critical); border-color: var(--critical); }
 .badge.P1 { background: var(--warning-soft); color: var(--ink); border-color: var(--warning); }
-.badge.P2, .badge.P3 { background: var(--track); color: var(--ink-2); }
+.badge.P2, .badge.P3 { background: var(--neutral-fill); color: var(--ink-2); }
 .sect-label { font-size: 10px; line-height: 20px; text-transform: uppercase; letter-spacing: .05em; color: var(--badge-muted); }
 .empty { color: var(--muted); padding: 6px 2px; }
 details.sec { margin-top: 14px; }
@@ -111,7 +98,7 @@ details.task-sec:not([open]) .task-list { display: none; }
 .card-tags { display: flex; flex-wrap: wrap; gap: .375rem; min-width: 0; }
 .card-tags .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .card-footer { margin-top: .125rem; font-size: .75rem; color: var(--badge-muted); }
-.card-footer .chip.lead { overflow: hidden; text-overflow: ellipsis; }
+.card-footer .chip.lead { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .task-row .badge { background: none; border: none; padding: 0; font-weight: 600; }
 .task-row .badge.P1 { color: var(--ink-2); }
 .task-row .chip { font-weight: 500; }
@@ -119,7 +106,7 @@ details.task-sec:not([open]) .task-list { display: none; }
 .task-row.cancelled { color: var(--badge-muted); background: var(--bg); }
 .task-row.cancelled .title { text-decoration: line-through; }
 .task-row .tid { flex: none; color: var(--badge-muted); }
-.task-row .track { color: var(--ink-2); background: var(--track); }
+.task-row .track { color: var(--ink-2); background: var(--neutral-fill); }
 .task-row .age { flex: none; font-variant-numeric: tabular-nums; }
 .task-row[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .errbar { display: block; background: var(--critical-soft); color: var(--critical); border: 1px solid var(--critical); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; font-weight: 600; overflow-wrap: anywhere; }
@@ -132,11 +119,11 @@ details.task-sec:not([open]) .task-list { display: none; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 1rem 1.5rem; margin: 0 -1.5rem 1.5rem; position: sticky; top: 0; background: var(--surface); border-bottom: thin solid var(--line); z-index: 1; }
 #drawer-title { font-size: 1.125rem; line-height: 1.5; font-weight: 600; margin: 0 0 1.5rem; overflow-wrap: anywhere; }
 #drawer-close { cursor: pointer; background: none; color: var(--ink-2); border: none; padding: .25rem; display: flex; }
-#drawer-close:hover { color: var(--accent); background: var(--track); }
+#drawer-close:hover { color: var(--accent); background: var(--neutral-fill); }
 #drawer-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .drawer-fields { display: flex; flex-direction: column; gap: 1.5rem; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-.field-grid .field > :last-child { background: var(--track); border-radius: .5rem; padding: .5rem .75rem; width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.field-grid .field > :last-child { background: var(--neutral-fill); border-radius: .5rem; padding: .5rem .75rem; width: 100%; overflow-wrap: anywhere; white-space: normal; }
 .field-grid .field.notice { grid-column: 1 / -1; }
 .field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .field pre.body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; color: var(--ink-2); background: var(--bg); border: thin solid var(--line); border-radius: .5rem; padding: .75rem; line-height: 1.65; }
@@ -153,17 +140,17 @@ details.task-sec:not([open]) .task-list { display: none; }
 .btn { font: inherit; font-weight: 600; line-height: 20px; padding: 2px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--raised); color: var(--ink-2); cursor: pointer; }
 .btn:hover { border-color: var(--accent); color: var(--ink); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.btn:disabled { background: var(--track); color: var(--badge-muted); border-color: var(--line); cursor: default; }
+.btn:disabled { background: var(--neutral-fill); color: var(--badge-muted); border-color: var(--line); cursor: default; }
 .btn.primary { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .btn.primary:hover { background: var(--accent); color: var(--raised); }
-.btn.primary:disabled { background: var(--track); color: var(--badge-muted); border-color: var(--line); }
+.btn.primary:disabled { background: var(--neutral-fill); color: var(--badge-muted); border-color: var(--line); }
 .btn.danger { background: var(--critical-soft); color: var(--critical); border-color: var(--critical); }
 .btn.danger:hover { background: var(--critical); color: var(--on-critical); }
-.btn.danger:disabled { background: var(--track); color: var(--badge-muted); border-color: var(--line); }
+.btn.danger:disabled { background: var(--neutral-fill); color: var(--badge-muted); border-color: var(--line); }
 .ctl { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; min-width: 150px; }
 .ctl:hover { border-color: var(--accent); }
 .ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ctl:disabled { background: var(--track); color: var(--badge-muted); cursor: default; }
+.ctl:disabled { background: var(--neutral-fill); color: var(--badge-muted); cursor: default; }
 .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 6px 10px; }
 .confirm[hidden] { display: none; }
 .confirm label { color: var(--ink-2); font-size: 12px; }
@@ -181,11 +168,11 @@ details.task-sec:not([open]) .task-list { display: none; }
 #task-new .card h2 { font-size: 1.125rem; margin: 0; }
 ::selection { background: var(--accent-soft); color: var(--ink); }
 input, textarea { caret-color: var(--accent); }
-@media (prefers-color-scheme: dark) { .drawer-shade { background: color-mix(in srgb, var(--bg) 70%, transparent); } }
 @media (hover: none) { .task-row-wrap .task-check { opacity: 1; } }
 @media (max-width: 640px) {
   main { height: auto; min-height: 100dvh; padding: 0 1rem 1rem; }
-  header { margin: 0 -1rem; padding: 1rem; gap: .75rem; }
+  .pult-top { margin: 0 -1rem; padding: .75rem 1rem; gap: .5rem; }
+  .tasks-toolbar { gap: .75rem; }
   .summary { margin-left: 0; flex: 1 0 100%; gap: 1rem; order: 2; }
   #search { flex: 1; }
   #sections { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -199,9 +186,8 @@ input, textarea { caret-color: var(--accent); }
 <body>
 <main>
 <div id="errbar" class="errbar" role="alert" hidden></div>
-<header>
-  <span class="dot" id="dot"></span><span class="brand">orch</span>
-  <nav class="page-nav" aria-label="Main"><a href="/">Board</a><a href="/tasks" aria-current="page">Tasks</a></nav>
+<header>${pultHeader('Tasks')}</header>
+<div class="tasks-toolbar">
   <div class="summary" id="counts">
     <span class="muted">open <b id="c-open">—</b></span>
     <span class="muted">in progress <b id="c-prog">—</b></span>
@@ -210,7 +196,7 @@ input, textarea { caret-color: var(--accent); }
   <input id="search" type="search" aria-label="Search" placeholder="id · title · track">
   <span class="muted" id="status">loading…</span>
   <div id="task-new"></div>
-</header>
+</div>
 <div class="filters">
   <div class="domain-chips" id="f-domains"></div>
   <label>lead <select id="f-lead" aria-label="Lead"><option value="any">any</option><option value="none">no lead</option></select></label>

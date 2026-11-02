@@ -20,6 +20,12 @@ const ledger = join(state, 'higgsfield-ledger.jsonl');
 const ceilings = join(state, 'higgsfield-ceilings.json');
 const lock = join(state, 'higgsfield.lock');
 const cli = process.env.ORCH_HIGGSFIELD_BIN || '/opt/homebrew/bin/higgsfield';
+// win32 cannot spawn a .cmd/.bat shim or a shebang script without a shell
+// (Node's documented execFile/spawn limitation; shell:true would re-interpret
+// argv). Run a JS entry (an npm bin such as @higgsfield/cli's) through node.
+const cliIsNodeEntry = process.platform === 'win32' && /\.[cm]?js$/i.test(cli);
+const cliCommand = cliIsNodeEntry ? process.execPath : cli;
+const cliPrefix = cliIsNodeEntry ? [cli] : [];
 const childEnv = { ...process.env, HOME: join(state, 'higgsfield-home') };
 const role = process.env.SEAT_POLICY_ROLE;
 const seat = process.env.ORCH_SEAT_ID;
@@ -95,7 +101,7 @@ function authorize() {
 // Only create needs a tee to record IDs; ordinary calls inherit all three fds.
 function run(argv, mode = 'inherit') {
   return new Promise((resolve, reject) => {
-    const child = spawn(cli, argv, {
+    const child = spawn(cliCommand, [...cliPrefix, ...argv], {
       env: childEnv,
       stdio: ['inherit', mode === 'inherit' ? 'inherit' : 'pipe', 'inherit'],
     });

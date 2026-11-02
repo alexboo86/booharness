@@ -436,7 +436,7 @@ npm run check:unpinned-installs        # ратчет; новая непинов
   - [`memoryctl`](../../.agents/skills/memoryctl/SKILL.md)
   - [`motion-media`](../../.agents/skills/motion-media/SKILL.md)
   - [`next`](../../.agents/skills/next/SKILL.md)
-  - [`orch-team`](../../.agents/skills/orch-team/SKILL.md)
+  - [`orch`](../../.agents/skills/orch/SKILL.md)
   - [`plan-before-code`](../../.agents/skills/plan-before-code/SKILL.md)
   - [`plan-critic`](../../.agents/skills/plan-critic/SKILL.md)
   - [`playwright-best-practices`](../../.agents/skills/playwright-best-practices/SKILL.md)

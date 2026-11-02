@@ -17,6 +17,10 @@ The public surface is prompt data, not an importable function or scheduler imple
 `scripts/lib/routines.mjs` loads the records;
 `scripts/routines.mjs list [--json]` exposes them to the lead-only
 `.agents/skills/setup-routines/SKILL.md` workflow.
+Orchestrator settings is a second reader via the same loader: the routines
+category exposes read-only cadence/description rows from the shipped definitions.
+These are not the app scheduler's installed tasks and cannot be written or reset
+through orch settings; no scheduler control is implied.
 
 ### Wire names
 

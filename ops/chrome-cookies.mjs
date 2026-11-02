@@ -3,7 +3,7 @@
 // never a cookie value, the Keychain password, or an underlying exception text.
 import { execFile } from 'node:child_process';
 import { createDecipheriv, createHash, pbkdf2Sync } from 'node:crypto';
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -31,9 +31,19 @@ function keychainPassword() {
   return read;
 }
 
+// macOS refuses Chrome's data to a binary without Full Disk Access, and a
+// Homebrew upgrade of node replaces the binary and so drops the grant.
 function profileDirs(chromeDir) {
   let entries;
-  try { entries = readdirSync(chromeDir, { withFileTypes: true }); } catch { return []; }
+  try { entries = readdirSync(chromeDir, { withFileTypes: true }); } catch (error) {
+    if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+      // The grant belongs to the real binary, not the /opt/homebrew/bin link.
+      let binary = process.execPath;
+      try { binary = realpathSync(binary); } catch { /* keep the unresolved path; never an exception text */ }
+      throw new Error(`macOS denied ${binary} access to Chrome data: grant it Full Disk Access`);
+    }
+    return [];
+  }
   return entries
     .filter((entry) => entry.isDirectory() && (entry.name === 'Default' || /^Profile \d+$/.test(entry.name)))
     .map((entry) => path.join(chromeDir, entry.name));

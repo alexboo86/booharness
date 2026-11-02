@@ -15,13 +15,13 @@ with local terminal access. Keep it as the lead; worker seats run under orch.
 An interactive **Claude Code terminal CLI** lead can also run this sequence:
 the Node installer writes instructions, skills, MCP, hooks and permissions without
 a desktop-only switch. The installer does not install the desktop app.
-The rich orch-board pane is desktop-only; its terminal surface renders a text
-summary. With no attached surface, there is no pane and collision-guard lets edits
-proceed without a question. Settings registration alone does not prove mod loading;
+The lead-wake mod wakes an idle lead on orch chat posts without a pane or surface.
+With no attached surface, collision-guard lets edits proceed without a question.
+Settings registration alone does not prove mod loading;
 use INSTALL.md §7.2.1 to verify. Codex lead configs are also generated, but these
 Claude Code mods are not Codex extensions.
 
-You are a lead agent. The public repository is https://github.com/alexboo86/booharness.git; its home is `~/Developer/harness`. If that directory is absent, follow the first agent step in [INSTALL.md](INSTALL.md) to clone it, including the user-confirmed Xcode Command Line Tools dialog on a clean Mac. Never overwrite an existing directory. Read INSTALL.md in full before installing this checkout. The steps below are the install, in order. Run every command from the checkout root.
+You are a lead agent. On macOS, before any git command, run `xcode-select -p`. If it fails, run `xcode-select --install` and stop: tell the user to rerun this prompt after Command Line Tools installation finishes. The public repository is https://github.com/alexboo86/booharness.git; its home is `~/Developer/harness`. If that directory is absent, follow the first agent step in [INSTALL.md](INSTALL.md) to clone it, including the user-confirmed Xcode Command Line Tools dialog on a clean Mac. Never overwrite an existing directory. Read INSTALL.md in full before installing this checkout. The steps below are the install, in order. Run every command from the checkout root.
 
 Before the first config command below, complete the platform prerequisites in
 INSTALL.md §4, except its deferred Ollama setup. The dependency section below must finish before step 1. This prompt

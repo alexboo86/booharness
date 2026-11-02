@@ -82,12 +82,13 @@ export function piExpectedTools(spec: SessionSpec, model?: string): string[] {
 export type PiToolManifest = { missingTools: readonly string[] };
 /** orch's Pi extension: the read-only bash guard and the command that actually ran. */
 export const PI_EXTENSION = fileURLToPath(new URL('../pi-extension.ts', import.meta.url));
-const ORCH_SEAT_COMMAND = 'orch-seat';
+/** The command the extension registers so a launcher can verify it loaded (get_commands). */
+export const ORCH_SEAT_COMMAND = 'orch-seat';
 
 // Seats never phone home: no install ping, no provider attribution headers, no
 // version check (docs/environment-variables.md). Local seats read the installed
 // Pi MCP config; remote seats explicitly select their provisioned checkout config.
-const PI_ENV = { PI_OFFLINE: '1', PI_TELEMETRY: '0', PI_SKIP_VERSION_CHECK: '1', PI_MCP_CONFIG_MODE: 'exclusive' };
+export const PI_ENV = { PI_OFFLINE: '1', PI_TELEMETRY: '0', PI_SKIP_VERSION_CHECK: '1', PI_MCP_CONFIG_MODE: 'exclusive' };
 // A Typesafe key would switch the adapter's semantic search to Jev; an inherited
 // ANTHROPIC_* could pick a provider's endpoint or bill. Neither reaches a seat.
 // ORCH_SEAT_INSTRUMENTS_OFF neither: the daemon may itself run inside a seat
@@ -95,7 +96,84 @@ const PI_ENV = { PI_OFFLINE: '1', PI_TELEMETRY: '0', PI_SKIP_VERSION_CHECK: '1',
 // 2026-09-23); a seat's own off list comes back through spec.env after the unset.
 // An inherited KIMI_API_KEY would authenticate a kimi seat that has no Pi OAuth,
 // billing another plan (operator #12679).
-const PI_UNSET = /^(TYPESAFE_|ANTHROPIC_|KIMI_API_KEY$|ORCH_SEAT_TOKEN$|ORCH_SEAT_TOOL_URL$|ORCH_SEAT_INSTRUMENTS_OFF$|ORCH_SEAT_STAND_ARM$|ORCH_SEAT_EXPECTED_TOOLS$|ORCH_SEAT_WRITE_SCOPE$|PI_CODING_AGENT_DIR$|PI_CODING_AGENT_SESSION_DIR$|PI_PACKAGE_DIR$)/;
+export const PI_UNSET = /^(TYPESAFE_|ANTHROPIC_|KIMI_API_KEY$|ORCH_SEAT_TOKEN$|ORCH_SEAT_TOOL_URL$|ORCH_SEAT_INSTRUMENTS_OFF$|ORCH_SEAT_STAND_ARM$|ORCH_SEAT_EXPECTED_TOOLS$|ORCH_SEAT_WRITE_SCOPE$|PI_CODING_AGENT_DIR$|PI_CODING_AGENT_SESSION_DIR$|PI_PACKAGE_DIR$)/;
+
+// Task 3536 slice B correction 2: the names a daemon-side tool child may inherit. A Pi seat
+// inherits the daemon environment minus PI_UNSET names (spawn.ts providerEnv), but an
+// update-job or check child is narrower still: process/npm runtime names, temp space,
+// config and cache roots, locale, egress proxies. No credential rides a child by name.
+export const PI_CHILD_ENV = /^(path|home|userprofile|tmpdir|temp|tmp|lang|lc_all|tz|systemroot|systemdrive|windir|comspec|pathext|appdata|localappdata|programdata|programfiles|programfiles\(x86\)|commonprogramfiles|commonprogramfiles\(x86\)|allusersprofile|http_proxy|https_proxy|no_proxy|all_proxy)$/i;
+
+/** Task 3536 slice B correction 2 (CWE-703): registry, proxy and TLS configuration an npm
+ *  network child needs behind a private registry or a custom CA — a registry URL, a proxy
+ *  URL or a CA-bundle path. Never a credential: only these exact names are admitted, so
+ *  `npm_config_//…/:_authToken` and every other npm_config_ spelling stays excluded. */
+export const PI_INSTALL_ENV = /^(npm_config_registry|npm_config_proxy|npm_config_https_proxy|npm_config_noproxy|npm_config_cafile|npm_config_capath|npm_config_strict_ssl|node_extra_ca_certs)$/i;
+
+/** The environment a daemon-side tool child may see (task 3536 slice B correction 2):
+ *  only PI_CHILD_ENV names of `base` — plus PI_INSTALL_ENV names when `install` — and
+ *  `extra`. npm's user/project .npmrc still applies through HOME/USERPROFILE. */
+export function piChildEnv(base: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}, install = false): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(base)) {
+    if (typeof value === 'string' && (PI_CHILD_ENV.test(name) || (install && PI_INSTALL_ENV.test(name)))) env[name] = value;
+  }
+  return { ...env, ...extra };
+}
+
+/** Task 3536 B correction 3 (CWE-532): the admitted registry/proxy names whose value is a
+ *  URL. An install child needs the URL itself, so npm can echo it whole — only its userinfo
+ *  (`https://user:password@…`) is a credential; the URL keeps reaching children unchanged. */
+const URL_USERINFO_ENV = /^(npm_config_registry|npm_config_proxy|npm_config_https_proxy|proxy|http_proxy|https_proxy|all_proxy)$/i;
+/** Task 3536 B correction 3: the PI_UNSET names that carry a key or token. Every other
+ *  PI_UNSET name is a path or configuration, whose fragments must stay readable in an error. */
+const PI_CREDENTIAL_ENV = /^(TYPESAFE_|ANTHROPIC_(?!BASE_URL|MODEL)|KIMI_API_KEY$|ORCH_SEAT_TOKEN$)/;
+
+/** `user:password` of a URL that carries userinfo, else null — an authority prefix only. */
+function urlUserinfo(value: string): string | null {
+  return value.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)@/i)?.[1] ?? null;
+}
+
+/** The ≥ 8-char values of `env`'s names matching `names` — the floor every secret keeps. */
+function envSecretValues(env: NodeJS.ProcessEnv, names: RegExp): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => names.test(name) && typeof value === 'string' && value.length >= 8)
+    .map(([, value]) => value as string);
+}
+
+/** The userinfo credentials of an environment's admitted registry/proxy URLs. */
+function urlCredentialValues(env: NodeJS.ProcessEnv): string[] {
+  return envSecretValues(env, URL_USERINFO_ENV)
+    .map((value) => urlUserinfo(value))
+    .filter((info): info is string => info !== null && info.length >= 8);
+}
+
+/** Route keys arrive by value: their names (ZAI_API_KEY, OPENCODE_API_KEY, qwen's
+ *  OPENAI_API_KEY, MiMo's auth JSON) are not PI_UNSET names, so no name filter applies. */
+function routeSecretValues(extra: Record<string, string>): string[] {
+  return Object.values(extra).filter((value) => typeof value === 'string' && value.length >= 8);
+}
+
+/** The secret values a child's output may echo (task 3536 slice B review): every PI_UNSET-named
+ *  value in `env`, the userinfo of its admitted registry/proxy URLs, plus the caller's selected
+ *  route keys (`extra`) — values only, never names. */
+export function piSecretValues(env: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}): string[] {
+  return [...envSecretValues(env, PI_UNSET), ...urlCredentialValues(env), ...routeSecretValues(extra)];
+}
+
+/** Task 3536 B correction 3 (CWE-532): the credential subset of `piSecretValues` — keys, tokens
+ *  and URL userinfo, never paths or configuration. Only these may fragment-mask: masking a
+ *  path fragment of PI_CODING_AGENT_DIR made a child's real error unreadable. */
+export function piCredentialValues(env: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}): string[] {
+  return [...envSecretValues(env, PI_CREDENTIAL_ENV), ...urlCredentialValues(env), ...routeSecretValues(extra)];
+}
+
+/** Every known secret value in text becomes `[redacted]` (usage-snapshot's scrubBearer rule). */
+export function redactPiSecrets(text: string, secrets: string[] = piSecretValues()): string {
+  let out = text;
+  for (const secret of secrets) if (out.includes(secret)) out = out.split(secret).join('[redacted]');
+  return out;
+}
 
 const STOP: Record<string, StopReason> = { stop: 'end_turn', length: 'max_tokens', aborted: 'cancelled', error: 'error' };
 /** Operator #13093: compact only while idle, before the next prompt. */
@@ -182,7 +260,23 @@ export function piUsage(messages: any[]): Usage | null {
 }
 
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void };
-type Turn = { messages: any[]; onEvent?: PromptOptions['onEvent']; retryError: string | null; settled: () => void; bash: Map<string, any>; promptSent: boolean; cancelled: boolean };
+type Turn = { messages: any[]; onEvent?: PromptOptions['onEvent']; retryError: string | null; settled: () => void; bash: Map<string, any>; toolStarts: Map<string, number>; promptSent: boolean; cancelled: boolean };
+type ToolEndEvent = { toolCallId: string; toolName: string; result?: { details?: { orchCommand?: unknown } }; isError?: unknown };
+
+/** A tool call's end (event-stream.ts live frames): duration from its recorded start, the rtk-accurate
+ *  bash start replay, then the end event. The bash start replay keeps the counting semantics: only the
+ *  result's `details.orchCommand` says what ran after rtk rewrote the command. */
+function piToolEnd(turn: Turn, event: ToolEndEvent): void {
+  const startedAt = turn.toolStarts.get(event.toolCallId);
+  turn.toolStarts.delete(event.toolCallId);
+  if (event.toolName === 'bash') {
+    const args = turn.bash.get(event.toolCallId) ?? {};
+    turn.bash.delete(event.toolCallId);
+    const ran = event.result?.details?.orchCommand;
+    turn.onEvent?.({ kind: 'tool', name: 'bash', status: 'started', args: typeof ran === 'string' ? { ...args, command: ran } : args, id: event.toolCallId });
+  }
+  turn.onEvent?.({ kind: 'tool', name: event.toolName, status: 'ended', id: event.toolCallId, durationMs: startedAt === undefined ? undefined : Date.now() - startedAt, isError: event.isError === true });
+}
 
 class PiSession implements ProviderSession {
   readonly family: Family;
@@ -290,15 +384,11 @@ class PiSession implements ProviderSession {
         // A bash call is reported when it ends: its start carries the model's command, and only
         // the result's `details.orchCommand` (pi-extension.ts) says what ran after rtk rewrote it.
         if (event.toolName === 'bash') turn.bash.set(event.toolCallId, event.args);
-        else turn.onEvent?.({ kind: 'tool', name: event.toolName, status: 'started', args: event.args });
+        else turn.onEvent?.({ kind: 'tool', name: event.toolName, status: 'started', args: event.args, id: event.toolCallId });
+        turn.toolStarts.set(event.toolCallId, Date.now());
         break;
       case 'tool_execution_end':
-        if (event.toolName === 'bash') {
-          const args = turn.bash.get(event.toolCallId) ?? {};
-          turn.bash.delete(event.toolCallId);
-          const ran = event.result?.details?.orchCommand;
-          turn.onEvent?.({ kind: 'tool', name: 'bash', status: 'started', args: typeof ran === 'string' ? { ...args, command: ran } : args });
-        }
+        piToolEnd(turn, event);
         break;
       case 'auto_retry_end':
         if (event.success === false) turn.retryError = event.finalError ?? 'retries exhausted';
@@ -337,7 +427,7 @@ class PiSession implements ProviderSession {
     if (this.turn) throw new Error('a turn is already running on this session');
     let settled!: () => void;
     const done = new Promise<void>((resolve) => { settled = resolve; });
-    const turn: Turn = { messages: [], onEvent: options.onEvent, retryError: null, settled, bash: new Map(), promptSent: false, cancelled: false };
+    const turn: Turn = { messages: [], onEvent: options.onEvent, retryError: null, settled, bash: new Map(), toolStarts: new Map(), promptSent: false, cancelled: false };
     const replies = () => {
       const texts = turn.messages.map((message) => (message.content ?? [])
         .filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''));
@@ -418,9 +508,10 @@ const piRuntimeRoot = (): string => piRuntimeRootOverride ?? DAEMON_REPO;
 const PI_PACKAGE = '@earendil-works/pi-coding-agent';
 /** A host file read must not hold seat start. Same order of bound as the other host probes. */
 const PI_RUNTIME_PROBE_MS = 30_000;
-// `node -e`: argv[1] is the bin, argv[2] the installed package.json. Remote seats read those
+// `node -e`: argv[1] is the bin, argv[2] the installed package.json, argv[3] `current.json`,
+// argv[4] the versions dir, argv[5] the shim name (task 3536). Remote seats read those
 // host files through spawnProvider → remote-exec.mjs (the checkout preflight's path, remote-repo.ts).
-const PI_INSTALL_PROBE = "const fs=require('node:fs');const [bin,manifest]=process.argv.slice(1);let version=null;try{const v=JSON.parse(fs.readFileSync(manifest,'utf8')).version;version=typeof v==='string'?v:null}catch{}process.stdout.write(JSON.stringify({bin:fs.existsSync(bin),version}));";
+const PI_INSTALL_PROBE = "const fs=require('node:fs'),p=require('node:path');const [bin,manifest,currentFile,versionsDir,binName]=process.argv.slice(1);const read=f=>{try{return fs.readFileSync(f,'utf8')}catch{return null}};const versionOf=f=>{try{const v=JSON.parse(read(f)).version;return typeof v==='string'?v:null}catch{return null}};let current=null;try{current=fs.readFileSync(currentFile,'utf8')}catch(e){if(e.code!=='ENOENT')current=false}let altBin=false,altVersion=null;try{const v=JSON.parse(current).version;if(typeof v==='string'){const dir=p.join(versionsDir,v,'node_modules');altBin=fs.existsSync(p.join(dir,'.bin',binName));altVersion=versionOf(p.join(dir,'@earendil-works','pi-coding-agent','package.json'))}}catch{}process.stdout.write(JSON.stringify({bin:fs.existsSync(bin),version:versionOf(manifest),current,altBin,altVersion}));";
 
 export function piRuntimeLayout(repo: string, platform: NodeJS.Platform): { command: string; installed: string } {
   const p = platform === 'win32' ? path.win32 : path.posix;
@@ -430,6 +521,40 @@ export function piRuntimeLayout(repo: string, platform: NodeJS.Platform): { comm
     command: p.join(root, 'node_modules', '.bin', platform === 'win32' ? 'pi.cmd' : 'pi'),
     installed: p.join(root, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'),
   };
+}
+
+/** The version-independent sidecars of the runtime root (task 3536): the switch record and the version tree. */
+function piRuntimeSidecars(repo: string, platform: NodeJS.Platform): { current: string; versions: string; binName: string } {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const root = p.join(repo, 'ops', 'pi-runtime');
+  return {
+    current: p.join(root, 'current.json'),
+    versions: p.join(root, 'versions'),
+    binName: platform === 'win32' ? 'pi.cmd' : 'pi',
+  };
+}
+
+/** Task 3536 slice A: a machine may run a Pi beside the repo pin. `current.json`
+ *  (`{version, previous, switchedAt}`) selects `versions/<version>/node_modules/.bin/pi`
+ *  (`pi.cmd` on win32). Both paths are gitignored per-machine state: `git clean -fdq` (no
+ *  `-x`) spares them, and `npm ci --prefix ops/pi-runtime` only rebuilds the pin's own
+ *  node_modules. */
+export function piVersionedLayout(repo: string, platform: NodeJS.Platform, version: string): { current: string; command: string; installed: string } {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const side = piRuntimeSidecars(repo, platform);
+  return {
+    current: side.current,
+    command: p.join(side.versions, version, 'node_modules', '.bin', side.binName),
+    installed: p.join(side.versions, version, 'node_modules', PI_PACKAGE, 'package.json'),
+  };
+}
+
+/** The host probe argv: the pin install, `current.json` and the tree its switch selects. The
+ *  probe joins the selected tree itself, on the host's own path rules. */
+export function piInstallProbeArgs(repo: string, platform: NodeJS.Platform): string[] {
+  const pin = piRuntimeLayout(repo, platform);
+  const { current, versions, binName } = piRuntimeSidecars(repo, platform);
+  return ['-e', PI_INSTALL_PROBE, pin.command, pin.installed, current, versions, binName];
 }
 
 function piRuntimeError(machine: string, detail: string): Error {
@@ -462,32 +587,173 @@ function pinnedPiVersion(): string {
   throw piRuntimeError(os.hostname(), 'daemon checkout ops/pi-runtime/package.json has no @earendil-works/pi-coding-agent pin');
 }
 
-async function readPiInstall(hostName: string | undefined, repo: string, platform: NodeJS.Platform): Promise<{ command: string; bin: boolean; version: string | null }> {
-  const layout = piRuntimeLayout(repo, platform);
-  if (!hostName) {
-    let version: string | null = null;
-    try {
-      const parsed = JSON.parse(readFileSync(layout.installed, 'utf8')).version;
-      version = typeof parsed === 'string' ? parsed : null;
-    } catch { version = null; }
-    return { command: layout.command, bin: existsSync(layout.command), version };
-  }
-  return readRemotePiInstall(hostName, repo, layout);
+/** The pin in any checkout's ops/pi-runtime/package.json (task 3536 slice B: the update job  */
+/** and the pi-client routes read the TARGET machine's pin, not this daemon's). */
+export function piPinVersion(repo: string): string {
+  const file = path.join(repo, 'ops', 'pi-runtime', 'package.json');
+  try {
+    const dep = JSON.parse(readFileSync(file, 'utf8')).dependencies?.[PI_PACKAGE];
+    if (typeof dep === 'string' && PI_VERSION.test(dep)) return dep;
+  } catch { /* missing pin is the repair below */ }
+  throw piRuntimeError(os.hostname(), `${file} has no @earendil-works/pi-coding-agent pin`);
 }
 
-async function readRemotePiInstall(hostName: string, repo: string, layout: { command: string; installed: string }): Promise<{ command: string; bin: boolean; version: string | null }> {
+/** What one machine's probe (or the local read) saw. Fields stay `unknown` on purpose: host
+ *  output is coerced here, never trusted upstream — garbage refuses, it never selects the pin. */
+export type PiInstallFacts = {
+  /** Raw `current.json` text; null or absent means the machine has no switch record. */
+  current?: unknown;
+  /** Repo-pin install: bin present, installed manifest version. */
+  bin?: unknown;
+  version?: unknown;
+  /** `versions/<version>` tree facts for the switch record's version. */
+  altBin?: unknown;
+  altVersion?: unknown;
+};
+
+const PI_VERSION = /^\d+\.\d+\.\d+$/;
+
+/** Numeric per part without precision loss (task 3536); both sides already match `PI_VERSION`. */
+export function comparePiVersions(a: string, b: string): number {
+  const left = a.split('.').map(BigInt);
+  const right = b.split('.').map(BigInt);
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+  return 0;
+}
+
+function piSwitchError(machine: string, detail: string): Error {
+  return new Error(`pi on ${machine}: ${detail}`);
+}
+
+/** The repo pin path, with the pre-3536 assert's exact refusal. */
+function pinInstall(machine: string, pin: string, layout: { command: string; installed: string }, bin: boolean, version: string | null): string {
+  if (!bin || version !== pin) {
+    throw piRuntimeError(machine, !bin ? `bin missing at ${layout.command}` : `installed ${version ?? 'unreadable'}, pin ${pin}`);
+  }
+  return layout.command;
+}
+
+/** The switch record's version, or null when the machine has no record (case 1). */
+function switchTarget(machine: string, file: string, raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') throw piSwitchError(machine, `${file} exists but cannot be read as a switch record; fix or remove that file`);
+  let target: string | null = null;
+  try {
+    const record = JSON.parse(raw) as { version?: unknown } | null;
+    const value = record?.version;
+    target = typeof value === 'string' ? value : null;
+  } catch { /* unparsable, refused below */ }
+  if (target === null) throw piSwitchError(machine, `${file} is unparsable (no string "version"); fix or remove that file`);
+  if (!PI_VERSION.test(target)) throw piSwitchError(machine, `${file} names ${JSON.stringify(target)}, which fails ^\\d+\\.\\d+\\.\\d+$; fix or remove that file`);
+  return target;
+}
+
+/** Case 4/5: the above-the-pin tree when its installed manifest equals the switch, else a
+ *  refusal naming the file that is missing or wrong. */
+function switchedInstall(machine: string, pin: string, file: string, repo: string, platform: NodeJS.Platform, target: string, facts: PiInstallFacts): string {
+  const tree = piVersionedLayout(repo, platform, target);
+  const altVersion = typeof facts.altVersion === 'string' ? facts.altVersion : null;
+  if (facts.altBin !== true) {
+    throw piSwitchError(machine, `${file} selects ${target} above pin ${pin} but ${tree.command} is missing; install that tree or remove ${file}`);
+  }
+  if (altVersion !== target) {
+    throw piSwitchError(machine, `${file} selects ${target} above pin ${pin} but ${tree.installed} reads ${altVersion ?? 'no version'}; install that tree or remove ${file}`);
+  }
+  return tree.command;
+}
+
+/** Task 3536 slice A: THE resolver — the local assert and the remote probe resolve through
+ *  this one function. (1) No `current.json`: the repo pin path, byte-identical to the old
+ *  assert. (2) A switch equal to the pin: the repo pin path. (3) Below the pin: the repo pin
+ *  path plus a status line naming both versions. (4) Above the pin with a valid tree whose
+ *  installed manifest equals it: that tree. (5) Above the pin with a missing or mismatched
+ *  tree, an unparsable `current.json`, or a version failing `^\d+\.\d+\.\d+$`: refuse at
+ *  the assert with a message naming the file — never the repo pin. Versions compare
+ *  numerically per part. */
+export function resolvePiInstall(input: {
+  machine: string; pin: string; repo: string; platform: NodeJS.Platform; facts: PiInstallFacts;
+}): { command: string; status: string | null } {
+  const { machine, pin, repo, platform, facts } = input;
+  const layout = piRuntimeLayout(repo, platform);
+  const bin = facts.bin === true;
+  const version = typeof facts.version === 'string' ? facts.version : null;
+  const file = piRuntimeSidecars(repo, platform).current;
+  const target = switchTarget(machine, file, facts.current);
+  if (target === null) return { command: pinInstall(machine, pin, layout, bin, version), status: null };
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  if (!PI_VERSION.test(pin)) {
+    throw piSwitchError(machine, `pin ${JSON.stringify(pin)} in ${p.join(repo, 'ops', 'pi-runtime', 'package.json')} fails ^\\d+\\.\\d+\\.\\d+$; fix the pin or remove ${file}`);
+  }
+  const order = comparePiVersions(target, pin);
+  if (order > 0) return { command: switchedInstall(machine, pin, file, repo, platform, target, facts), status: null };
+  return {
+    command: pinInstall(machine, pin, layout, bin, version),
+    status: order < 0 ? `pi on ${machine}: ${file} requests ${target} below pin ${pin}; running the repo pin ${pin}` : null,
+  };
+}
+
+/** Read a host file without throwing; null when missing or unreadable. */
+function readText(file: string): string | null {
+  try { return readFileSync(file, 'utf8'); } catch { return null; }
+}
+
+/** `current.json`: null only when absent; false when it exists but cannot be read, which the resolver refuses. */
+function readSwitchRecord(file: string): string | null | false {
+  try { return readFileSync(file, 'utf8'); } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : false; }
+}
+
+function manifestVersion(file: string): string | null {
+  try { const v = JSON.parse(readText(file) ?? '').version; return typeof v === 'string' ? v : null; } catch { return null; }
+}
+
+/** The local gather: the same facts the host probe collects, read synchronously. */
+export function readLocalPiInstall(repo: string, platform: NodeJS.Platform): PiInstallFacts {
+  const layout = piRuntimeLayout(repo, platform);
+  const current = readSwitchRecord(piRuntimeSidecars(repo, platform).current);
+  let target: string | null = null;
+  try { const v = typeof current === 'string' ? JSON.parse(current).version : null; target = typeof v === 'string' ? v : null; } catch { /* the resolver refuses it */ }
+  const tree = target === null ? null : piVersionedLayout(repo, platform, target);
+  return {
+    current,
+    bin: existsSync(layout.command),
+    version: manifestVersion(layout.installed),
+    altBin: tree !== null && existsSync(tree.command),
+    altVersion: tree === null ? null : manifestVersion(tree.installed),
+  };
+}
+
+function reportResolution(resolved: { command: string; status: string | null }): string {
+  if (resolved.status) console.error(resolved.status);
+  return resolved.command;
+}
+
+/** The local half of `assertPiRuntime`, synchronous (task 3459): a lead child's `buildSpawn`
+ *  resolves the runtime without an await. Same resolution, same refusal, no remote probe. */
+export function assertLocalPiRuntime(platform: NodeJS.Platform = process.platform): string {
+  const repo = piRuntimeRoot();
+  return reportResolution(resolvePiInstall({ machine: os.hostname(), pin: pinnedPiVersion(), repo, platform, facts: readLocalPiInstall(repo, platform) }));
+}
+
+/** Resolves the machine's runtime — the repo pin or a switched `versions/<version>` tree —
+ *  and refuses before Pi is spawned (task 3536). */
+async function assertPiRuntime(hostName: string | undefined, repo: string, platform: NodeJS.Platform): Promise<string> {
+  if (!hostName) return assertLocalPiRuntime(platform);
+  const facts = await readRemotePiInstall(hostName, repo, piInstallProbeArgs(repo, platform));
+  return reportResolution(resolvePiInstall({ machine: hostName, pin: pinnedPiVersion(), repo, platform, facts }));
+}
+
+async function readRemotePiInstall(hostName: string, repo: string, args: string[]): Promise<PiInstallFacts> {
   let failure: PiProbeTransportError | null = null;
   for (let attempt = 1; attempt <= PI_PROBE_ATTEMPTS; attempt++) {
     if (failure) await new Promise((resolve) => setTimeout(resolve, PI_PROBE_BACKOFF_MS[Math.min(attempt - 2, PI_PROBE_BACKOFF_MS.length - 1)]));
     // remoteProcess: do not EOF stdin; remote-exec treats that as a disconnect and kills the probe.
     // A synchronous throw (unknown host, refused ssh) is a deterministic config error: not retried.
-    const child = spawnProvider({ host: hostName, command: 'node', cwd: repo, args: ['-e', PI_INSTALL_PROBE, layout.command, layout.installed] });
+    const child = spawnProvider({ host: hostName, command: 'node', cwd: repo, args });
     const timer = setTimeout(() => child.kill(), PI_RUNTIME_PROBE_MS);
     try {
       const raw = text(await collect(child, undefined, `pi runtime on ${hostName}`, true));
       try {
-        const parsed = JSON.parse(raw) as { bin?: unknown; version?: unknown };
-        return { command: layout.command, bin: parsed.bin === true, version: typeof parsed.version === 'string' ? parsed.version : null };
+        return JSON.parse(raw) as PiInstallFacts;
       } catch {
         failure = probeTransportError(hostName, `probe output is not its JSON: ${raw.slice(0, 200)}`);
       }
@@ -500,16 +766,9 @@ async function readRemotePiInstall(hostName: string, repo: string, layout: { com
   throw failure!;
 }
 
-/** Bin exists and the installed package version equals the pin. Throws before Pi is spawned. */
-async function assertPiRuntime(hostName: string | undefined, repo: string, platform: NodeJS.Platform): Promise<string> {
-  const pin = pinnedPiVersion();
-  const install = await readPiInstall(hostName, repo, platform);
-  if (!install.bin || install.version !== pin) {
-    throw piRuntimeError(hostName ?? os.hostname(), !install.bin
-      ? `bin missing at ${install.command}`
-      : `installed ${install.version ?? 'unreadable'}, pin ${pin}`);
-  }
-  return install.command;
+/** The remote gather as one call (task 3536 slice B: GET /api/pi-client on a named host). */
+export async function probePiInstall(hostName: string, repo: string, platform: NodeJS.Platform): Promise<PiInstallFacts> {
+  return readRemotePiInstall(hostName, repo, piInstallProbeArgs(repo, platform));
 }
 
 function assertLocalMcpAdapter(config: string): void {

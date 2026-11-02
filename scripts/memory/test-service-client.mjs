@@ -215,7 +215,7 @@ test('gates and tracks read the service, ignore frozen DB env, and fail on unava
     });
     await fx.write('append', {
       kind: 'lesson', title: 'live capture evidence', body: 'read service',
-      links: { domain: 'domain-harness', anchor: 'scripts/memory/lesson-lib.mjs', status: 'inbox', gate: LESSON_GATE },
+      links: { domain: 'domain-memory', anchor: 'scripts/memory/lesson-lib.mjs', status: 'inbox', gate: LESSON_GATE },
     });
     await fx.write('handoff', {
       title: 'service tracks fixture', body: 'full body', no_open_work: true,
@@ -266,7 +266,7 @@ test('consolidation scan and anchor sweep read only the service, preserve counts
     assert.deepEqual((await (await fetch(`${fx.url}/api/memory/tasks`)).json()).tasks[0].handoffs, [handoff.id]);
     await fx.write('append', {
       kind: 'lesson', title: 'consolidation fixture lesson', body: 'lesson body',
-      links: { domain: 'domain-harness', anchor: 'scripts/memory/service-client.mjs', status: 'active', gate: LESSON_GATE },
+      links: { domain: 'domain-memory', anchor: 'scripts/memory/service-client.mjs', status: 'active', gate: LESSON_GATE },
     });
     await fx.write('append', { kind: 'decision', title: 'fixture contradiction', body: 'CONTRADICTS id 123' });
     fx.requests.length = 0;
@@ -420,7 +420,7 @@ test('anchor sweep publishes the same shaped CAS registry entry through the fixt
   try {
     await fx.write('append', {
       kind: 'lesson', title: 'fixture anchor', body: 'fixture body',
-      links: { domain: 'domain-harness', anchor: 'scripts/memory/service-client.mjs', status: 'active', gate: LESSON_GATE },
+      links: { domain: 'domain-memory', anchor: 'scripts/memory/service-client.mjs', status: 'active', gate: LESSON_GATE },
     });
     fx.requests.length = 0;
     for (const version of [1, 2]) {
@@ -484,10 +484,10 @@ test('a re-anchor onto a misrouted file is refused and the lesson stays where it
     const target = 'scripts/memory/lesson-lib.mjs';
     const cli = await run('scripts/memory/reanchor-lesson.mjs', ['--id', String(row.id), '--to', target], fx.env);
     assert.equal(cli.code, 1, cli.out);
-    assert.match(cli.out, /routes to domain-harness but the lesson is filed under domain-platform-shell/);
+    assert.match(cli.out, /routes to domain-memory but the lesson is filed under domain-platform-shell/);
     // The capture gate itself refuses the same move, before any write.
     assert.throws(() => gateMovedLesson({ id: row.id, title: 'misroute fixture', body: '- rule: r\n- why: w\n- evidence: e' },
-      { ...links, anchor: target }), /anchor routes to domain-harness; use that domain instead of domain-platform-shell/);
+      { ...links, anchor: target }), /anchor routes to domain-memory; use that domain instead of domain-platform-shell/);
     assert.equal(fx.db.prepare('SELECT superseded_by FROM mem_entries WHERE id = ?').get(row.id).superseded_by, null);
   } finally { await fx.close(); }
 });
@@ -497,14 +497,14 @@ test('lesson mutation CLIs read and write the same fixture service; --db refuses
   try {
     const lesson = async (title, links = {}) => fx.write('append', {
       kind: 'lesson', title, body: `- rule: ${title} rule\n- why: fixture\n- evidence: fixture`,
-      links: { domain: 'domain-harness', anchor: 'scripts/memory/lesson-lib.mjs', status: 'inbox', gate: LESSON_GATE, ...links },
+      links: { domain: 'domain-memory', anchor: 'scripts/memory/lesson-lib.mjs', status: 'inbox', gate: LESSON_GATE, ...links },
     });
     const retired = await lesson('retire fixture');
     const promoted = await lesson('promote fixture');
     const moved = await lesson('reanchor fixture');
     const normalized = await legacyLesson(fx, {
       kind: 'lesson', title: 'normalize fixture', body: '- rule: normalize fixture rule\n- why: fixture\n- evidence: fixture',
-      links: { domain: 'harness', anchor: 'scripts/memory/lesson-lib.mjs', status: 'inbox' },
+      links: { domain: 'harness', anchor: 'scripts/check-domain-routing.mjs', status: 'inbox' },
     }, 'domain-harness');
     for (const [script, args, expected] of [
       ['retire-lesson', ['--id', String(retired.id), '--reason', 'fixture'], /retire: 1 of 1/],
@@ -521,7 +521,7 @@ test('lesson mutation CLIs read and write the same fixture service; --db refuses
       assert.ok(fx.db.prepare('SELECT superseded_by FROM mem_entries WHERE id = ?').get(id).superseded_by);
     }
     // Both moves went through the capture gate: fresh marker, status kept.
-    for (const [id, anchor, domain] of [[moved.id, 'scripts/memory/service-client.mjs', 'domain-harness'], [normalized.id, 'scripts/memory/lesson-lib.mjs', 'domain-harness']]) {
+    for (const [id, anchor, domain] of [[moved.id, 'scripts/memory/service-client.mjs', 'domain-memory'], [normalized.id, 'scripts/check-domain-routing.mjs', 'domain-harness']]) {
       const next = JSON.parse(fx.db.prepare('SELECT links FROM mem_entries WHERE id = (SELECT superseded_by FROM mem_entries WHERE id = ?)').get(id).links);
       assert.equal(next.anchor, anchor);
       assert.equal(next.domain, domain);

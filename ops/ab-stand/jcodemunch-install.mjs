@@ -44,24 +44,8 @@ export async function verifiedWheel(cacheDir, log) {
   return wheel;
 }
 
-export async function installJcodemunch({ dir, root, run, privateDir, log }) {
-  const requirements = fileURLToPath(new URL('./jcodemunch.requirements.txt', import.meta.url));
-  const topLevel = readFileSync(requirements, 'utf8').split(/\r?\n/).filter((line) => line.startsWith(`${JCODEMUNCH_PINS.package}==`));
-  if (topLevel.length !== 1 || topLevel[0].split(/\s/)[0] !== JCODEMUNCH_PACKAGE) throw new Error(`jcodemunch: ${requirements} must pin ${JCODEMUNCH_PACKAGE}`);
-  // Same pinned CPython as serena: the stand is macOS arm64, and the wheel is py3-none-any.
-  const python = path.join(root, 'python', 'cpython-3.12-macos-aarch64-none', 'bin', 'python3.12');
-  if (!existsSync(python)) run('uv', ['python', 'install', '3.12'], dir);
-  const venv = path.join(dir, 'venv');
-  const venvPython = path.join(venv, 'bin', 'python');
-  if (!existsSync(venvPython)) run('uv', ['venv', '--python', '3.12', venv], dir);
-  await verifiedWheel(path.join(dir, 'cache'), log);
-  run('uv', ['pip', 'install', '--python', venvPython, '--require-hashes', '--no-deps', '-r', requirements], dir);
-  const metadata = path.join(venv, 'lib', 'python3.12', 'site-packages', `${JCODEMUNCH_PINS.distribution}-${JCODEMUNCH_PINS.version}.dist-info`, 'METADATA');
-  if (!existsSync(metadata) || !readFileSync(metadata, 'utf8').includes(`Version: ${JCODEMUNCH_PINS.version}\n`)) {
-    throw new Error(`${JCODEMUNCH_PACKAGE} missing after uv pip install`);
-  }
-  if (!existsSync(path.join(venv, 'bin', 'jcodemunch-mcp'))) throw new Error('jcodemunch-mcp executable missing after uv pip install');
-  privateDir(path.join(dir, 'code-index'));
+export async function installJcodemunch() {
+  throw new Error('This experimental Python arm is not installable from the public kit; use the source repository.');
 }
 
 /** Isolated MCP registration. Index and cache stay under the arm, never the repository. */

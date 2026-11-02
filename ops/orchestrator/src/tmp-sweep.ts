@@ -40,10 +40,12 @@ const ours = (name: string): boolean => (TMP_PREFIXES as readonly string[]).some
 
 async function processPaths(): Promise<string> {
   // One ps snapshot per pass, plus one more per entry at its deletion moment.
-  const { stdout: argv } = await exec('ps', ['-axww', '-o', 'args='], { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 })
+  // Match target-sweep: never trust a seat PATH shim; tests name an absent probe.
+  const ps = process.env.ORCH_TEST_PS ?? '/bin/ps';
+  const { stdout: argv } = await exec(ps, ['-axww', '-o', 'args='], { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 })
     .catch((error: { code: string | number }) => {
       // A missing liveness tool is not a missing candidate path.
-      throw new LivenessUnproved(String(process.pid), 'ps', typeof error.code === 'number' ? `exit ${error.code}` : error.code);
+      throw new LivenessUnproved(String(process.pid), ps, typeof error.code === 'number' ? `exit ${error.code}` : error.code);
     });
   // Test seam (r4): an injected unreadable pid — no real /proc needed — makes
   // the snapshot unproved exactly as a live EACCES would.

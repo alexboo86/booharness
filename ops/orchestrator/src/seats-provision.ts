@@ -1,7 +1,7 @@
 import type { SeatManager } from './seats.ts';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { codexEditEligible, codexEditModels, codexEditWanted, localCodexEdit, remoteCodexEditExtension, type CodexEdit } from './codex-edit.ts';
+import { codexEditModels, codexEditWanted, localCodexEdit, remoteCodexEditExtension, type CodexEdit } from './codex-edit.ts';
 import { hashlineEditWanted, localHashlineEdit, remoteHashlineEdit, type HashlineEdit } from './hashline-edit.ts';
 import { remotePiMcpPath } from './remote-pi-mcp.ts';
 import type { Seat } from './store.ts';
@@ -12,6 +12,7 @@ import { provisionRemote as setupRemote, checkCodexEditOnHost, checkHashlineEdit
 import { assertMirrorPath, removeMirror, snapshotAvailable, snapshotBack, syncMirror } from './remote-worktree.ts';
 import { createWorktree, deleteBranch, noteCodegraphDaemonStop, provisionWorktree, removeWorktree, runnableRepo } from './worktrees.ts';
 import { KEPT_TREES, ROLE_POLICY, landable, type SeatData, type SeatRole } from './seats-defs.ts';
+import { readInstallSetting } from './settings/index.ts';
 
 /** A debater whose provisioning failed can be the last event that ends its table (task 2794). */
 function postTableAfterFailure(self: SeatManager, seat: Seat): void {
@@ -92,7 +93,7 @@ export async function provisionRemote(self: SeatManager, seat: Seat, top: string
       // Owned only once prepareCheckout returns: close and recover must not touch a path it never verified.
       self.store.updateSeat(seat.id, { data: { remoteCheckoutOwned: true } }, 'seat.remote_checkout_owned');
       const readOnly = seat.role in ROLE_POLICY && ROLE_POLICY[seat.role as SeatRole].access === 'read-only';
-      const result = await (self.options.setupRemote ?? setupRemote)(host, dir, { readOnly, codexEdit: self.wantsCodexEdit(seat), hashlineEdit: self.wantsHashlineEdit(seat), role: seat.role });
+      const result = await (self.options.setupRemote ?? setupRemote)(host, dir, { readOnly, codegraphInit: readInstallSetting(self.options.stateDir, 'machines.autoCodegraphInit') as boolean, codexEdit: self.wantsCodexEdit(seat), hashlineEdit: self.wantsHashlineEdit(seat), role: seat.role });
       if (!result.ok) {
         const failed = result.steps[result.steps.length - 1];
         throw new Error(`remote provision failed: ${failed?.command} exited ${failed?.code}: ${failed?.tail}`);
@@ -124,7 +125,7 @@ export async function provisionRemoteCoder(self: SeatManager, seat: Seat, top: s
       await (self.options.prepareRemoteCheckout ?? prepareCheckout)(host, { sha: commit, localRepo: top }, dir);
       prepared = true; prepareMs = Date.now() - phase; phase = Date.now();
       self.store.updateSeat(seat.id, { data: { remoteCheckoutOwned: true } }, 'seat.remote_checkout_owned');
-      const result = await (self.options.setupRemote ?? setupRemote)(host, dir, { codexEdit: self.wantsCodexEdit(seat), hashlineEdit: self.wantsHashlineEdit(seat), role: seat.role });
+      const result = await (self.options.setupRemote ?? setupRemote)(host, dir, { codegraphInit: readInstallSetting(self.options.stateDir, 'machines.autoCodegraphInit') as boolean, codexEdit: self.wantsCodexEdit(seat), hashlineEdit: self.wantsHashlineEdit(seat), role: seat.role });
       setupMs = Date.now() - phase; phase = Date.now();
       if (!result.ok) {
         const failed = result.steps[result.steps.length - 1];
@@ -158,7 +159,7 @@ export async function provision(self: SeatManager, seat: Seat, main: string, top
     try {
       mkdirSync(path.dirname(dir), { recursive: true });
       await createWorktree(top, dir, commit, branch);
-      const result = await (self.options.provision ?? provisionWorktree)(main, dir);
+      const result = await (self.options.provision ?? provisionWorktree)(main, dir, undefined, { codegraphInit: readInstallSetting(self.options.stateDir, 'machines.autoCodegraphInit') as boolean });
       const steps = result.steps.map((step) => ({ command: step.command.slice(0, 120), code: step.code, ms: step.ms }));
       if (!result.ok) {
         const failed = result.steps[result.steps.length - 1];
@@ -374,11 +375,10 @@ export async function finishRemoteCoder(self: SeatManager, seat: Seat): Promise<
     }
   }
 
-/** Whether this seat must load codex-edit: a stock Pi codex seat that edits (operator #13098), never on a win32 target (task 1956, CODEX_EDIT_WIN32_WITHHELD: the pinned toolkit rejects every nested Windows path). */
+/** Whether this seat must load codex-edit: a stock Pi codex seat that edits (operator #13098), on every platform — the installer's pinned patch (task 3527) removed the win32 withhold of task 1956. */
 export function wantsCodexEdit(self: SeatManager, seat: Seat): boolean {
     const data = seat.data as SeatData;
-    if (!codexEditWanted({ role: seat.role, family: seat.family, access: data.access, harness: data.harness, standArm: data.standArm })) return false;
-    return codexEditEligible(typeof data.host === 'string' ? data.host : undefined, self.options.stateDir);
+    return codexEditWanted({ role: seat.role, family: seat.family, access: data.access, harness: data.harness, standArm: data.standArm });
   }
 
 export function wantsHashlineEdit(self: SeatManager, seat: Seat): boolean {

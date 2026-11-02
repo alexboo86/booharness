@@ -2,6 +2,9 @@
 // PreToolUse: deliver durable lessons once per edited file and routed knowledge
 // once per domain per session (a lead's first Read in a domain also takes the page). Both marks reset after compaction through
 // session-start.mjs; when neither has content, say nothing at all.
+// Task 3440: the same hook also refuses a Claude lead's orch seat brief
+// (mcp__orch__seat_create / seat_prompt) on a domain whose map this session
+// has not received; see gateSeatBrief below.
 //
 // Why a hook and not a rule. The contract has told every agent for weeks to run
 // `memoryctl lessons --path <file>` before editing domain code, and the domain
@@ -24,7 +27,7 @@
 // store answers; page reads fail independently without blocking lessons.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,6 +77,191 @@ export function forgetDeliveredLessons(sessionId) {
   if (marks) rmSync(marks, { recursive: true, force: true });
 }
 
+/// Task 3440 (operator order 2026-10-30): the two orch tools that hand a seat
+/// its brief. They reach this hook only through the Claude lead's matcher
+/// (install-harness.mjs wires them for the claude runtime alone): codex, glm
+/// leads and zcode are INTENTIONALLY out of scope, and orch seats are exempt -
+/// a seat's own brief already carries the routed pages.
+const SEAT_BRIEF_TOOLS = new Set(['mcp__orch__seat_create', 'mcp__orch__seat_prompt']);
+
+/// Refuse a seat brief on a domain whose knowledge map this session has not
+/// received - the knowledge mark of a delivered page, or a recorded direct
+/// Read of the page - naming each missing domain and the page to Read.
+/// Compaction clears both records with every other mark, so a brief after it
+/// is refused until the map is taken again. Every error fails open.
+function gateSeatBrief(event, input, toolName) {
+  try {
+    if (!SEAT_BRIEF_TOOLS.has(toolName) || runtime !== 'claude' || process.env.ORCH_SEAT_ID) allow();
+    const stateDir = deliveredMarksDir(event.session_id ?? event.sessionId);
+    if (!stateDir) allow();
+    const missing = missingBriefDomains(input, event, stateDir);
+    if (!missing.length) allow();
+    const pages = missing.map((domain) => `.agents/domains/${domain}/knowledge.md`);
+    writeSync(1, JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          `This session has received no knowledge map for ${missing.join(', ')} (cleared by compaction or never delivered). `
+          + `Read ${pages.join(' and ')} - or a file under the same knowledge/ directory - then repeat the seat brief.`,
+      },
+    }));
+    process.exit(0);
+  } catch {
+    allow();
+  }
+}
+
+/// The domains a seat brief names whose map this session lacks: every gated
+/// domain routed from `files` or from a repo path in the brief text, minus
+/// those already marked delivered or Read directly.
+function missingBriefDomains(input, event, stateDir) {
+  const cwd = resolve(event.cwd ?? process.cwd());
+  readableStateDir(stateDir);
+  const maps = new Map();
+  const missing = [];
+  for (const token of seatBriefTokens(input)) {
+    const domain = routedDomainOfToken(token, cwd, maps);
+    // The same domain may be named twice; a satisfied domain stays satisfied.
+    if (!domain || missing.includes(domain)) continue;
+    if (!markExists(stateDir, 'knowledge', domain) && !markExists(stateDir, 'page-read', domain)) {
+      missing.push(domain);
+    }
+  }
+  return missing;
+}
+
+/// The session's state directory once it is a readable directory; nothing
+/// existing yet is a clean absence. A state path that exists but is NOT a
+/// directory is corruption (on Windows every mark under it even reads as
+/// ENOENT): it throws, so gateSeatBrief fails open instead of denying on a
+/// state it cannot read.
+function readableStateDir(stateDir) {
+  try {
+    if (!statSync(stateDir).isDirectory()) throw new Error(`Session state is not a directory: ${stateDir}`);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return stateDir;
+}
+
+/// True when a gate mark exists, false ONLY on clean absence. Any other lookup
+/// error is corruption, not absence, and throws so gateSeatBrief fails open
+/// rather than denying on a state it cannot read.
+///
+/// The mark's kind directory (`knowledge` / `page-read`) is checked before the
+/// mark itself: when that path is a regular file, the marks beneath it read as
+/// ENOENT on Windows (not ENOTDIR), which would be mistaken for clean absence.
+/// Checking the ancestor's own type catches that corruption on every platform.
+function markExists(stateDir, kind, domain) {
+  const kindDir = join(stateDir, kind);
+  try {
+    if (!statSync(kindDir).isDirectory()) throw new Error(`Session state is not a directory: ${kindDir}`);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  try {
+    statSync(join(kindDir, domain));
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/// Repo-path tokens of a seat brief: the `files` array plus path-shaped words
+/// of the brief text (`prompt`, `brief`, `title`), with a trailing `:line` or
+/// `:a-b` citation suffix stripped so a cited line still resolves, and
+/// backslashes normalised so a Windows-spelled relative path is a path here too.
+function seatBriefTokens(input) {
+  const tokens = [...(Array.isArray(input?.files) ? input.files.map(String) : [])];
+  for (const key of ['prompt', 'brief', 'title']) {
+    const text = input?.[key];
+    if (typeof text === 'string') tokens.push(...text.match(/[^\s"'`<>()[\]{}|&*,;]+/g) ?? []);
+  }
+  return tokens
+    .map((token) => token.replace(/:\d+(?:-\d+)?$/, '').replace(/\\/g, '/'))
+    .filter((token) => token.includes('/'));
+}
+
+/// The gated domain a seat-brief path token routes to, or null when it names
+/// no domain of a readable routing map. `maps` caches each worktree's map.
+function routedDomainOfToken(token, cwd, maps) {
+  const target = physicalPath(resolve(cwd, token));
+  // A directory that does not exist yet names no worktree of its own: its
+  // nearest existing ancestor answers for the root, so a path about to be
+  // created gates like any other path under the same route instead of
+  // slipping past the gate silently.
+  const worktreeRoot = worktreeRootOfDirectory(nearestExistingDirectory(dirOf(target)));
+  if (!worktreeRoot) return null;
+  const relativePath = relative(worktreeRoot, target).split(sep).join('/');
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return null;
+  if (!maps.has(worktreeRoot)) {
+    maps.set(worktreeRoot, JSON.parse(readFileSync(join(worktreeRoot, 'docs/agent/domain-routing.generated.json'), 'utf8')));
+  }
+  const domain = domainOf(relativePath, maps.get(worktreeRoot));
+  // A domain whose page cannot answer - any other id shape, or no page on disk
+  // (a retired domain or a stale map row, whose deny would name a file nobody
+  // can Read) - is never gated.
+  return domain && /^domain-[a-z0-9-]+$/.test(domain) && hasDomainPage(worktreeRoot, domain) ? domain : null;
+}
+
+/// The nearest ancestor of `directory` that exists on disk, so a path under a
+/// not-yet-created directory still names the tree it will live in (the event
+/// cwd is an ancestor of any relative token, and the filesystem root exists).
+function nearestExistingDirectory(directory) {
+  let dir = directory;
+  while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir);
+  return dir;
+}
+
+/// Whether the deny's named page can answer at all: the gate tells the lead to
+/// Read knowledge.md or a fragment under knowledge/, so a domain with neither
+/// on disk is ungated rather than denied forever.
+function hasDomainPage(worktreeRoot, domain) {
+  const domainDir = join(worktreeRoot, '.agents', 'domains', domain);
+  // A directory named knowledge.md is no page either: a Read of it records
+  // nothing, so counting it would deny forever.
+  try {
+    if (statSync(join(domainDir, 'knowledge.md')).isFile()) return true;
+  } catch {
+    // absent: fall through to the knowledge/ fragments
+  }
+  // An empty knowledge/ directory is not a page: readdirSync lists only the
+  // names, so a directory with no readable .md file stays ungated rather than
+  // denying on a knowledge.md nobody can Read.
+  const knowledgeDir = join(domainDir, 'knowledge');
+  try {
+    return readdirSync(knowledgeDir).some((name) => name.endsWith('.md') && statSync(join(knowledgeDir, name)).isFile());
+  } catch {
+    return false;
+  }
+}
+
+/// Task 3440: a lead's direct Read of a domain's page satisfies the
+/// seat-brief gate. Recorded beside the knowledge marks and cleared by the
+/// same compaction reset; a Read refused by code-intel-order and an orch
+/// seat never record (their context holds nothing).
+function recordDirectPageRead(relativePath, stateDir, refused, seat, target) {
+  if (refused || seat) return;
+  // A Read of a path that does not exist or is not a regular file (a directory
+  // under knowledge/) delivered nothing: recording it would satisfy the gate
+  // with a page nobody ever saw.
+  if (target) {
+    try {
+      if (!statSync(target).isFile()) return;
+    } catch {
+      return;
+    }
+  }
+  const page = /^\.agents\/domains\/([^/]+)\/(?:knowledge\.md|knowledge\/.+)$/.exec(relativePath);
+  if (!page) return;
+  try {
+    mkdirSync(join(stateDir, 'page-read'), { recursive: true });
+    writeFileSync(join(stateDir, 'page-read', page[1]), relativePath, { flag: 'wx' });
+  } catch { /* best effort: an existing record simply stays */ }
+}
+
 async function main() {
   let event;
   try {
@@ -89,7 +277,9 @@ async function main() {
   // Deny runtimes cannot take context on a read.
   const isRead = toolName === 'Read';
   if (isRead && denyDelivery) allow();
-  if (!isRead && !/^(Edit|Write|MultiEdit|NotebookEdit|str_replace_editor|apply_patch|search_replace)$/i.test(toolName)) {
+  // The two orch seat tools ride the same matcher (task 3440) and are judged by
+  // gateSeatBrief at the file_path exit below.
+  if (!isRead && !/^(Edit|Write|MultiEdit|NotebookEdit|str_replace_editor|apply_patch|search_replace|mcp__orch__seat_create|mcp__orch__seat_prompt)$/i.test(toolName)) {
     allow();
   }
 
@@ -106,7 +296,9 @@ async function main() {
     if (!filePaths.length) allow();
   } else {
     const filePath = String(input.file_path ?? input.path ?? input.notebook_path ?? '');
-    if (!filePath) allow();
+    // A seat brief carries no file_path: the task 3440 gate owns that exit.
+    // Every other no-file_path tool keeps the silent allow it always had.
+    if (!filePath) gateSeatBrief(event, input, toolName);
     filePaths = [filePath];
   }
 
@@ -201,8 +393,12 @@ async function main() {
     }
 
     // A read never queries lessons: an unpaged or already-paged file costs no
-    // memoryctl spawn.
-    if (isRead) continue;
+    // memoryctl spawn. Its direct Read of a domain page is recorded for the
+    // seat-brief gate (task 3440).
+    if (isRead) {
+      recordDirectPageRead(relativePath, stateDir, readRefused, orchSeat, target);
+      continue;
+    }
 
     // Once per (session, file) until the context is compacted. Re-delivering the
     // same lessons on the second edit of the same file is pure cost: the agent
@@ -231,8 +427,9 @@ async function main() {
       routed = await renderLessonContext({ sources, brief, role: 'lead', repoRoot,
         budget: LESSON_CONTEXT_BYTES - Buffer.byteLength(prefix), });
       lessons = routed.text;
-    } catch {
+    } catch (error) {
       // A router error is not an empty store answer. Do not mark this edit.
+      console.error(`domain-lessons-hook: ${error.message}`);
       allow();
     }
   }

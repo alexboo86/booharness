@@ -14,6 +14,13 @@ import type { Family, Harness, ProviderAdapter, SessionSpec, Usage } from './typ
 import { landable } from '../role-policy.ts';
 
 export * from './types.ts';
+export * from './lead-provider.ts';
+export { ClaudeLeadProvider } from './claude-lead.ts';
+export { PiLeadProvider, type PiLeadProviderOptions } from './pi-lead.ts';
+// Task 3536 slice B correction 2 (CWE-532): the pi-client smoke exports the facade.
+export { piArgs, piExpectedTools, piRuntimeLayout, piVersionedLayout, resolvePiInstall, readLocalPiInstall, probePiInstall, piPinVersion, comparePiVersions, PI_ENV, PI_UNSET, PI_CHILD_ENV, PI_INSTALL_ENV, piChildEnv, piSecretValues, piCredentialValues, redactPiSecrets, ORCH_SEAT_COMMAND, type PiInstallFacts, type PiRoute } from './pi.ts';
+// Task 3536 slice B: win32 spawns must go through the .cmd-shim resolver (spawn EINVAL otherwise).
+export { resolveCommand } from './spawn.ts';
 
 /**
  * The Z.AI endpoint and key for the glm family live in orch's own provider
@@ -173,6 +180,27 @@ export function mimoEnv(model = 'mimo-v2.6-pro', home = os.homedir(), env: NodeJ
   };
 }
 
+/** Task 3536 slice B correction 2 (CWE-532): the raw api_key a Pi smoke child could echo
+ *  for the mimo route. Pi reads xiaomi-token-plan credentials itself from auth.json, so no
+ *  key rides a child's env — redaction must still know the value: the file first, then the
+ *  env key, like mimoEnv. Empty only when mimoProvider has already thrown (no credential). */
+export function mimoRouteKey(home = os.homedir(), env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const provider = mimoProvider(home, env);
+  const file = path.join(home, '.pi', 'agent', 'auth.json');
+  let credential: { type?: unknown; key?: unknown } | undefined;
+  try {
+    credential = JSON.parse(readFileSync(file, 'utf8'))?.[provider];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(`mimo cannot read Pi credentials in ${file}: ${credentialErrorKind(error)}`);
+    }
+  }
+  const envName = `XIAOMI_TOKEN_PLAN_${provider.slice('xiaomi-token-plan-'.length).toUpperCase()}_API_KEY`;
+  const key = credential?.type === 'api_key' && typeof credential.key === 'string' && credential.key.trim()
+    ? credential.key : env[envName];
+  return typeof key === 'string' && key.trim() ? { [envName]: key } : {};
+}
+
 // claude's Pi route is an explicit harness:'pi' opt-in only (#11849): Anthropic
 // bills a Max OAuth session from Pi as extra usage, not the subscription
 // (smoke 2026-09-24, #11848), so claude defaults to native Claude Code.
@@ -316,4 +344,12 @@ export function adapterFor(family: Family, harness: Harness = defaultHarness(fam
   const adapter = ADAPTERS[family];
   if (!adapter) throw new Error(`${family} has no native adapter; use harness 'pi'`);
   return adapter;
+}
+
+/** The Pi route a family runs as a lead child (task 3459 L0b): same table `adapterFor` reads,
+ *  refused the same way for a family without one. */
+export function piRouteFor(family: Family): PiRoute {
+  const route = PI_ROUTES[family];
+  if (!route) throw new Error(`${family} has no Pi route`);
+  return route;
 }

@@ -36,7 +36,7 @@ function readSettings(file, keep) {
 }
 
 // The Claude Code mods under ops/claude-mods that the installer registers.
-export const CLAUDE_MOD_NAMES = ['orch-board', 'handover', 'collision-guard', 'delay-no-more', 'secrets-veil'];
+export const CLAUDE_MOD_NAMES = ['lead-wake', 'handover', 'collision-guard', 'delay-no-more', 'secrets-veil'];
 
 export function writePermissionSettings({ repoRoot, home, file, allow, deny }) {
   const config = readHarnessConfig({ repoRoot });

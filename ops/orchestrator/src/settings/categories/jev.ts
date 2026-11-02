@@ -1,0 +1,23 @@
+import { defineSetting, type SettingDefinition } from '../registry.ts';
+import { BRIEF_WORDS, WIDE_BRIEF_P, WARN_BRIEF_P, SKIP_LOGIC_RISK, RAISE_LOGIC_RISK, REPORT_WARN_WORDS, FINISHED_P, SUPPORTED_P, SAME_DEFECT_P } from '../jev-defaults.ts';
+
+/** Live install controls; existing owner exports share these defaults without a dependency cycle. */
+export function registerJev(): void {
+  const entries: Pick<SettingDefinition, 'key' | 'label' | 'help' | 'type' | 'default' | 'bounds' | 'reads' | 'nullable'>[] = [
+    { key: 'jev.scope.refuse', label: 'Reject oversized tasks', help: 'Refuse a coder’s first brief when Jev rates it above this probability of being too broad; default 0.95 keeps the current cutoff. An explicit wide_brief exception still bypasses refusal.', type: 'number', default: WIDE_BRIEF_P, bounds: { min: 0, max: 1 }, reads: 'seats-defs.ts:459 WIDE_BRIEF_P; seats-prompt.ts:102; http.ts:565 role auto.' },
+    { key: 'jev.scope.warn', label: 'Warn about task size', help: 'Warn when Jev rates a brief above this probability of being too broad, up to the refusal cutoff; default 0.85 keeps the current warning point.', type: 'number', default: WARN_BRIEF_P, bounds: { min: 0, max: 1 }, reads: 'seats-defs.ts:459 WARN_BRIEF_P; scopeWarnings at seats-defs.ts:463 (tool reply and digest).' },
+    { key: 'jev.review.skip', label: 'Skip low-risk reviews', help: 'In Auto mode, request no reviewer below this Jev probability of a logic error; default 0.2 keeps the current cutoff. Security-related files still require review.', type: 'number', default: SKIP_LOGIC_RISK, bounds: { min: 0, max: 1 }, reads: 'review-plan.ts:268 SKIP_LOGIC_RISK; planRows at review-plan.ts:348.' },
+    { key: 'jev.review.raise', label: 'Add second reviewer', help: 'In Auto mode, request two reviewers when the Jev probability of a logic error reaches this value; default 0.7 keeps the current cutoff.', type: 'number', default: RAISE_LOGIC_RISK, bounds: { min: 0, max: 1 }, reads: 'review-plan.ts:31 RAISE_LOGIC_RISK; planRows at review-plan.ts:349.' },
+    { key: 'jev.review.count', label: 'Reviewers per theme', help: 'Choose Auto or a reviewer count for each review theme; default Auto keeps the count based on risk. A number replaces that count for every theme, but security-related files always require at least one reviewer.', type: 'choice-auto-or-int', default: 'auto', bounds: { min: 0, max: 10 }, reads: 'review-plan.ts:350 count read; overrideReview at review-plan.ts:337; Auto preserves planRows.' },
+    { key: 'jev.brief.words', label: 'Brief word limit', help: 'Limit brief length unless an explicit long_brief reason explains the extra words; default 300 keeps the current word limit. Automatically generated task briefs use the same limit.', type: 'int', default: BRIEF_WORDS, bounds: { min: 1, max: 10000 }, reads: 'seats-defs.ts:459 BRIEF_WORDS; seats-prompt.ts:211; http.ts:485; tasks-agent.ts:94.' },
+    { key: 'jev.report.words', label: 'Report word warning', help: 'Warn when report text exceeds this word count; default null keeps the warning off. Long reports are never refused by this setting.', type: 'int', default: REPORT_WARN_WORDS, nullable: true, bounds: { min: 1 }, reads: 'report.ts:37 REPORT_WARN_WORDS; report.ts:28 word warning; seats-digest.ts:452 flags.' },
+    { key: 'jev.grading.finished', label: 'Report completion score', help: 'Flag a report when Jev rates its probability of describing finished work below this value; default 0.5 keeps the current cutoff.', type: 'number', default: FINISHED_P, bounds: { min: 0, max: 1 }, reads: 'grading.ts:39 FINISHED_P; gradeFlags at grading.ts:311; seats-verify.ts:344 sibling filter.' },
+    { key: 'jev.grading.supported', label: 'Evidence support score', help: 'Request an evidence check and flag a reproduced major or blocker finding below this Jev support score; default 0.6 keeps the current cutoff.', type: 'number', default: SUPPORTED_P, bounds: { min: 0, max: 1 }, reads: 'grading.ts:41 SUPPORTED_P; unsupportedFindings at grading.ts:300; seats-digest.ts:415.' },
+    { key: 'jev.grading.sameDefect', label: 'Duplicate finding score', help: 'Flag findings from parallel reviews when Jev rates the probability that their cited lines overlap at or above this value; default 0.6 keeps the current cutoff.', type: 'number', default: SAME_DEFECT_P, bounds: { min: 0, max: 1 }, reads: 'grading.ts:322 gradeFlags sibling pair threshold.' },
+  ];
+  for (const entry of entries) defineSetting({
+    ...entry, category: 'jev', group: 'automation', tier: 'advanced',
+    control: entry.type === 'choice-auto-or-int' ? 'select' : 'number',
+    class: 'user', scope: 'install', apply: 'live',
+  });
+}

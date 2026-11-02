@@ -53,6 +53,7 @@ import { parseArgs } from 'node:util';
 import { parseShipTo, SHIPPED_STATE } from '../backup-memory.mjs';
 import { embedUrlRefusal, harnessLabel, harnessPaths, harnessTaskName, readHarnessConfig } from '../../scripts/lib/harness-config.mjs';
 import { forwardLaunchdLabel, forwardSshArgs, workerPlistPath } from '../../scripts/lib/memory-forward.mjs';
+import { resolveServiceNodeBin } from '../../scripts/lib/memory-installer.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 let config;
@@ -125,6 +126,7 @@ async function installLandedMap() {
   if (branch.status === 1) return; // Detached HEAD is not a landing on master.
   if (branch.status !== 0) throw new Error(branch.stderr.trim() || 'cannot read the checkout branch');
   if (branch.stdout.trim() !== 'master') return;
+  await installLandedKnowledge(scrubbedGitEnv());
   const committedMap = () => execFileSync('git',
     ['-C', REPO, 'show', 'HEAD:docs/agent/domain-routing.generated.json'],
     { env: scrubbedGitEnv() });
@@ -154,6 +156,19 @@ async function installLandedMap() {
   throw new Error('HEAD routing map kept changing after three install rounds; run npm run install:memory');
 }
 
+async function installLandedKnowledge(env) {
+  if (read(SERVICE_URL_FILE)) return; // Only the writer reads this local artifact.
+  const indexPath = path.join(SERVICE_DIR, 'knowledge.sqlite');
+  try {
+    const files = execFileSync('git', ['-C', REPO, 'ls-tree', '-r', '--name-only', 'refs/heads/master', '--', '.agents/domains'], { encoding: 'utf8', env });
+    if (!files.includes('/knowledge.md') && !existsSync(indexPath)) return;
+    const { rebuildKnowledgeIndex } = await import('./knowledge-page-lib.mjs');
+    rebuildKnowledgeIndex({ repoRoot: REPO, indexPath });
+  } catch (error) {
+    console.error(`knowledge index rebuild failed: ${String(error.message).split('\n')[0]}`);
+  }
+}
+
 function remoteArg(argv) {
   const at = argv.indexOf('--remote');
   if (at === -1) return null;
@@ -166,12 +181,6 @@ function remoteArg(argv) {
 }
 const REMOTE = remoteArg(process.argv)
   ?? (existsSync(SERVICE_URL_FILE) ? readFileSync(SERVICE_URL_FILE, 'utf8').trim() || null : null);
-// The interpreter launchd will exec. `process.execPath` is the node that is
-// running this installer — the one node:sqlite provably works in — rather than
-// whatever `command -v node` would find first. Overridable so a test (or an
-// operator with a strong opinion) can point it at a specific build.
-const NODE_BIN = process.env.MEMORYCTL_NODE_BIN || process.execPath;
-
 // The plist is a darwin artifact. An explicit MEMORYCTL_LAUNCHD_PLIST makes it
 // a managed artifact on ANY platform — the same relocation MEMORYCTL_SERVICE_DIR
 // already enjoys — which is what lets its drift checks run in CI everywhere
@@ -182,6 +191,26 @@ const PLIST_PATH = process.env.MEMORYCTL_LAUNCHD_PLIST
     : null);
 // A remote service owns the daemon; this machine then manages no plist at all.
 const MANAGES_PLIST = PLIST_PATH !== null && REMOTE === null;
+
+// The interpreter launchd will exec. `MEMORYCTL_NODE_BIN` stays an explicit
+// override so a test (or an operator with a strong opinion) can point it at a
+// specific build — including a Cellar keg it names itself. The default starts
+// from `process.execPath` — the node that is running this installer, the one
+// node:sqlite provably works in, rather than whatever `command -v node` would
+// find first — and is resolved to a version-stable spelling: a Homebrew
+// execPath names a Cellar version that dies with `brew upgrade` (task 3427:
+// after brew removed the installed version, memoryd exited EX_CONFIG 78 with
+// no listener and the backup child failed with ENOENT). A host that manages
+// no plist renders none, so it keeps the plain execPath for the hint message.
+const NODE_BIN_EXPLICIT = process.env.MEMORYCTL_NODE_BIN || null;
+function resolveNodeBin() {
+  const resolution = resolveServiceNodeBin(process.execPath);
+  if (resolution.refusal !== undefined) {
+    refuse(`no version-stable node for the launchd units: ${resolution.refusal}`);
+  }
+  return resolution.nodeBin;
+}
+const NODE_BIN = NODE_BIN_EXPLICIT ?? (MANAGES_PLIST ? resolveNodeBin() : process.execPath);
 const SERVICE_PORT = process.env.MEMORYCTL_PORT || '7717';
 const LOCAL_OPTIONS_FILE = path.join(STATE_DIR, 'local-service.json');
 // A local writer owns the cross-encoder on macOS and Windows alike. Absent is

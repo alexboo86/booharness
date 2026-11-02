@@ -1,0 +1,5 @@
+{
+  "name": "lead-wake",
+  "version": "0.1.0",
+  "description": "Wake an idle lead on released orch chat posts"
+}

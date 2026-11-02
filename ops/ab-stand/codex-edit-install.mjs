@@ -6,7 +6,12 @@
 // integrity and tarball origin are checked, the bytes are hashed against the
 // pinned sha512 BEFORE npm sees them, npm ci verifies the committed dependency lock with
 // --ignore-scripts (the toolkit postinstall writes into ~/.pi and ~/.local/bin)
-// and config.json next to index.ts is overwritten with the pinned models.
+// and config.json next to index.ts is overwritten with the pinned models. After
+// npm ci extracts the integrity-verified tarball, the one pinned patch of
+// codex-edit.json is applied to index.ts (exact text, found exactly once, or the
+// install refuses): upstream's forward-slash workspace prefix refuses every
+// nested path on win32 (task 1956; fixed task 3527). --check compares index.ts
+// against the patched sha256 and every other file against its tarball hash.
 // Nothing here writes to ~/.pi or ~/.local/bin and nothing here loads extension
 // code or makes a model turn.
 //
@@ -32,6 +37,8 @@ export const CODEX_EDIT_CONFIG = CODEX_EDIT_PINS.config;
 export const CODEX_EDIT_FILES = CODEX_EDIT_PINS.files;
 /** sha256 of the pinned tarball's own bytes, per upstream file: what a check compares against. */
 export const CODEX_EDIT_HASHES = CODEX_EDIT_PINS.hashes;
+/** The one exact-text patch applied to the verified index.ts at install (task 3527): win32's dirname backslashes never satisfy upstream's forward-slash workspace prefix, so every nested apply_patch path failed "Parent path escapes workspace" (task 1956). */
+export const CODEX_EDIT_PATCH = CODEX_EDIT_PINS.patch;
 /** Package-relative extension directory with forward slashes, e.g. extensions/codex-edit. */
 const EXTENSION_DIR = CODEX_EDIT_PINS.extension.slice(0, CODEX_EDIT_PINS.extension.lastIndexOf('/'));
 const ENTRY = CODEX_EDIT_PINS.extension.slice(EXTENSION_DIR.length + 1);
@@ -151,6 +158,24 @@ export function codexEditProblem(prefix) {
   try { return inspectPrefix(prefix); } catch (error) { return error.message; }
 }
 
+/** One pinned extension file's problem against the pins, or null: config.json by content, the patched file by its patched sha256, every other file by its tarball hash. */
+function pinnedFileProblem(root, record, file) {
+  const full = contained(root, path.join(extensionDir(root), file), file);
+  if (!existsSync(full)) return `${file} absent in ${extensionDir(root)}`;
+  // config.json is orch's own override: compare its content with the pin, not a tarball hash.
+  if (file === 'config.json') {
+    if (canonical(readJson(full)) !== canonical(CODEX_EDIT_CONFIG)) return `config.json in ${extensionDir(root)} is ${canonical(readJson(full))}, not the pinned ${canonical(CODEX_EDIT_CONFIG)}`;
+    return null;
+  }
+  // The patched file is checked against the PATCHED pin (task 3527); every other file against its tarball hash, so any other change still refuses.
+  const pinned = file === CODEX_EDIT_PATCH.file ? CODEX_EDIT_PATCH.sha256 : CODEX_EDIT_HASHES[file];
+  if (typeof pinned !== 'string') return `codex-edit.json pins no sha256 for ${file}`;
+  const actual = sha256(full);
+  if (actual !== pinned) return `${file} in ${extensionDir(root)} is sha256 ${actual}, not the pinned ${pinned}`;
+  if (record.files?.[file] !== actual) return `${file} in ${extensionDir(root)} differs from the sha256 recorded at install`;
+  return null;
+}
+
 function inspectPrefix(prefix) {
   let root;
   try { root = assertRealDir(prefix, 'the codex-edit prefix'); }
@@ -184,18 +209,8 @@ function inspectPrefix(prefix) {
   if (version !== CODEX_EDIT_PINS.version) return `${prefix} holds toolkit ${version ?? 'nothing'}, pinned ${CODEX_EDIT_PINS.version}`;
   if (!existsSync(contained(root, codexEditExtension(root), 'the codex-edit entry file'))) return `${codexEditExtension(root)} absent`;
   for (const file of CODEX_EDIT_FILES) {
-    const full = contained(root, path.join(extensionDir(root), file), file);
-    if (!existsSync(full)) return `${file} absent in ${extensionDir(root)}`;
-    // config.json is orch's own override: compare its content with the pin, not a tarball hash.
-    if (file === 'config.json') {
-      if (canonical(readJson(full)) !== canonical(CODEX_EDIT_CONFIG)) return `config.json in ${extensionDir(root)} is ${canonical(readJson(full))}, not the pinned ${canonical(CODEX_EDIT_CONFIG)}`;
-      continue;
-    }
-    const pinned = CODEX_EDIT_HASHES[file];
-    if (typeof pinned !== 'string') return `codex-edit.json pins no sha256 for ${file}`;
-    const actual = sha256(full);
-    if (actual !== pinned) return `${file} in ${extensionDir(root)} is sha256 ${actual}, not the pinned ${pinned}`;
-    if (record.files?.[file] !== actual) return `${file} in ${extensionDir(root)} differs from the sha256 recorded at install`;
+    const problem = pinnedFileProblem(root, record, file);
+    if (problem) return problem;
   }
   return null;
 }
@@ -247,6 +262,17 @@ export function npm(args, options, name = 'codex-edit') {
   }
 }
 
+/** Apply the one pinned exact-text patch (task 3527) to the bytes npm ci just extracted from the integrity-verified tarball: refuse unless the pinned text is found exactly once. */
+function applyPinnedPatch(root) {
+  const file = contained(root, path.join(extensionDir(root), CODEX_EDIT_PATCH.file), CODEX_EDIT_PATCH.file);
+  const source = readFileSync(file, 'utf8');
+  const at = source.indexOf(CODEX_EDIT_PATCH.find);
+  if (at === -1 || source.indexOf(CODEX_EDIT_PATCH.find, at + 1) !== -1) {
+    throw new Error(`codex-edit: the pinned ${CODEX_EDIT_PATCH.file} patch text was not found exactly once`);
+  }
+  writeContained(root, file, source.slice(0, at) + CODEX_EDIT_PATCH.replace + source.slice(at + CODEX_EDIT_PATCH.find.length), `the patched ${CODEX_EDIT_PATCH.file}`);
+}
+
 /**
  * Install (or reuse) the verified extension under `prefix`. `extraPackages` are
  * selected from the committed stand lock, as the arm does for pi-mcp-adapter. Throws with
@@ -286,6 +312,7 @@ export async function ensureCodexEdit(prefix, { force = false, log = console.err
   npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--legacy-peer-deps', '--bin-links=false', '--prefix', root], { cwd, env: { ...process.env, ...env, npm_config_cache: cache } });
   const version = readJson(contained(root, path.join(packageRoot(root), 'package.json'), 'the toolkit manifest'))?.version;
   if (version !== CODEX_EDIT_PINS.version) throw new Error(`codex-edit: installed toolkit ${version ?? 'nothing'}, pinned ${CODEX_EDIT_PINS.version}`);
+  applyPinnedPatch(root);
   // Upstream reads config.json adjacent to index.ts and ships gpt-5.6-*: write the
   // pin, contained, so a junction in the extracted tree cannot redirect the write.
   writeContained(root, path.join(extensionDir(root), 'config.json'), `${JSON.stringify(CODEX_EDIT_CONFIG, null, 2)}\n`, 'the codex-edit config');

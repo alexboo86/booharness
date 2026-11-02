@@ -4,18 +4,27 @@ import type { SeatManager } from './seats.ts';
 import type { Family, ProviderSession, SessionSpec, Usage } from './providers/types.ts';
 import { instrumentsOff, offEnv, seatInstruments } from './shared.entry.ts';
 import { isStandArm, standEnv } from './stand.ts';
-import { gradeFlags, SUPPORTED_P, type Finding, type Grade } from './grading.ts';
+import { gradeFlags, type Finding, type Grade } from './grading.ts';
+import { readAdvisoryInstallSettings, SUPPORTED_P } from './settings/index.ts';
+import { reportWarnings } from './report.ts';
 import { deliveryReport, parseReport, tableRows, WITHDRAWN } from './report.ts';
 import { lessonApplications, type MemoryProposal } from './memory-proposals.ts';
-import { TERMINAL_TURN, drainWarning, type Seat, type Turn, type TurnEnd } from './store.ts';
+import { TERMINAL_TURN, drainWarning, turnRepeatLessons, type Seat, type Turn, type TurnEnd } from './store.ts';
 import { lastCheckResults } from './check-verify.ts';
 import { criteriaFlags, modelCallFlags } from './digest-text.ts';
 import { seatToolEnv } from './shared.entry.ts';
 import { worktreeChanges } from './worktrees.ts';
-import { NO_FILES_WARNING, claudeTranscriptPath, gitAsync, currentScope, landable, pathInWriteScope, TEST_FILE_GLOBS, validGrade, watchFlags, writeScopeOf } from './seats-defs.ts';
+import { NO_FILES_WARNING, claudeTranscriptPath, gitAsync, currentScope, landable, pathInWriteScope, scopeWarnings, TEST_FILE_GLOBS, validGrade, watchFlags, writeScopeOf } from './seats-defs.ts';
 import type { SeatRole, Digest, CoderTree, SeatData } from './seats-defs.ts';
 import { readLanguageMode } from './shared.entry.ts';
 import { steSummary, type LanguageSummary } from './ste.ts';
+
+/** A scout Pi seat runs without rtk rewriting (operator decision #22391): this env var makes
+ *  rtk's own Pi extension skip — ~/.pi/agent/extensions/rtk.ts:124 checks `process.env.RTK_DISABLED === "1"`
+ *  before it calls `rtk rewrite`. Native codex/claude scouts are reported, not changed. */
+function rtkDisabledEnv(role: string, harness: unknown): Record<string, string> {
+  return role === 'scout' && harness === 'pi' ? { RTK_DISABLED: '1' } : {};
+}
 
 export async function session(self: SeatManager, seat: Seat): Promise<ProviderSession> {
     const live = self.live.get(seat.id);
@@ -35,7 +44,7 @@ export async function session(self: SeatManager, seat: Seat): Promise<ProviderSe
     // fails visibly instead of silently keeping Pi's stock edit tools.
     const codexEdit = await self.codexEditFor(seat, data);
     const hashlineEdit = await self.hashlineEditFor(seat, data);
-    const writeScope = writeScopeOf(seat.role);
+    const writeScope = writeScopeOf(seat.role, data.writeScope);
     const spec: SessionSpec = {
       family: seat.family as Family,
       cwd: seat.cwd!,
@@ -48,7 +57,7 @@ export async function session(self: SeatManager, seat: Seat): Promise<ProviderSe
       ...(data.effort ? { effort: data.effort } : {}),
       ...(off.length ? { instrumentsOff: off } : {}),
       // ORCH_SEAT_INSTRUMENTS_OFF is what the Pi extension reads to refuse an off instrument.
-      env: { SEAT_POLICY_ROLE: seat.role, ORCH_SEAT_ID: seat.id, ...(off.length ? { ORCH_SEAT_INSTRUMENTS_OFF: offEnv(off) } : {}), ...(hashlineEdit ? { PI_HASHLINE_DIR: hashlineEdit.store } : {}), ...(isStandArm(data.standArm) ? standEnv(self.options.stateDir, data.standArm, process.env.PATH ?? '') : {}), ...(tool && data.harness === 'pi' ? seatToolEnv(tool) : {}), ...(writeScope !== undefined ? { ORCH_SEAT_WRITE_SCOPE: JSON.stringify(writeScope) } : {}) },
+      env: { SEAT_POLICY_ROLE: seat.role, ORCH_SEAT_ID: seat.id, ...rtkDisabledEnv(seat.role, data.harness), ...(off.length ? { ORCH_SEAT_INSTRUMENTS_OFF: offEnv(off) } : {}), ...(hashlineEdit ? { PI_HASHLINE_DIR: hashlineEdit.store } : {}), ...(isStandArm(data.standArm) ? standEnv(self.options.stateDir, data.standArm, process.env.PATH ?? '') : {}), ...(tool && data.harness === 'pi' ? seatToolEnv(tool) : {}), ...(writeScope !== undefined ? { ORCH_SEAT_WRITE_SCOPE: JSON.stringify(writeScope) } : {}) },
       ...(tool ? { seatTool: tool } : {}),
     };
     const adapter = self.adapter(seat.family as Family, data.harness);
@@ -81,7 +90,6 @@ export async function session(self: SeatManager, seat: Seat): Promise<ProviderSe
 
 export function end(self: SeatManager, turnId: string, end: TurnEnd): void {
     self.liveTools.delete(turnId);
-    self.turnLogEnd(turnId);
     const watch = self.store.getTurn(turnId)?.watch;
     // What was recorded at queue time survives a turn that ends before run() built its own record.
     const scope = self.takeBypassScope(turnId, currentScope(watch?.scope));
@@ -281,6 +289,7 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
     // Unrestricted coders also have no write-scope list, but their branches land.
     const compactionFlags = compactions !== null && compactions > 0 && !landable(seat.role) && writeScopeOf(seat.role) === undefined
       ? [`compacted: ${compactions} times; spot-check the evidence before use`] : [];
+    compactionFlags.push(...scopeWarnings(turn, seat.data, self.options.stateDir));
     return {
       seat: seat.id,
       title: seat.title,
@@ -298,7 +307,7 @@ export async function digest(self: SeatManager, turn: Turn): Promise<Digest> {
       ...table,
       report: report.report ? deliveryReport(report.report) : null,
       lessonApplications: lessonApplications(self.store, turn.id, (report.report?.memory ?? []) as MemoryProposal[]),
-      flags: [...modelCallFlags(usage?.raw, data.harness, seat.family), ...compactionFlags, ...(data.compactionFailuresByTurn?.[turn.id] ?? []).map((error: string) => `Pi compaction failed: ${error}`), ...(data.harness === 'pi' && data.toolsMissingByTurn?.[turn.id]?.length ? [`tools missing: ${data.toolsMissingByTurn[turn.id].join(', ')}`] : []), ...(drain ? [`held by drain: ${drainWarning(drain)}`] : []), ...(data.remoteProvisionNotes ?? []), ...(data.noFilesTurn === turn.id ? [NO_FILES_WARNING] : []), ...(seat.role === 'coder' && turn.duration_ms !== null && turn.duration_ms > 25 * 60_000 ? ['long turn: over 25 minutes'] : []), ...circling, ...regressed, ...(syncFailure ? [`remote turn sync failed: ${syncFailure}; mirror and recorded tree unavailable`] : []), ...(leftOut?.length ? [`remote turn sync left out invalid paths: ${leftOut.join(', ')}`] : []), ...testEditFlags, ...criteriaFlags(report.report), ...watchFlags(turn.watch), ...report.flags, ...inferredHints, ...(turn.status === 'done' && turn.tools === 0 && turn.seq === 1 && ['scout', 'critic', 'coder', 'tester', 'designer', 'copywriter', 'motion', 'reviewer', 'legal', 'security', 'bughunter'].includes(seat.role) ? [`no tool calls: this ${seat.role} turn finished done without calling a tool`] : [])],
+      flags: [...new Set([...modelCallFlags(usage?.raw, data.harness, seat.family), ...compactionFlags, ...(data.compactionFailuresByTurn?.[turn.id] ?? []).map((error: string) => `Pi compaction failed: ${error}`), ...(data.harness === 'pi' && data.toolsMissingByTurn?.[turn.id]?.length ? [`tools missing: ${data.toolsMissingByTurn[turn.id].join(', ')}`] : []), ...(drain ? [`held by drain: ${drainWarning(drain)}`] : []), ...(data.remoteProvisionNotes ?? []), ...(data.noFilesTurn === turn.id ? [NO_FILES_WARNING] : []), ...(seat.role === 'coder' && turn.duration_ms !== null && turn.duration_ms > 25 * 60_000 ? ['long turn: over 25 minutes'] : []), ...circling, ...regressed, ...(syncFailure ? [`remote turn sync failed: ${syncFailure}; mirror and recorded tree unavailable`] : []), ...(leftOut?.length ? [`remote turn sync left out invalid paths: ${leftOut.join(', ')}`] : []), ...testEditFlags, ...criteriaFlags(report.report, seat.role), ...watchFlags(turn.watch), ...report.flags, ...inferredHints, ...(turn.status === 'done' && turn.tools === 0 && turn.seq === 1 && ['scout', 'critic', 'coder', 'tester', 'designer', 'copywriter', 'motion', 'reviewer', 'legal', 'security', 'bughunter'].includes(seat.role) ? [`no tool calls: this ${seat.role} turn finished done without calling a tool`] : [])])],
       watch: turn.watch,
       scope: turn.watch?.scope ?? null,
       worktree: changes && seat.worktree ? { path: seat.worktree, branch: data.branch, files: changes.files, stat: changes.stat } : null,
@@ -396,6 +405,8 @@ export function supportNotes(self: SeatManager, turn: Turn, report: Record<strin
     if (round.outcome === 'invalid') return ['the corrected answer was not a valid report; the original report stands'];
     if (!report) return ['the corrected report is missing'];
     const findings = (Array.isArray(report.findings) ? report.findings : []) as Finding[];
+    // reportOf already surfaces the same settings error in the digest flags.
+    const settings = readAdvisoryInstallSettings(self.options.stateDir, { 'jev.grading.supported': SUPPORTED_P }, []);
     return round.asked.map((asked) => {
       const finding = findings[asked.finding];
       if (!finding) return `finding ${asked.finding + 1} is missing from the corrected report`;
@@ -403,9 +414,15 @@ export function supportNotes(self: SeatManager, turn: Turn, report: Record<strin
       if (!['blocker', 'major'].includes(String(finding.severity))) return `finding ${asked.finding + 1} downgraded to ${finding.severity}`;
       const score = grade?.status === 'graded' ? grade.evidenceSupports[asked.finding] : undefined;
       if (typeof score !== 'number') return `finding ${asked.finding + 1} re-grade unavailable`;
-      return score >= SUPPORTED_P ? `finding ${asked.finding + 1} now supported (${score.toFixed(2)})` : `finding ${asked.finding + 1} still unsupported (${score.toFixed(2)})`;
+      return score >= (settings['jev.grading.supported'] as number) ? `finding ${asked.finding + 1} now supported (${score.toFixed(2)})` : `finding ${asked.finding + 1} still unsupported (${score.toFixed(2)})`;
     });
   }
+
+function lessonRepeatFlags(self: SeatManager, turnId: string, grade: Record<string, unknown> | null): string[] {
+  const flags = Array.isArray(grade?.lessonRepeatFlags) ? grade.lessonRepeatFlags.filter((flag): flag is string => typeof flag === 'string') : [];
+  if (self.afterTurnPending(turnId, 'lesson repeats')) flags.push('lesson repeats pending');
+  return flags;
+}
 
 /** The parsed report, or why there is none. Never the seat's prose: that stays behind seat_report. */
 export function reportOf(self: SeatManager, turn: Turn): Pick<Digest, 'report' | 'reportError' | 'grade' | 'flags'> {
@@ -422,9 +439,10 @@ export function reportOf(self: SeatManager, turn: Turn): Pick<Digest, 'report' |
       ? { options: seat.data.options as string[] } : undefined;
     const storedGrade = self.store.getGrade(turn.id);
     const repairFlags = Array.isArray(storedGrade?.reportRepairFlags) ? storedGrade.reportRepairFlags.filter((flag): flag is string => typeof flag === 'string') : [];
+    const repeatFlags = lessonRepeatFlags(self, turn.id, storedGrade);
     // Stored parsing is lenient about legacy criteria; a rejected repair must still stay unparsed.
     if (storedGrade?.reportRepairRejected === true) return { report: null, reportError: 'schema repair rejected; read the full original with seat_report', grade: null, flags: ['no valid report', ...repairFlags] };
-    const parsed = parseReport(turn.text, seat.role as SeatRole, lessons, { stored: true, table });
+    const parsed = parseReport(turn.text, seat.role as SeatRole, lessons, { stored: true, table, repeatLessons: turnRepeatLessons(turn) });
     if (parsed.ok === false) return { report: null, reportError: `${parsed.error}; read the raw message with seat_report only if you need it`, grade: null, flags: ['no valid report', ...repairFlags] };
     const grade = validGrade(storedGrade, (parsed.report.findings as unknown[]).length);
     const failedChecks: string[] = [];
@@ -433,5 +451,5 @@ export function reportOf(self: SeatManager, turn: Turn): Pick<Digest, 'report' |
         if (result === 'fail') failedChecks.push(`failed check: ${command}`);
       }
     }
-    return { report: parsed.report, reportError: null, grade, flags: [...repairFlags, ...failedChecks, ...gradeFlags(parsed.report, grade)] };
+    return { report: parsed.report, reportError: null, grade, flags: [...repairFlags, ...repeatFlags, ...failedChecks, ...reportWarnings(parsed.report, self.options.stateDir), ...gradeFlags(parsed.report, grade, self.options.stateDir)] };
   }

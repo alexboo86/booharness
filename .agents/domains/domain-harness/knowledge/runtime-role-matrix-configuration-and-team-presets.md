@@ -29,12 +29,18 @@ family independence failures and debaters with fewer than two distinct models
 (`ops/orchestrator/src/team-presets.ts`).
 
 `roles preset <tier> --families <a,b> [--dry-run] [--json]` writes the whole matrix via
-`writeRolesMatrix`/`changeRoles`, merging nothing. Dry-run writes nothing; JSON is the
-builder result consumed by wizard teams. Invalid preset/flags/families/file or busy
-lock writes nothing and exits 2; other roles verbs use exit 1. Roles set warns but
-accepts unknown catalogue models; unreadable presets suppress only that warning.
+`writeRolesMatrix`/`changeRoles`, merging nothing. Bare `roles preset` applies the
+`presets.team` install setting (default `balanced`); a family name instead of a tier is
+that family's single-provider preset (catalogue models, `singleProviderPreset`), whose
+`--families` defaults to the family itself and must name it — a family named as the
+preset but left out of `--families` is refused before any write. A chosen family this
+machine cannot prove a login for warns at apply time (`presetLoginWarnings`). Dry-run
+writes nothing; JSON is the builder result consumed by wizard teams. Invalid
+preset/flags/families/file or busy lock writes nothing and exits 2; other roles verbs
+use exit 1. Roles set warns but accepts unknown catalogue models; unreadable presets
+suppress only that warning.
 Show prints empty rows as `no family`; JSON remains the doctor's interface
-(`ops/orchestrator/src/profiles.ts`, `scripts/test-orch-team-presets.mjs` (not in this kit)).
+(`ops/orchestrator/src/team-presets.ts`, `scripts/test-orch-roles-file.mjs` (not in this kit)).
 
 verified: 2026-09-23
 

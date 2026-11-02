@@ -10,10 +10,10 @@ import { describe, questionKey } from './skill-router.mjs';
 import { readKnowledgePage, renderKnowledgePage } from './knowledge-page-lib.mjs';
 import { deliveredMarksDir } from './domain-lessons-hook.mjs';
 import { serviceUrl } from '../../scripts/memory/service-client.mjs';
+import { installJevThreshold, JEV_THRESHOLD_KEYS, orchStateDir } from '../../scripts/lib/harness-settings.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CAP = 6 * 1024;
-const DOMAIN_P = 0.5;
 const catalogueNames = (root) => readdirSync(root, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, 'SKILL.md')))
   .map((entry) => entry.name).sort();
@@ -21,6 +21,17 @@ const catalogueNames = (root) => readdirSync(root, { withFileTypes: true })
 const BUDGET_MS = 1500;
 const TEXT_CAP = 8000;
 const ID_RE = '[1-9]\\d*';
+
+/** The domain-page admission threshold, install scope. A corrupt settings file is reported on
+ * stderr the way bootstrap scripts report faults, then rethrown into the hook's fail-open catch:
+ * the prompt is never blocked, nothing is delivered and the session stays retryable. */
+function domainPageThreshold(settingsDir) {
+  try { return installJevThreshold(settingsDir, JEV_THRESHOLD_KEYS.domainPage); }
+  catch (error) {
+    console.error(`lead-task-router: ${error.message}`);
+    throw error;
+  }
+}
 
 function remember(hits, id, index, follow) {
   if (!new RegExp(`^${ID_RE}$`).test(id) || !Number.isSafeInteger(Number(id))) return;
@@ -124,6 +135,7 @@ async function readNamedEntries(specs, fetchEntry, deadline) {
 export async function routeLeadTask(event, {
   ask = askJev, fetchEntry = fetchMemoryEntry, repoRoot = ROOT,
   stateDir = join(tmpdir(), 'toolset-lead-task-router'),
+  settingsDir = orchStateDir(),
 } = {}) {
   let claimed = '';
   const written = [];
@@ -137,6 +149,7 @@ export async function routeLeadTask(event, {
     const named = scanNamed(event.prompt);
     // Decision 18596: no named entry is not a task. Do not call Jev or spend the marker.
     if (!named.length) return;
+    const domainP = domainPageThreshold(settingsDir);
     const domainsRoot = join(repoRoot, '.agents/domains');
     const domains = [];
     for (const name of catalogueNames(domainsRoot).filter((name) => /^domain-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name))) {
@@ -159,7 +172,7 @@ export async function routeLeadTask(event, {
     if (result?.error || !result?.answers || typeof result.answers !== 'object' || Array.isArray(result.answers)) return;
     const selected = (name) => {
       const p = result.answers[key(name)]?.noul;
-      return typeof p === 'number' && Number.isFinite(p) && p >= DOMAIN_P && p <= 1;
+      return typeof p === 'number' && Number.isFinite(p) && p >= domainP && p <= 1;
     };
     const parts = [];
     const delivered = [];

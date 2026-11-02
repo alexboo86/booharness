@@ -1,6 +1,6 @@
 ## Lead chat rules and handover
 
-Lead coordination lives in `.agents/skills/orch-team/SKILL.md`; handover in `.agents/skills/next/reference/successor.md`, relay prompt in `.agents/skills/next/reference/relay.md`. A post reaches its addressee on that lead's next turn. Desktop restart kills watchers; no daemon timer wakes the poster.
+Lead coordination lives in `.agents/skills/orch/SKILL.md`; handover in `.agents/skills/next/reference/successor.md`, relay prompt in `.agents/skills/next/reference/relay.md`. A post reaches its addressee on that lead's next turn. Desktop restart kills watchers; no daemon timer wakes the poster.
 
 `restart --when-idle` with `--as`, `--session`, `--note` posts the drain notice before arming: refused post arms nothing; second note during drain gets 409; no post follows start. `scripts/app-lease.mjs` (not in this kit) supplies app-start leases.
 

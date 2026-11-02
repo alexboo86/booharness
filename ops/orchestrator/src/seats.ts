@@ -2,6 +2,7 @@
 // live sessions sit in this process; the store holds everything a restart must
 // not lose (the provider's session id, every turn and its outcome).
 import os from 'node:os';
+import { readInstallSetting } from './settings/index.ts';
 import { adapterFor as realAdapterFor } from './providers/index.ts';
 import type { Family, Harness, ProviderAdapter, ProviderSession, TurnEvent, TurnResult } from './providers/types.ts';
 import type { PiToolManifest } from './providers/pi.ts';
@@ -13,6 +14,7 @@ import { type HashlineEdit } from './hashline-edit.ts';
 import { gradeReport, unsupportedFindings, type Finding, type Grade, type Sibling } from './grading.ts';
 import { accountCorrection, accountRepair, appliedLessons, parseReport, preserveReportTable, REPAIR_QUOTE_CHARS, repairPrompt, reportedChecks, supportPrompt } from './report.ts';
 import { chatPostTable } from './chat.ts';
+import { authorLessonIds, recordFindingRepeats } from './memory-proposals.ts';
 import { memberLabel, tallyTable } from './table.ts';
 import { type Seat, type Store, type Turn, type TurnEnd, type TurnWatchRecord, type BypassScope, TERMINAL_TURN } from './store.ts';
 import { steerMessage, TurnWatch, type WatchAction } from './watch.ts';
@@ -21,6 +23,7 @@ import { type AccountingRole, type Load, type ProfileRole, type Reservation } fr
 import type { QualityAnswer } from './role-quality.ts';
 import { probeLoad, type LoadProbe, type Target } from './placement.ts';
 import { moveCheckout } from './remote-repo.ts';
+import { snapshotCommit } from './worktrees.ts';
 import { type SeatTool } from './shared.entry.ts';
 import type { PruneDecision } from './prune.ts';
 import {
@@ -65,89 +68,21 @@ function fittingNotVoting(prefix: string, labels: readonly string[]): string {
   return `${head}${labels.slice(0, listed).join(', ')}${omitted > 0 ? `, +${omitted} more` : ''}`;
 }
 
-/** One board entry of a turn's live log (task 2883): `seq` is the entry's stable position in the turn. */
-export type TurnLiveEntry =
-  | { seq: number; at: string; kind: 'text' | 'thought'; text: string }
-  | { seq: number; at: string; kind: 'tool'; name: string; status: string; args?: string };
+/** Count one shell call's rtk verdict (toolkits.ts rtkMissed). A scout seat is never asked:
+ *  it runs without rtk rewriting (operator decision #22391), so its plain shell calls are
+ *  intended — never rtk-missed, never rtk-pending. No verdict (rtk killed or timed out)
+ *  stays visible as pending, never a silent zero (task 2772). */
+function countRtkMiss(kinds: Record<string, number>, rtkChecks: Promise<void>[], name: string, args: unknown, skipped: boolean, rtkMissedKey: string, rtkMissedFn: typeof rtkMissed): void {
+  if (skipped) return;
+  const missed = rtkMissedFn(name, args);
+  if (missed) rtkChecks.push(missed.then((yes) => { const key = yes === null ? 'rtk-pending' : yes ? rtkMissedKey : null; if (key) kinds[key] = (kinds[key] ?? 0) + 1; }));
+}
 
-/** At most this many live-log entries per turn; the oldest are dropped and counted as `trimmed`. */
-export const TURN_LOG_MAX_ENTRIES = 500;
-/** At most this many bytes of logged content per turn (task 2883). */
-export const TURN_LOG_MAX_BYTES = 256 * 1024;
-/** A single merged entry is cut to this many characters, so one entry alone can never pass the byte cap. */
-const TURN_LOG_ENTRY_CHARS = 65_536;
-/** The daemon retains at most this many turn logs (a seat keeps only its last ended one). */
-export const TURN_LOG_MAX_TURNS = 50;
-/** A tool entry's args as JSON, cut to this many characters. */
-const TURN_LOG_ARGS_CHARS = 400;
-
-const entryBytes = (entry: TurnLiveEntry): number => Buffer.byteLength(entry.kind === 'tool' ? `${entry.name}${entry.status}${entry.args ?? ''}` : entry.text);
-
-/**
- * The bounded live log of one turn (task 2883): consecutive text (or thought) deltas merge into one
- * entry, a tool entry keeps name, status and args as JSON cut to 400 characters, and the caps drop
- * the oldest entries and count them as `trimmed`. Volatile by design: a restart loses every log.
- */
-export class TurnLiveLog {
-  entries: TurnLiveEntry[] = [];
-  /** The seq the next NEW entry takes; deltas merging into the last entry keep its seq. */
-  next = 1;
-  trimmed = 0;
-  bytes = 0;
-  ended = false;
-  readonly seatId: string;
-  constructor(seatId: string) { this.seatId = seatId; }
-
-  add(event: TurnEvent): void {
-    if (event.kind === 'text' || event.kind === 'thought') {
-      const last = this.entries.at(-1);
-      if (last && last.kind === event.kind) {
-        const merged = last.text + event.delta;
-        if (merged.length > TURN_LOG_ENTRY_CHARS) {
-          // A merged entry keeps the NEWEST tail when it alone would pass the entry cap. Only the
-          // delta and the dropped head are measured — never the whole accumulated text: this runs
-          // on every Pi stdout event.
-          const head = merged.slice(0, merged.length - TURN_LOG_ENTRY_CHARS);
-          last.text = merged.slice(-TURN_LOG_ENTRY_CHARS);
-          this.bytes += Buffer.byteLength(event.delta) - Buffer.byteLength(head);
-        } else {
-          this.bytes += Buffer.byteLength(event.delta);
-          last.text = merged;
-        }
-      } else {
-        const text = event.delta.length > TURN_LOG_ENTRY_CHARS ? event.delta.slice(-TURN_LOG_ENTRY_CHARS) : event.delta;
-        this.entries.push({ seq: this.next++, at: new Date().toISOString(), kind: event.kind, text });
-        this.bytes += Buffer.byteLength(text);
-      }
-    } else if (event.kind === 'tool') {
-      let args: string | undefined;
-      if (event.args !== undefined) {
-        try { args = JSON.stringify(event.args); } catch { args = String(event.args); }
-        args = args.slice(0, TURN_LOG_ARGS_CHARS);
-      }
-      this.entries.push({ seq: this.next++, at: new Date().toISOString(), kind: 'tool', name: event.name, status: event.status, ...(args !== undefined ? { args } : {}) });
-      this.bytes += Buffer.byteLength(`${event.name}${event.status}${args ?? ''}`);
-    } else return;
-    while (this.entries.length > TURN_LOG_MAX_ENTRIES || (this.bytes > TURN_LOG_MAX_BYTES && this.entries.length > 1)) {
-      this.bytes -= entryBytes(this.entries.shift()!);
-      this.trimmed += 1;
-    }
-  }
-
-  /**
-   * Entries with seq past `afterSeq`, and the `after` a poller should pass next time: one below the
-   * last entry's seq while that entry can still grow (a running turn's merged delta), else the last
-   * entry's seq — so a poller re-reads the one entry that mutates and never misses its growth.
-   */
-  after(afterSeq: number): { entries: TurnLiveEntry[]; next: number } {
-    const last = this.entries.at(-1);
-    const next = !this.ended && last && last.kind !== 'tool' ? last.seq - 1 : this.next - 1;
-    // Held entries are consecutive from trimmed + 1, so a seq is an array index: a poll reads only
-    // the entries it returns, never the whole array.
-    const first = this.trimmed + 1;
-    const from = afterSeq + 1 > first ? afterSeq + 1 : first;
-    return { entries: this.entries.slice(from - first), next };
-  }
+function ownInstrumentContext(stateDir: string): string {
+  const entries = readInstallSetting(stateDir, 'instruments.own') as { name: string; command: string }[];
+  if (!entries.length) return '';
+  return '\n\n## Own instruments (CLI on this seat machine)\n\n' +
+    entries.map(({ name, command }) => `- ${name}: \`${command}\` (operator-provided CLI command).`).join('\n');
 }
 
 export class SeatManager {
@@ -228,11 +163,11 @@ export class SeatManager {
   settling = new Map<string, Promise<void>>();
   /** Tool calls of each running turn so far, by kind (toolkinds.ts): the stored ones are written only when the turn ends. */
   liveTools = new Map<string, { count: number; kinds: Record<string, number> }>();
-  /** Each turn's bounded live log (task 2883): volatile, lost on restart; http.ts serves it to the board. */
-  turnLogs = new Map<string, TurnLiveLog>();
+  /** Live provider-event observers (the /events push channel, event-stream.ts): every TurnEvent of a running turn with its seat and turn id. */
+  private readonly turnEventObservers = new Set<(seat: string, turn: string, event: TurnEvent) => void>();
   constructor(store: Store, options: Options) {
     this.store = store;
-    this.options = { snapshotRemoteMaxBytes: createMethods.SNAPSHOT_REMOTE_MAX_BYTES, turnTimeoutMs: 30 * 60_000, remoteTurnSyncMs: 120_000, home: os.homedir(), probeLoad, recheckHoldMs: 90_000, treeHoldMs: TREE_HOLD_MS, afterTurnCapMs: 10 * 60_000, ...options };
+    this.options = { snapshotRemoteMaxBytes: createMethods.SNAPSHOT_REMOTE_MAX_BYTES, turnTimeoutMs: 45 * 60_000, remoteTurnSyncMs: 120_000, home: os.homedir(), probeLoad, recheckHoldMs: 90_000, treeHoldMs: TREE_HOLD_MS, afterTurnCapMs: 10 * 60_000, ...options };
   }
 
   useChooser(choose: () => Choose | Promise<Choose>): void {
@@ -255,7 +190,7 @@ export class SeatManager {
    * and the author's stepping aside (profiles.ts).
    */
   /** In-flight creates by request_id, with the role, title, repo, effective images and options a retry must match. */
-  creating = new Map<string, { role: string; title: string; repo: string; critic: boolean; images: boolean; options?: string[]; work: Promise<Seat> }>();
+  creating = new Map<string, { role: string; title: string; repo: string; critic: boolean; images: boolean; options?: string[]; writeScope?: CreateSeat['writeScope']; work: Promise<Seat> }>();
 
   // Not async on the common path: returning createSeat's promise unchanged keeps the
   // exact settle timing existing callers (and the provisioning chain race) rely on.
@@ -522,6 +457,25 @@ export class SeatManager {
     return promptMethods.contextFiles(this, seat);
   }
 
+  /** Subscribe to the live provider events of running turns (event-stream.ts); returns the unsubscribe. */
+  onTurnEvent(observe: (seat: string, turn: string, event: TurnEvent) => void): () => void {
+    this.turnEventObservers.add(observe);
+    return () => { this.turnEventObservers.delete(observe); };
+  }
+
+  /** Forward one live provider event of a running turn to the /events observers (event-stream.ts). */
+  private turnEvent(seat: string, turn: string, event: TurnEvent): void {
+    // A failing observer must neither end the running turn nor starve the
+    // observers after it: the push channel is a view, never the turn's owner.
+    for (const observe of this.turnEventObservers) {
+      try {
+        observe(seat, turn, event);
+      } catch (error) {
+        this.options.log('warn', 'seat.turn_event_observer_failed', { seat, turn, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+
   /** Serialize HTTP prompts per seat across Jev's await: two concurrent first calls cannot swap which one gets gated. */
   async promptScoped(seatId: string, text: string, timeoutMs?: number, options: PromptOptions = {}, wideBrief?: string): Promise<Turn> {
     return promptMethods.promptScoped(this, seatId, text, timeoutMs, options, wideBrief);
@@ -529,6 +483,82 @@ export class SeatManager {
 
   prompt(seatId: string, text: string, timeoutMs?: number, options: PromptOptions = {}): Turn {
     return promptMethods.prompt(this, seatId, text, timeoutMs, options);
+  }
+
+  /**
+   * A lead-sent follow-up of a snapshot reviewer is due: not an automatic recheck, not the seat's first
+   * turn (task 3468). The turn's own position decides — a follow-up queued before the first turn starts
+   * must not make that first turn move (reviewer-codex-9bb2c2).
+   */
+  private leadDue(seat: Seat, turnId: string, recorded: string | undefined): boolean {
+    if (recorded !== undefined || seat.role !== 'reviewer' || seat.data.snapshot !== true) return false;
+    const turns = this.store.listTurns(seat.id);
+    return turns.length > 1 && turns[0]!.id !== turnId;
+  }
+
+  /**
+   * The reviewed tree as it is now, for a lead-sent follow-up of a snapshot reviewer (task 3468): the commit
+   * to move the checkout to, an empty answer when the tree has not moved since the reviewed snapshot (no
+   * transfer for a tree that did not change), or a failure message when the snapshot could not be taken.
+   */
+  private async leadSnapshot(seat: Seat): Promise<{ commit?: string; fail?: string }> {
+    try {
+      const fresh = await snapshotCommit(seat.data.repo as string);
+      const tree = async (commit: string) => (await gitAsync('git', ['--no-optional-locks', 'rev-parse', `${commit}^{tree}`], { cwd: seat.data.repo as string, encoding: 'utf8', timeout: 15_000, windowsHide: true })).stdout.trim();
+      return typeof seat.data.base !== 'string' || await tree(fresh) !== await tree(seat.data.base) ? { commit: fresh } : {};
+    } catch (error) {
+      return { fail: `coder snapshot of ${seat.data.repo} failed: ${(error as Error).message}` };
+    }
+  }
+
+  /** A host checkout moves by transfer; a failed move fails the recheck, never runs it on the tree reviewed before (task 1704e-3). */
+  private async moveHostCheckout(seat: Seat, turnId: string, checkout: string): Promise<Seat | null> {
+    try {
+      await (this.options.moveRemoteCheckout ?? moveCheckout)(seat.data.host as string, { sha: checkout, localRepo: seat.data.repo as string }, seat.data.remoteDir as string);
+      return this.store.updateSeat(seat.id, { data: { base: checkout } }, 'seat.recheck_checkout', { turn: turnId, commit: checkout });
+    } catch (error) {
+      const message = (error as Error).message;
+      this.options.log('error', 'seat.recheck_checkout_failed', { seat: seat.id, turn: turnId, commit: checkout, message });
+      this.end(turnId, { status: 'error', text: null, error: `remote reviewer recheck not run: host checkout not moved to coder snapshot ${checkout}: ${message}`, stop_reason: null, usage: null, tools: 0, duration_ms: 0 });
+      return null;
+    }
+  }
+
+  /**
+   * The reviewer's own checkout holds the tree it reviewed before; the recheck reviews the correction.
+   * --force: the checkout is the reviewer's scratch copy, never the code under review; untracked files stay.
+   * A lead-sent follow-up fails the turn on a failed move (task 3468, task 1704e-3's rule); an automatic
+   * recheck keeps its warning, as today.
+   */
+  private async moveWorktreeCheckout(seat: Seat, turnId: string, checkout: string, failOnError: boolean): Promise<Seat | null> {
+    try {
+      await gitAsync('git', ['--no-optional-locks', 'checkout', '-q', '--detach', '--force', checkout], { cwd: seat.worktree!, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+      return this.store.updateSeat(seat.id, { data: { base: checkout } }, 'seat.recheck_checkout', { turn: turnId, commit: checkout });
+    } catch (error) {
+      if (!failOnError) {
+        this.options.log('warn', 'seat.recheck_checkout_failed', { seat: seat.id, turn: turnId, commit: checkout, message: (error as Error).message });
+        return seat;
+      }
+      const message = (error as Error).message;
+      this.options.log('error', 'seat.recheck_checkout_failed', { seat: seat.id, turn: turnId, commit: checkout, message });
+      this.end(turnId, { status: 'error', text: null, error: `reviewer recheck not run: checkout not moved to coder snapshot ${checkout}: ${message}`, stop_reason: null, usage: null, tools: 0, duration_ms: 0 });
+      return null;
+    }
+  }
+
+  /** The seat row a queued turn starts on: null means the checkout move failed and the turn has already ended. */
+  private async checkoutForTurn(seat: Seat, turnId: string, recorded: string | undefined): Promise<Seat | null> {
+    const lead = this.leadDue(seat, turnId, recorded) ? await this.leadSnapshot(seat) : undefined;
+    if (lead?.fail !== undefined) {
+      this.options.log('error', 'seat.recheck_checkout_failed', { seat: seat.id, turn: turnId, message: lead.fail });
+      this.end(turnId, { status: 'error', text: null, error: `reviewer recheck not run: ${lead.fail}`, stop_reason: null, usage: null, tools: 0, duration_ms: 0 });
+      return null;
+    }
+    const checkout = lead?.commit ?? recorded;
+    if (!checkout) return seat;
+    if (seat.data.host) return this.moveHostCheckout(seat, turnId, checkout);
+    if (seat.worktree) return this.moveWorktreeCheckout(seat, turnId, checkout, lead !== undefined);
+    return seat;
   }
 
   async run(seatId: string, turnId: string, timeoutMs: number): Promise<void> {
@@ -561,35 +591,15 @@ export class SeatManager {
       this.end(turnId, { status: 'cancelled', text: null, error: `seat is ${seat.status}${seat.data.failure ? `: ${seat.data.failure}` : ''}`, stop_reason: null, usage: null, tools: 0, duration_ms: 0 });
       return;
     }
-    if (checkout && seat.data.host) {
-      // A host checkout moves by transfer; a failed move fails the recheck, never runs it on the tree reviewed before (task 1704e-3).
-      try {
-        await (this.options.moveRemoteCheckout ?? moveCheckout)(seat.data.host as string, { sha: checkout, localRepo: seat.data.repo as string }, seat.data.remoteDir as string);
-        seat = this.store.updateSeat(seatId, { data: { base: checkout } }, 'seat.recheck_checkout', { turn: turnId, commit: checkout });
-      } catch (error) {
-        const message = (error as Error).message;
-        this.options.log('error', 'seat.recheck_checkout_failed', { seat: seatId, turn: turnId, commit: checkout, message });
-        this.end(turnId, { status: 'error', text: null, error: `remote reviewer recheck not run: host checkout not moved to coder snapshot ${checkout}: ${message}`, stop_reason: null, usage: null, tools: 0, duration_ms: 0 });
-        return;
-      }
-    }
-    if (checkout && seat.worktree) {
-      // The reviewer's own checkout holds the tree it reviewed before; the recheck reviews the correction.
-      // --force: the checkout is the reviewer's scratch copy, never the code under review; untracked files stay.
-      try {
-        await gitAsync('git', ['--no-optional-locks', 'checkout', '-q', '--detach', '--force', checkout], { cwd: seat.worktree, encoding: 'utf8', timeout: 30_000, windowsHide: true });
-        seat = this.store.updateSeat(seatId, { data: { base: checkout } }, 'seat.recheck_checkout', { turn: turnId, commit: checkout });
-      } catch (error) {
-        this.options.log('warn', 'seat.recheck_checkout_failed', { seat: seatId, turn: turnId, commit: checkout, message: (error as Error).message });
-      }
-    }
+    const moved = await this.checkoutForTurn(seat, turnId, checkout);
+    if (moved === null) return;
+    seat = moved;
     if (!scout && this.draining && this.store.getTurn(turnId)?.status === 'queued') {
       this.drainHeld.set(turnId, timeoutMs);
       this.maybeDrainExit();
       return;
     }
     const turn = this.store.startTurn(turnId);
-    this.turnLogStart(turnId, seatId);
     const scope = currentScope(turn.watch?.scope);
     seat = this.store.updateSeat(seatId, { status: 'working' }, 'seat.working');
     const role = seat.role as SeatRole;
@@ -621,12 +631,14 @@ export class SeatManager {
     let sessionRecord: TurnWatchRecord['session'];
     // Lesson ids this turn's first brief delivered in full: its report answers for each (operator #12326).
     let lessons: string[] = [];
+    const repeatLessons = authorLessonIds(this.store, seat, new Date().toISOString());
+    const reportOptions = { table, repeatLessons };
     let interrupted: WatchAction | null = null;
     let watch: TurnWatch | null = null;
     const watchRecord = (): TurnWatchRecord | null => {
       const scoped = this.takeBypassScope(turnId, scope);
       return (scoped || sessionRecord || watch?.actions.length || tools
-      ? { ...(scoped ? { scope: scoped } : {}), ...(sessionRecord ? { session: { ...sessionRecord, model: sessionRecord.model ?? null } } : {}), ...(watch?.actions.length ? { actions: watch.actions.map((action) => ({ ...action, model: null })) } : {}), ...(tools ? { tools: { ...kinds } } : {}) }
+      ? { ...this.repeatWatch(role, repeatLessons), ...(scoped ? { scope: scoped } : {}), ...(sessionRecord ? { session: { ...sessionRecord, model: sessionRecord.model ?? null } } : {}), ...(watch?.actions.length ? { actions: watch.actions.map((action) => ({ ...action, model: null })) } : {}), ...(tools ? { tools: { ...kinds } } : {}) }
       : null);
     };
     try {
@@ -653,9 +665,9 @@ export class SeatManager {
       // The model the seat runs — an explicit model, else the role matrix model — so a context check
       // can judge a routed input:image skill against it (task 2385; a native seat stores no model).
       const model = scopeMethods.seatModel(seat);
-      const message = first
-        ? await (this.options.context ?? seatContext)({ role, family: seat.family, harness: (seat.data as Record<string, any>).harness, brief, files, timeoutMs, instruments: seatInstruments(seat.data as Record<string, any>), ...(steRule ? { steRule } : {}), ...(seat.data.standArm === 'no-lessons' ? { suppressLessons: true } : {}), ...(table ? { options: table.options } : {}), cwd: seat.cwd!, remote: Boolean(seat.data.host), ...(seat.data.host ? { host: String(seat.data.host) } : {}), ...((seat.data as Record<string, any>).snapshot ? { snapshot: true } : {}), ...(model !== undefined ? { model } : {}) })
-        : `${turn.prompt}\n\n${closing(role, timeoutMs, [], steRule, table)}`;
+      const message = (first
+        ? await (this.options.context ?? seatContext)({ role, family: seat.family, harness: (seat.data as Record<string, any>).harness, brief, files, timeoutMs, instruments: seatInstruments(seat.data as Record<string, any>), ...(steRule ? { steRule } : {}), ...(seat.data.standArm === 'no-lessons' ? { suppressLessons: true } : {}), ...(table ? { options: table.options } : {}), ...this.repeatContext(repeatLessons), cwd: seat.cwd!, remote: Boolean(seat.data.host), ...(seat.data.host ? { host: String(seat.data.host) } : {}), ...((seat.data as Record<string, any>).snapshot ? { snapshot: true } : {}), ...(model !== undefined ? { model } : {}) })
+        : `${turn.prompt}\n\n${closing(role, timeoutMs, [], steRule, table, repeatLessons)}`) + ownInstrumentContext(this.options.stateDir);
       if (this.closing.has(seatId)) throw new SeatClosed();
       // Which skills the context inlined and which it listed (context.ts): the board lights the listed
       // ones the seat reads.
@@ -709,7 +721,6 @@ export class SeatManager {
         },
       });
       const onEvent = (event: TurnEvent) => {
-        this.turnLogs.get(turnId)?.add(event);
         if (event.kind === 'compaction') compactions?.add(event.entryId);
         if (event.kind === 'compaction_error') compactionFailures.add(event.error);
         if (event.kind === 'usage' && tokenCap !== undefined && !tokenCapped) {
@@ -722,12 +733,11 @@ export class SeatManager {
         if (event.kind === 'tool' && (event.status === 'started' || event.status === 'pending')) {
           tools += 1;
           countTool(kinds, event.name, event.args);
-          const missed = (this.options.rtkMissed ?? rtkMissed)(event.name, event.args);
-          // No verdict (rtk killed or timed out) stays visible as pending, never a silent zero (task 2772).
-          if (missed) rtkChecks.push(missed.then((yes) => { const key = yes === null ? 'rtk-pending' : yes ? rtkMissedKey : null; if (key) kinds[key] = (kinds[key] ?? 0) + 1; }));
+          countRtkMiss(kinds, rtkChecks, event.name, event.args, role === 'scout' && seat.data.harness === 'pi', rtkMissedKey, this.options.rtkMissed ?? rtkMissed);
           this.liveTools.set(turnId, { count: tools, kinds });
           watch!.tool(event.name, event.args);
         }
+        this.turnEvent(seatId, turnId, event);
       };
       // One nudge at ~80% of the limit, only where the protocol can steer a running turn
       // (Pi RPC `steer`: queued until the current tool batch ends, delivered before the next
@@ -767,11 +777,11 @@ export class SeatManager {
       // A verify/deadline/tool steer can continue after a complete report. Keep the latest
       // valid earlier report if the final reply is prose, invalid, or drops accounted entries.
       // Preserve the final stop/error/usage and surface its checks even when its text is refused.
-      const prior = result.earlier?.findLast((text) => parseReport(text, role, lessons, { table }).ok);
+      const prior = result.earlier?.findLast((text) => parseReport(text, role, lessons, reportOptions).ok);
       if (prior !== undefined) {
         result = { ...result, text: preserveReportTable(prior, result.text, role) };
-        const last = parseReport(result.text, role, lessons, { table });
-        const problem = last.ok === false ? last.error : accountRepair(prior, result.text);
+        const last = parseReport(result.text, role, lessons, reportOptions);
+        const problem = last.ok === false ? last.error : accountRepair(prior, result.text, role, repeatLessons);
         if (problem) {
           reportRepairFlags.push(`continuation reply rejected: ${problem}; its checks: ${reportedChecks(result.text)}`);
           result = { ...result, text: prior };
@@ -784,12 +794,12 @@ export class SeatManager {
       const refused = result.text;
       for (let attempt = 0; attempt < MAX_REPAIRS; attempt += 1) {
         // A cancelled turn is not repaired: a repair would answer for work that was stopped.
-        const parsed = result.error === null && result.stopReason !== 'cancelled' && !interrupted && !this.closing.has(seatId) ? parseReport(result.text, role, lessons, { table }) : null;
+        const parsed = result.error === null && result.stopReason !== 'cancelled' && !interrupted && !this.closing.has(seatId) ? parseReport(result.text, role, lessons, reportOptions) : null;
         const left = timeoutMs - (Date.now() - started);
         if (tokenCapped || !parsed || parsed.ok !== false || left <= 0) break;
         this.options.log('info', 'seat.report_repair', { seat: seatId, turn: turnId, attempt: attempt + 1, reason: parsed.error });
         try {
-          const repair = await session.prompt(`${REPAIR} ${repairPrompt(parsed.error, role, lessons, refused, table)}`, { timeoutMs: left, onEvent });
+          const repair = await session.prompt(`${REPAIR} ${repairPrompt(parsed.error, role, lessons, refused, table, repeatLessons)}`, { timeoutMs: left, onEvent });
           repair.text = preserveReportTable(refused, repair.text, role);
           if (attempt === 0 && refused.length > REPAIR_QUOTE_CHARS) reportRepairFlags.push(`schema repair quote truncated: ${refused.length} characters, first ${REPAIR_QUOTE_CHARS} quoted; preservation guard uses the full original`);
           const usage = addUsage(result.usage, repair.usage);
@@ -799,7 +809,7 @@ export class SeatManager {
             result = { ...result, usage, durationMs };
             break;
           }
-          const problem = accountRepair(refused, repair.text);
+          const problem = accountRepair(refused, repair.text, role, repeatLessons);
           if (problem) {
             reportRepairRejected = true;
             reportRepairFlags.push(`schema repair rejected: ${problem}; the full first refused reply remains available through seat_report`);
@@ -823,12 +833,12 @@ export class SeatManager {
       // cancelled/error/interrupted turn, for a NO_SUPPORT_ROUND role and when less than SUPPORT_MIN_LEFT of the budget is left; a
       // session that cannot answer (a throw) drops the seat like a failed repair and keeps the report.
       {
-        const candidate = !tokenCapped && result.error === null && result.stopReason !== 'cancelled' && !interrupted && !this.closing.has(seatId) ? parseReport(result.text, role, lessons, { table }) : null;
+        const candidate = !tokenCapped && result.error === null && result.stopReason !== 'cancelled' && !interrupted && !this.closing.has(seatId) ? parseReport(result.text, role, lessons, reportOptions) : null;
         const left = timeoutMs - (Date.now() - started);
         if (candidate?.ok && supportRoundFits(role, left, timeoutMs)) {
           const siblings = reviewRights(role) ? this.siblings(seat) : [];
           const detection = await Promise.resolve().then(() => (this.options.grade ?? gradeReport)(candidate.report, siblings)).catch((error: Error): Grade => ({ status: 'ungraded', reason: error.message }));
-          const unsupported = unsupportedFindings(candidate.report, detection);
+          const unsupported = unsupportedFindings(candidate.report, detection, this.options.stateDir);
           if (!unsupported.length) {
             pregraded = detection;
             pregradedSiblings = siblings;
@@ -845,16 +855,16 @@ export class SeatManager {
             let failure: string | null = null;
             let reason: string | null = null;
             try {
-              const round = await session.prompt(`${SUPPORT} ${supportPrompt(unsupported, role, lessons, table)}`, { timeoutMs: remaining, onEvent });
+              const round = await session.prompt(`${SUPPORT} ${supportPrompt(unsupported, role, lessons, table, repeatLessons)}`, { timeoutMs: remaining, onEvent });
               const usage = addUsage(result.usage, round.usage);
               const durationMs = result.durationMs + round.durationMs;
               if (round.error === null && round.stopReason !== 'cancelled' && !this.closing.has(seatId)) {
-                const corrected = parseReport(round.text, role, lessons, { table });
+                const corrected = parseReport(round.text, role, lessons, reportOptions);
                 if (corrected.ok) {
                   // Index accounting (task 1447 correction): a correction that drops an unasked
                   // finding, changes one, or withdraws without naming the claim in forLead is
                   // rejected — the original report and its flags stand, nothing is overwritten.
-                  const problem = accountCorrection(candidate.report, corrected.report, unsupported);
+                  const problem = accountCorrection(candidate.report, corrected.report, unsupported, role, repeatLessons);
                   if (problem) { outcome = 'rejected'; reason = problem; result = { ...result, usage, durationMs }; }
                   else result = { ...round, usage, durationMs };
                 } else { outcome = 'invalid'; result = { ...result, usage, durationMs }; }
@@ -916,10 +926,11 @@ export class SeatManager {
     // Nothing here may keep the turn from ending: a throw would leave it 'running' until a restart.
     let recheckDone: { release: () => void } | undefined;
     let treeDone: { release: () => void } | undefined;
+    let repeatDone: { release: () => void } | undefined;
     const settle = async () => {
       if (end.status === 'done' && end.text !== null) {
         try {
-          const parsed = parseReport(end.text, role, lessons, { table });
+          const parsed = parseReport(end.text, role, lessons, reportOptions);
           if (parsed.ok && lessons.length) {
             try {
               this.store.recordLessonsApplied(turnId, appliedLessons(parsed.report));
@@ -952,7 +963,6 @@ export class SeatManager {
         }
       }
       this.liveTools.delete(turnId);
-      this.turnLogEnd(turnId);
       // Registered before the turn is marked ended: a wait() that sees it ended still waits for its
       // post-finish work. A coder with no authored reviewer has nothing to route, so its waiters are
       // not held. An unreadable seat list holds: routing then records its own failure and releases.
@@ -964,6 +974,7 @@ export class SeatManager {
       // recordTree runs after finishTurn too: regressionFlags/circlingFlags read the trees, so a
       // waiter holds until the tree is recorded (reviewer-codex-8ab808.1).
       if (role === 'coder') treeDone = this.afterTurn(turnId, 'tree', this.options.treeHoldMs);
+      repeatDone = this.afterTurn(turnId, 'lesson repeats', 30_000);
       this.store.finishTurn(turnId, end);
     };
     // Sibling reviewers settle one at a time: two that finish together would otherwise each grade
@@ -989,6 +1000,9 @@ export class SeatManager {
     if (this.postTurn.has(turnId)) this.wake(turnId);
     const optedOut = this.recheckOptOut.delete(turnId);
     try {
+      // Repeat memory calls must not hold the sibling grading/finishTurn lock or keep the seat working.
+      try { await this.recordReportRepeats(turnId, end, role, lessons, reportOptions); }
+      finally { repeatDone!.release(); }
       // recordTree settles its own hold: a hung recheck routing must not keep the tree entry pending.
       if (role === 'coder') { try { await this.recordTree(seat, turnId); } finally { treeDone?.release(); } }
       const routine = role === 'coder' && end.status === 'done' && this.store.getTurn(turnId)!.seq > 1 && !optedOut;
@@ -1043,6 +1057,27 @@ export class SeatManager {
   /** Carry the lead's explicit placement, not the target an omitted need happened to pick. */
   replacementPlacement(reviewer: Seat): Pick<CreateSeat, 'needs' | 'host'> {
     return verifyMethods.replacementPlacement(this, reviewer);
+  }
+
+  private repeatContext(repeatLessons: string[]): { repeatLessons?: string[] } {
+    if (!repeatLessons.length) return {};
+    return { repeatLessons };
+  }
+
+  private repeatWatch(role: SeatRole, repeatLessons: string[]): Pick<TurnWatchRecord, 'repeatLessons'> {
+    return reviewRights(role) ? { repeatLessons } : {};
+  }
+
+  private async recordReportRepeats(turnId: string, end: TurnEnd, role: SeatRole, lessons: string[], options: Parameters<typeof parseReport>[3]): Promise<void> {
+    if (end.status !== 'done' || !end.text) return;
+    const parsed = parseReport(end.text, role, lessons, options);
+    if (!parsed.ok) return;
+    try {
+      const flags = await recordFindingRepeats(this.store, turnId, parsed.report);
+      if (flags.length) this.store.saveGrade(turnId, this.store.getTurn(turnId)!.seat_id, { ...this.store.getGrade(turnId), lessonRepeatFlags: flags });
+    } catch (error) {
+      this.options.log('warn', 'seat.lesson_repeats_failed', { turn: turnId, message: (error as Error).message });
+    }
   }
 
   /** A remote coder turn whose sync mirrored the host, with replacements an earlier failed sync deferred. */
@@ -1136,7 +1171,7 @@ export class SeatManager {
     chatPostTable(this.store, { firstId: members[0].id, leadHandles, body });
   }
 
-  /** Whether this seat must load codex-edit: a stock Pi codex seat that edits (operator #13098), never on a win32 target (task 1956, CODEX_EDIT_WIN32_WITHHELD: the pinned toolkit rejects every nested Windows path). */
+  /** Whether this seat must load codex-edit: a stock Pi codex seat that edits (operator #13098), on every platform (task 3527 removed the win32 withhold). */
   wantsCodexEdit(seat: Seat): boolean {
     return provisionMethods.wantsCodexEdit(this, seat);
   }
@@ -1190,43 +1225,6 @@ export class SeatManager {
   /** The same turn's calls by kind (toolkinds.ts), or null. */
   liveToolKinds(turnId: string): Record<string, number> | null {
     return digestMethods.liveToolKinds(this, turnId);
-  }
-
-  /** Start a turn's live log (run()); the board reads it through turnLiveLog until the seat closes. */
-  turnLogStart(turnId: string, seatId: string): void {
-    this.turnLogs.set(turnId, new TurnLiveLog(seatId));
-    // The cap holds at insert too — 50 ended logs plus a new running turn is already 51. Evict the
-    // oldest ENDED log (Map order is start order); a running turn's log is never the victim.
-    while (this.turnLogs.size > TURN_LOG_MAX_TURNS) {
-      const victim = [...this.turnLogs].find(([, other]) => other.ended);
-      if (!victim) break;
-      this.turnLogs.delete(victim[0]);
-    }
-  }
-
-  /** A turn ended: its log stays readable as the seat's last ended one; at most TURN_LOG_MAX_TURNS logs. */
-  turnLogEnd(turnId: string): void {
-    const log = this.turnLogs.get(turnId);
-    if (!log) return;
-    log.ended = true;
-    for (const [id, other] of this.turnLogs) if (other.ended && other.seatId === log.seatId && id !== turnId) this.turnLogs.delete(id);
-    // Evict oldest-ended logs first (Map order is start order); a running turn's log is never the
-    // victim. The just-ended log may be that oldest one — the cap holds for every completion order.
-    while (this.turnLogs.size > TURN_LOG_MAX_TURNS) {
-      const victim = [...this.turnLogs].find(([, other]) => other.ended);
-      if (!victim) break;
-      this.turnLogs.delete(victim[0]);
-    }
-  }
-
-  /** A closed seat's logs go with it (seats-close.ts closeNow). */
-  turnLogsForget(seatId: string): void {
-    for (const [id, log] of this.turnLogs) if (log.seatId === seatId) this.turnLogs.delete(id);
-  }
-
-  /** The live log http.ts serves the board; null before the turn started and after a restart. */
-  turnLiveLog(turnId: string): TurnLiveLog | null {
-    return this.turnLogs.get(turnId) ?? null;
   }
 
   wake(turnId: string): void {

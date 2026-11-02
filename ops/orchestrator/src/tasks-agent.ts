@@ -25,9 +25,11 @@
 //            the scout reads the tree the daemon itself runs from.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TERMINAL_TURN, type Seat, type Turn } from './store.ts';
+import { readInstallSetting } from './settings/index.ts';
+import { loadConfig } from './config.ts';
 
 /** seats-prompt.ts refuses a brief over BRIEF_WORDS words; orch's own limit, restated. */
-export const MAX_BRIEF_WORDS = 300;
+export { BRIEF_WORDS as MAX_BRIEF_WORDS } from './settings/index.ts';
 /** A scout's one answer: the same window scout-request.ts gives a seat's scout. */
 export const ADVICE_TIMEOUT_MS = 15 * 60_000;
 const BODY_LIMIT = 64 * 1024;
@@ -63,6 +65,7 @@ export type TasksAgentDeps = {
   /** The loopback/header guard the write routes share; a reason is a 403. */
   guard: (req: IncomingMessage) => string | null;
   repo: string;
+  stateDir?: string;
 };
 
 export type AdviceState = 'none' | 'running' | 'done' | 'failed';
@@ -87,7 +90,8 @@ type Task = { id: number; title: string; body: string; next: string };
  * is cut at a word boundary when it does not fit. `tail` is the pair's own instruction
  * text: it always stays in full, and the body pays its words.
  */
-export function adviceBrief(task: Task, question: string, tail = ''): string {
+export function adviceBrief(task: Task, question: string, tail = '', stateDir = loadConfig().stateDir): string {
+  const maxWords = readInstallSetting(stateDir, 'jev.brief.words') as number;
   const frame = [
     `Task #${task.id}: ${fit(task.title, 40)}`,
     `Question: ${fit(question, 60)}`,
@@ -95,9 +99,10 @@ export function adviceBrief(task: Task, question: string, tail = ''): string {
   ].join('\n\n');
   const label = 'Task body:';
   const end = tail ? `\n\n${tail}` : '';
-  let budget = MAX_BRIEF_WORDS - words(frame) - words(label) - words(end);
+  if (words(`${frame}${end}`) > maxWords) throw new Error(`task brief frame exceeds configured limit ${maxWords}; raise jev.brief.words`);
+  let budget = maxWords - words(frame) - words(label) - words(end);
   // Exact by measurement, not by arithmetic: a word more than the limit is a refusal.
-  while (budget > 0 && words(`${frame}\n\n${label}\n${fit(task.body, budget - 1)}${end}`) > MAX_BRIEF_WORDS) budget -= 1;
+  while (budget > 0 && words(`${frame}\n\n${label}\n${fit(task.body, budget - 1)}${end}`) > maxWords) budget -= 1;
   if (budget <= 0) return `${frame}${end}`;
   const body = fit(task.body, budget - 1);
   return body ? `${frame}\n\n${label}\n${body}${end}` : `${frame}${end}`;
@@ -110,7 +115,7 @@ export function adviceBrief(task: Task, question: string, tail = ''): string {
  * duplicate, the claim "#<id> <title>" of that task and the evidence why and how sure.
  * The cutoff's ms is computed now — at request time, never a constant that goes stale.
  */
-export function duplicatesBrief(task: Task, now: number): string {
+export function duplicatesBrief(task: Task, now: number, stateDir = loadConfig().stateDir): string {
   const cutoff = now - DUPLICATE_DAYS * 24 * 60 * 60 * 1000;
   const tail = [
     'Find every other task that asks for the same outcome. Read the other tasks from these commands:',
@@ -118,7 +123,7 @@ export function duplicatesBrief(task: Task, now: number): string {
     `memoryctl task list --compact --closed-since ${cutoff}`,
     'A duplicate is often a task opened again after it was closed. Report one finding per duplicate: the claim is "#<id> <title>" of that task, the evidence is why it asks for the same outcome and how sure you are. Report only: merging is the operator\'s act on the board.',
   ].join('\n');
-  return adviceBrief(task, DUPLICATES_QUESTION, tail);
+  return adviceBrief(task, DUPLICATES_QUESTION, tail, stateDir);
 }
 
 /** memoryd's task row (store.mjs taskView), read down to what the brief needs. */
@@ -168,7 +173,7 @@ type AgentPair = {
   postPath: string;
   getPath: string;
   title: (id: number) => string;
-  brief: (task: Task, question: string) => string;
+  brief: (task: Task, question: string, stateDir?: string) => string;
   /** The POST may carry an operator question (the advice pair only). */
   question: boolean;
 };
@@ -178,10 +183,10 @@ const ADVICE_PAIR: AgentPair = {
   postPath: '/api/tasks/advise',
   getPath: '/api/tasks/advice',
   title: adviceTitle,
-  brief: (task, question) => adviceBrief(task, question || DEFAULT_QUESTION,
+  brief: (task, question, stateDir) => adviceBrief(task, question || DEFAULT_QUESTION,
     'The operator reads this report. Write each claim and forLead in Russian, in plain words. '
     + 'forLead opens with the direct answer to the question in one sentence, then the next step. '
-    + 'Keep identifiers, paths and commands as they are.'),
+    + 'Keep identifiers, paths and commands as they are.', stateDir),
   question: true,
 };
 
@@ -190,7 +195,7 @@ const DUPLICATES_PAIR: AgentPair = {
   postPath: '/api/tasks/duplicates',
   getPath: '/api/tasks/duplicates',
   title: duplicatesTitle,
-  brief: (task) => duplicatesBrief(task, Date.now()),
+  brief: (task, _question, stateDir) => duplicatesBrief(task, Date.now(), stateDir),
   question: false,
 };
 
@@ -222,7 +227,7 @@ function agentPair(
     }
     const scout = await deps.seats.create({ role: 'scout', title: spec.title(id), repo: deps.repo, needs: 'mac' });
     try {
-      const turn = await deps.seats.promptScoped(scout.id, spec.brief(task, question), ADVICE_TIMEOUT_MS);
+      const turn = await deps.seats.promptScoped(scout.id, spec.brief(task, question, deps.stateDir), ADVICE_TIMEOUT_MS);
       return { seat: scout.id, turn: turn.id };
     } catch (error) {
       // A seat that never got its question is no answer: close it so a retry starts clean.

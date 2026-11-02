@@ -12,7 +12,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { FAMILIES, type Family } from './providers/types.ts';
 import { FAMILY_EFFORTS, hasAdapter } from './providers/index.ts';
-import type { Profile, ProfileRole } from './profiles.ts';
+import { MATRIX, type Profile, type ProfileRole } from './profiles.ts';
+import { ROLE_CATALOGUE } from './role-policy.ts';
+import { checkLogin } from '../../../scripts/lib/family-logins.mjs';
 import { SAFE } from './seats-defs.ts';
 
 export type PresetTier = 'economy' | 'balanced' | 'strong';
@@ -29,15 +31,23 @@ export type BuiltMatrix = {
 };
 
 const TIERS: readonly PresetTier[] = ['economy', 'balanced', 'strong'];
-/** Every role, in matrix order; the object form makes a role missing from this list a type error. */
-const ROLES_ORDER: Record<ProfileRole, true> = {
+/** Roles the shipped preset file must define; a newer catalogue role gets an empty row until its preset is authored. */
+const PRESET_ROLES_ORDER: Record<string, true> = {
   scout: true, researcher: true, debater: true, coder: true, tester: true, designer: true, copywriter: true, motion: true,
   reviewer: true, critic: true, legal: true, bughunter: true, security: true,
 };
-const ROLES = Object.keys(ROLES_ORDER) as ProfileRole[];
+const PRESET_ROLES = Object.keys(PRESET_ROLES_ORDER);
+const ROLES = Object.keys(MATRIX);
 
 function plain(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+type PresetFail = (tier: string | null, role: string | null, family: string | null, rule: string) => never;
+function requiredPresetRow(rawTier: Record<string, unknown>, role: string, tier: PresetTier, fail: PresetFail): unknown {
+  if (Object.hasOwn(rawTier, role)) return rawTier[role];
+  if (PRESET_ROLES.includes(role)) fail(tier, role, null, 'the role row is missing; every tier must name every built-in role');
+  return {};
 }
 
 /** A JSON value in an error line; rendering it must never throw ({ "toString": null }). */
@@ -69,12 +79,11 @@ export function loadTeamPresets(text: string, file: string): TeamPresets {
     const rawTier = (value as Record<string, unknown>)[tier];
     if (!plain(rawTier)) fail(tier, null, null, 'the tier must be an object of role → family → { model, effort? }');
     for (const key of Object.keys(rawTier)) {
-      if (!Object.hasOwn(ROLES_ORDER, key)) fail(tier, null, null, `unknown role '${key}'; expected one of ${ROLES.join(', ')}`);
+      if (!ROLES.includes(key)) fail(tier, null, null, `unknown role '${key}'; expected one of ${ROLES.join(', ')}`);
     }
     const table = {} as Preset;
     for (const role of ROLES) {
-      if (!Object.hasOwn(rawTier, role)) fail(tier, role, null, 'the role row is missing; every tier must name every role of the matrix');
-      const rawRow = rawTier[role];
+      const rawRow = requiredPresetRow(rawTier, role, tier, fail);
       if (!plain(rawRow)) fail(tier, role, null, 'the row must be an object of family → { model, effort? }');
       const row: Partial<Record<Family, Profile>> = {};
       for (const [name, cell] of Object.entries(rawRow)) {
@@ -171,4 +180,45 @@ export function buildMatrix(families: readonly Family[], preset: Preset): BuiltM
 export function knownModel(family: Family, model: string): boolean {
   const presets = teamPresets();
   return TIERS.some((tier) => ROLES.some((role) => presets[tier][role][family]?.model === model));
+}
+
+/**
+ * The single-provider preset for `family` (task 3459 C6, decision 22510): a user with one
+ * subscription maps every role the family serves onto that family, with the model and effort
+ * of the role catalogue (roles.catalogue.json, role-policy.ts). A role the family does not
+ * serve gets an empty row, exactly as a tier row omits it, so buildMatrix names it in
+ * `missing`. team-presets.ts stays the one owner of preset data; this is derived, not stored.
+ */
+export function singleProviderPreset(family: Family): Preset {
+  const models = new Map(ROLE_CATALOGUE.map((entry) => [entry.name, entry.models[family] ?? null]));
+  const preset = {} as Preset;
+  for (const role of ROLES) {
+    const cell = models.get(role);
+    preset[role] = cell ? { [family]: { model: cell.model, effort: cell.effort } } : {};
+  }
+  return preset;
+}
+
+/**
+ * One warning line per chosen family whose login this machine cannot prove (task 3459 C6): a
+ * preset naming such a family says so at apply time, not at the first seat. checkLogin — the
+ * proof ops/bootstrap/harness-login.mjs uses — is the only credential reader; `unknown` cannot
+ * disprove a login, and a proof that itself faults says nothing: the seat still fails loudly
+ * if the login is truly absent. The caller prints these after every refusal point, so a
+ * refusal stays one stderr line.
+ */
+export function presetLoginWarnings(families: readonly Family[], home: string, orchStateDir: string): string[] {
+  const lines: string[] = [];
+  for (const family of new Set(families)) {
+    let proof: { state?: string } | undefined;
+    try {
+      proof = checkLogin(family, { home, orchStateDir }) as { state?: string } | undefined;
+    } catch {
+      continue;
+    }
+    if (proof?.state === 'missing' || proof?.state === 'expired') {
+      lines.push(`roles: warning: ${family} is not signed in on this machine (login ${proof.state}); run harness-login ${family} before seats run on it`);
+    }
+  }
+  return lines;
 }

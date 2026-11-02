@@ -30,6 +30,35 @@ export function describe(name, catalogue = fileURLToPath(new URL('../../.agents/
   return { name, description: [...first].slice(0, 160).join(''), questionDescription: description.slice(0, 400) };
 }
 
+/** The product wall (task 3555, decision 22599): the union of every seat domain's noTriggerSkills. A seat whose domain set includes a walled domain never takes those skills from a global trigger, whatever the domain count. A fileless seat names no domain in its files, so product words from the map (noTriggerBriefWords) matched against the negation-stripped task stand in for the seat's domain. */
+function walledSkills(skillMap, files, seatDomains, task) {
+  const domains = new Set(seatDomains.map((d) => d.replace(/^domain-/, '')));
+  if (!files.length && task) {
+    // A wrong word match still strips trigger skills from a seat that only
+    // mentions the product; role defaults and domain rows are untouched.
+    const text = String(task).toLowerCase();
+    for (const [d, words] of Object.entries(skillMap.noTriggerBriefWords ?? {})) {
+      if (words.some((w) => text.includes(String(w).toLowerCase()))) domains.add(d);
+    }
+  }
+  const walled = new Set();
+  for (const d of domains) {
+    for (const name of skillMap.noTriggerSkills?.[d] ?? []) walled.add(name);
+  }
+  return walled;
+}
+
+/** jevAdds triggers whose regex missed: Jev may still add their skills at the ADD_P bar. */
+function addableSkills(skillMap, role, names, walled) {
+  const addable = new Set();
+  for (const trigger of skillMap.triggers) {
+    if (trigger.jevAdds === true && trigger.roles.includes(role)) {
+      for (const name of trigger.skills) if (!names.has(name) && !walled.has(name)) addable.add(name);
+    }
+  }
+  return addable;
+}
+
 /** The map's own candidates — role defaults, file domains and (negation-stripped) triggers. Jev only removes from these. */
 export function mapCandidates({ role, files = [], brief, map = MAP,
   repoRoot = fileURLToPath(new URL('../..', import.meta.url)),
@@ -41,24 +70,27 @@ export function mapCandidates({ role, files = [], brief, map = MAP,
   const names = new Set((skillMap.roleDefaults[role] || []).filter((name) => !off.has(name)));
   const routingText = readFileSync(ROUTING, 'utf8');
   const task = extractTask(brief);
-  for (const domain of domainsOfFiles(files, JSON.parse(routingText))) {
+  const seatDomains = domainsOfFiles(files, JSON.parse(routingText));
+  for (const domain of seatDomains) {
     const entry = skillMap.domains[domain.replace(/^domain-/, '')] || {};
     for (const name of [...(entry.all || []), ...(entry[role] || [])]) names.add(name);
   }
   const plain = skillMap.negation ? task.replace(new RegExp(skillMap.negation, 'giu'), ' ') : task;
+  // Product wall (task 3555, decision 22599): a seat whose domain set includes a
+  // domain that declared noTriggerSkills never takes those skills from a global
+  // trigger — the union over every seat domain, whatever the count; a fileless
+  // seat is walled when the negation-stripped task names the product (the map's
+  // product words). The terminal's product skills must not ride a text match
+  // into the BooHarness GUI. Domain rows, role defaults and non-walled skills
+  // are untouched.
+  const walled = walledSkills(skillMap, files, seatDomains, plain);
   for (const trigger of skillMap.triggers) {
     if (trigger.roles.includes(role)
       && new RegExp(trigger.match, 'iu').test(trigger.negatable ? plain : task)) {
-      for (const name of trigger.skills) names.add(name);
+      for (const name of trigger.skills) if (!walled.has(name)) names.add(name);
     }
   }
-  // jevAdds triggers whose regex missed: Jev may still add their skills at the ADD_P bar.
-  const addable = new Set();
-  for (const trigger of skillMap.triggers) {
-    if (trigger.jevAdds === true && trigger.roles.includes(role)) {
-      for (const name of trigger.skills) if (!names.has(name)) addable.add(name);
-    }
-  }
+  const addable = addableSkills(skillMap, role, names, walled);
   for (const name of off) {
     names.delete(name);
     addable.delete(name);

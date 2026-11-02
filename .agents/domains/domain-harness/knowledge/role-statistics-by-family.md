@@ -6,15 +6,17 @@ turns, mean outcome, tokens per turn, median seconds and failure/no-report share
 Unrated turns count but do not enter the mean. Without `--write-tiers`, it writes nothing
 (`ops/orchestrator/src/main.ts`, `ops/orchestrator/src/role-stats.ts`).
 
-`role-stats --since 7d --write-tiers` is the sole writer of `<stateDir>/role-quality.json`.
-A cell is role/wallet/model/effort; missing model/effort means no cell. Qualification
+`role-stats --since 7d --write-tiers` is the sole writer of computed cells in
+`<stateDir>/role-quality.json`; `setManualTier` (the quality route) writes only `manual`.
+Both take one directory lock, `role-quality.json.lock`; a busy lock refuses after 5 s and
+writes nothing, and a killed writer leaves it in place. A cell is role/wallet/model/effort; missing model/effort means no cell. Qualification
 requires 20 rated seats; a judged role needs five qualified cells. A qualified cell in a
 judged role is WEAK at failure share >= 0.15, or mean strictly below nearest-rank P25
 and at least 0.05 below the median; others are NORMAL. The file stores
 `{version, writtenAt, since, cells, manual}`. Atomic temp/rename rewrites cells, preserves
 manual and prints tier transitions. Manual keys are `<role>/<wallet>/<model>/<effort>`.
-`tierOf` never throws: manual wins; absent cells are NORMAL; missing, unparseable or
-older-than-14-day files return NORMAL with one warning
+`tierOf` never throws: manual wins, also on a file older than 14 days; absent cells are
+NORMAL; missing, unparseable or older-than-14-day files return NORMAL with one warning
 (`ops/orchestrator/src/role-quality.ts`).
 
 `pickInputs` reads tiers synchronously with active count A before seat insertion

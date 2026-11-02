@@ -108,13 +108,22 @@ export function chatRelease(store: Store, { handle }: { handle: string }): { han
 }
 
 export type ChatAddress = 'all' | string[];
-const isBroadcast = (to: ChatAddress | null): boolean => to === 'all' || (Array.isArray(to) && to.includes('all'));
-export type ChatPost = { id: number; at: string; author: string; body: string; to: ChatAddress | null; wake: boolean };
+export const isBroadcast = (to: ChatAddress | null): boolean => to === 'all' || (Array.isArray(to) && to.includes('all'));
+export type ChatPost = { id: number; at: string; author: string; body: string; to: ChatAddress | null; wake: boolean; class?: 'fyi' };
 /** The board's per-addressee state: what the daemon last saw happen to the post (plan 14824). */
 export type ChatReceiptState = 'read' | 'delivered' | 'pending' | 'no watcher';
 export type ChatReceipt = { handle: string; state: ChatReceiptState; delivered_at?: string; confirmed_at?: string };
 type PostInput = { body: string; to?: ChatAddress; wake?: boolean; class?: 'fyi' };
 type Identity = { as: string; session: string };
+
+// In-process observers of every post (the /events push channel); the chat_posts row stays the truth.
+const postListeners = new Set<(post: ChatPost) => void>();
+
+/** Observe every post at its single write point (insertPost); returns the unsubscribe. */
+export function onChatPost(listener: (post: ChatPost) => void): () => void {
+  postListeners.add(listener);
+  return () => postListeners.delete(listener);
+}
 
 function requireLive(db: Store['db'], { as, session }: Identity): void {
   if (typeof as === 'string' && RESERVED_HANDLES.has(as)) throw new Error(`handle '${as}' is reserved`);
@@ -139,11 +148,20 @@ function validatePostInput({ body, to, wake, class: cls }: PostInput): void {
 
 function insertPost(db: Store['db'], author: string, input: PostInput): { id: number; at: string } {
   validatePostInput(input);
-  const { body, to, wake } = input;
+  const { body, to, wake, class: cls } = input;
   const at = chatAt(db);
-  const { lastInsertRowid } = db.prepare('INSERT INTO chat_posts (at, author, body, to_json, wake) VALUES (?, ?, ?, ?, ?)')
-    .run(at, author, body, to === undefined ? null : JSON.stringify(to), wake === true ? 1 : 0);
-  return { id: Number(lastInsertRowid), at };
+  const { lastInsertRowid } = db.prepare('INSERT INTO chat_posts (at, author, body, to_json, wake, class) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(at, author, body, to === undefined ? null : JSON.stringify(to), wake === true ? 1 : 0, cls === 'fyi' ? 'fyi' : null);
+  const post: ChatPost = { id: Number(lastInsertRowid), at, author, body, to: to ?? null, wake: wake === true, ...(cls === 'fyi' ? { class: 'fyi' as const } : {}) };
+  for (const listener of postListeners) {
+    try {
+      listener(post);
+    } catch {
+      // An observer fault may not break the write it observes.
+    }
+  }
+  // The historical return: callers embed it in tool replies whose shape is asserted.
+  return { id: post.id, at: post.at };
 }
 
 /** A lead waiting on its wake post sits idle until the answer arrives, and a reply without wake reached it
@@ -286,6 +304,7 @@ function rowToPost(row: Record<string, unknown>): ChatPost {
     id: row.id as number, at: row.at as string, author: row.author as string, body: row.body as string,
     to: row.to_json === null ? null : JSON.parse(row.to_json as string) as ChatAddress,
     wake: row.wake === 1,
+    ...(row.class === 'fyi' ? { class: 'fyi' as const } : {}),
   };
 }
 
@@ -385,11 +404,12 @@ export function chatPending(store: Store, { session, limit = 20 }: { session: st
 }
 
 /**
- * Release a held poll only for a never-delivered unread post with `wake`, from any
- * author (operator decision 15057). `since` stays accepted because sessions that
- * started before the restart still send it; the daemon no longer reads it. A
- * delivered wake post does not release again. A log line never qualifies (unread
- * is addressed by definition) and retries alone must not start another turn.
+ * Release a held poll for any addressed lead post except class 'fyi', or an explicit wake
+ * from a daemon/operator author (operator decisions 22272, 22275 and 22280). A FYI post never
+ * releases a held poll or the lead-wake mod: it reaches its addressee at that lead's next own
+ * turn. `since` stays accepted because sessions that started before the restart still send it;
+ * the daemon no longer reads it. A delivered wake post does not release again. A log line never
+ * qualifies (unread is addressed by definition) and retries alone must not start another turn.
  */
 export function chatWakePending(store: Store, session: string, since?: string): ReturnType<typeof chatPending> | null {
   const handle = sessionHandle(store.db, session);
@@ -399,8 +419,8 @@ export function chatWakePending(store: Store, session: string, since?: string): 
   const wake = store.db.prepare(`SELECT 1 FROM chat_posts p WHERE ${where}
     AND NOT EXISTS (SELECT 1 FROM chat_receipts r WHERE r.post = p.id AND r.handle = ?
       AND r.delivered_at IS NOT NULL)
-    AND p.wake = 1 LIMIT 1`)
-    .get(...args, handle);
+    AND (p.wake = 1 OR (p.class IS NULL AND p.author NOT IN (SELECT value FROM json_each(?)))) LIMIT 1`)
+    .get(...args, handle, JSON.stringify([...RESERVED_HANDLES]));
   return wake ? chatPending(store, { session }) : null;
 }
 

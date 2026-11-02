@@ -17,6 +17,7 @@ paths:
   - ops/orchestrator/suite-pass.mjs
   - ops/orchestrator/tsconfig.json
   - ops/orchestrator/worktree-setup.json
+  - ops/orchestrator/pi-client-job.mjs
 entry: ops/orchestrator/suite-pass.mjs
 layer: harness
 ---
@@ -33,14 +34,14 @@ consume it. The supporting tools also have real callers across the module bounda
 |---|---|
 | `isOrchTest` | Selects non-live orchestration test filenames. |
 | `orchSuiteTests` | Lists the checkout's sorted non-live suite. |
-| `suiteInputs` | Resolves per-test import/file-literal inputs, including role-default skills. |
+| `suiteInputs` | Resolves per-test runtime import/file-literal inputs, including role-default skills; excludes whole-statement type-only imports/re-exports. |
 | `suiteHash` | Hashes restart-relevant suite inputs and absent-file markers. |
 | `suitePassFile` | Names the state directory's suite receipt. |
 | `writeSuitePass` | Atomically publishes a successful suite hash with time and repository. |
-| `suitePassRefusal` | Returns a restart refusal, or null for a matching receipt. |
-| `relativeImportFiles` | `code-hash.mjs` file/import closure reader used by suite input selection. |
+| `suitePassRefusal` | Returns a restart refusal, or null for a matching receipt or a checkout with no orch suite tests. |
+| `relativeImportFiles` | `code-hash.mjs` file/import closure reader; optional skipTypeOnly option (default false) excludes whole-statement type-only imports/re-exports from import and file-literal discovery. |
 | `codeHash` | `code-hash.mjs` daemon-code fingerprint consumed by runtime startup. |
-| `parseHeader` | `remote-exec.mjs` validates the first JSON input line. |
+| `parseHeader` | `remote-exec.mjs` compatibility re-export of the unchanged legacy validator from `ops-host-agent`. |
 | `seatEnvironment` | Builds remote child environment without trusting a seat-supplied build gate; applies the review-role small-target cargo defaults (task 2861 C) where the host env sets neither. |
 | `jobwrap` | Resolves/builds the cached Windows process-tree wrapper, or returns null off Windows. |
 | `vcvarsToolchain` | Captures/caches the Windows compiler environment for remote children. |
@@ -81,7 +82,9 @@ not re-exports of the registered entry:
 
 ## Invariants
 
-- A missing, unreadable or mismatched suite receipt refuses restart; only the current input hash passes. Source: `suite-pass.mjs`; `scripts/test-check-orch-tests-select.mjs` (not in this kit).
+- A same-line `// suite-inputs: path only, not a load` comment excludes file-literal edges only; use it only for literals naming files never loaded or spawned by that code. Static import discovery and the daemon `codeHash` walk are unchanged.
+- The daemon `codeHash` walk includes type-only imports; only suite input selection opts into `skipTypeOnly`. Mixed imports and value bindings such as `typeDefault` keep their edges.
+- A checkout with no orch suite tests (an installed kit ships none) has no suite to pass, so restart needs no receipt there. With tests present, a missing, unreadable or mismatched suite receipt refuses restart; only the current input hash passes. Source: `suite-pass.mjs`; `scripts/test-check-orch-tests-select.mjs` (not in this kit).
 - Knowledge Markdown and Git metadata do not invalidate the shared restart hash; executable inputs, fixtures and skills still do. Source: `suite-pass.mjs` (`suiteHash`).
 - Receipt publication uses a temporary file and rename, not a partially written final record. Source: `suite-pass.mjs` (`writeSuitePass`).
 - Remote header validation precedes spawning; build-gate ownership stays on the execution host. Source: `remote-exec.mjs`; `scripts/test-orch-remote.mjs` (not in this kit).
@@ -95,6 +98,7 @@ not re-exports of the registered entry:
 
 - `ops-orchestrator-shared` — host/state configuration, role policy, build-gate classification and environment/shims.
 - `ops-orchestrator-providers` — command resolution for remote execution.
+- `ops-host-agent` — legacy execution-header validator through its public entry; that module also owns buildBundle/verifyBundle for the standalone, versioned host-agent artifact (not the separate daemon-commit seat runtime). No bundle construction or verification occurs at import time.
 - `ops-bootstrap` — runtime-path discovery and Windows task management.
 - `scripts-lib-harness` — canonical harness configuration and service naming.
 - `ops-orchestrator-jobwrap` — Windows executable built by the remote launcher, not a JavaScript import.
@@ -103,11 +107,13 @@ not re-exports of the registered entry:
 
 - Node.js built-ins, Git, SSH, host service managers and Rust/Cargo for Windows helper builds.
 - `@modelcontextprotocol/sdk` `1.32.1` is installed by this package for the sibling daemon runtime.
+- `minimatch` `11.0.3` is a runtime dependency for shared write-scope validation; it must remain available when root dev dependencies are omitted.
 
 ## Tests
 
 - `scripts/test-check-orch-tests-select.mjs` (not in this kit) — suite input selection and restart receipt invalidation.
 - `scripts/test-orch-remote.mjs` (not in this kit) — remote header, environment and launch behavior.
+- `scripts/test-orch-host-agent-bundle.mjs` (not in this kit) — standalone host-agent artifact build/verification and checkout-independent execution; `node --test --test-concurrency=2 scripts/test-orch-host-agent-bundle.mjs` (`scripts/test-orch-host-agent-bundle.mjs` not in this kit).
 - `scripts/test-orch-remote-exec-disconnect.mjs` (not in this kit) — child lifetime on stdin disconnect; Windows builds the helper first.
 - `scripts/test-orch-install.mjs` (not in this kit) — host installer definitions and activation behavior.
 - `scripts/test-orch-backup-sweep.mjs` (not in this kit) — worktree-backup retention, marker protection and dry-run behavior.

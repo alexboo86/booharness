@@ -99,7 +99,8 @@ export async function readDenseLessonNeighbours(id) {
   return result;
 }
 
-// Only the sweep uses this write; CAS refuses a stale report rather than overwriting it.
+// Sweep reports and native domain lead assignments share this CAS registry write;
+// a stale expected version is refused rather than overwriting the current value.
 export async function updateRegistry(key, expectedVersion, body) {
   const url = new URL('/api/memory/registry', serviceUrl());
   const state = process.env.MEMORYCTL_STATE_DIR || join(process.env.HOME || homedir(), '.local/state/memoryctl');

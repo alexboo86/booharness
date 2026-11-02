@@ -7,6 +7,7 @@ import { inside, processCwdFields } from './sweep-shared.ts';
 import { branchTip, checkoutInUse, coderRepo, clearCaches, DAY_MS, dropIdleSeatTargets, idleCloseCandidate, inspectIdleCoder, LeadRepoMissingError, ownedWorktree, pruneAgedMirror, pruneLanded, type PruneDecision } from './prune.ts';
 import { noteCodegraphDaemonStop, removeWorktree } from './worktrees.ts';
 import { hasWorktree, ROLE_POLICY, landable } from './seats-defs.ts';
+import { readInstallSetting } from './settings/index.ts';
 import type { SeatRole, DeferredReplacement, SeatData } from './seats-defs.ts';
 
 export async function close(self: SeatManager, seatId: string): Promise<Seat> {
@@ -192,8 +193,6 @@ export async function closeNow(self: SeatManager, seatId: string, keepOnError = 
     if (keepOnError && (checkoutInUse(self.store, seat) ||
         Object.keys((self.store.getSeat(seatId)?.data.deferredReplacements as Record<string, unknown> | undefined) ?? {}).length)) return seat;
     const closed = self.store.updateSeat(seatId, { status: 'closed', data: patch }, 'seat.closed');
-    // The seat is closed: its retained live logs (task 2883) go with it.
-    self.turnLogsForget(seatId);
     // A table member's close may be the last event that ends the table (operator #19423, plan item 7):
     // a member closed before round 2 counts as not voting, so its close must still release the post.
     if (closed.role === 'debater') {
@@ -246,7 +245,7 @@ async function pruneLandedSeats(self: SeatManager): Promise<PruneDecision[]> {
           let unlanded = false;
           if (landable(current.role)) {
             if (Object.keys((current.data.deferredReplacements as Record<string, unknown> | undefined) ?? {}).length) return;
-            if (currentCandidate.kind === 'idle' && currentCandidate.days >= 2) unlanded = true;
+            if (currentCandidate.kind === 'idle' && currentCandidate.days >= 2 * (readInstallSetting(self.options.stateDir, 'machines.retentionMultiplier') as number)) unlanded = true;
             else if (currentCandidate.kind !== 'failed') {
               const proof = await inspectIdleCoder(self.options.stateDir, current);
               if (!proof.remove) {
@@ -293,7 +292,7 @@ async function pruneLandedSeats(self: SeatManager): Promise<PruneDecision[]> {
               checkoutInUse(self.store, current)) return;
           if (current.data.autoClosedIdle === true) {
             const age = Date.now() - Date.parse(String(current.data.closedAt));
-            if (!Number.isFinite(age) || age < DAY_MS) return;
+            if (!Number.isFinite(age) || age < DAY_MS * (readInstallSetting(self.options.stateDir, 'machines.retentionMultiplier') as number)) return;
           }
           const before = (current.data.autoPruneKept as { reason?: string } | undefined)?.reason;
           const decision = typeof current.data.host === 'string'

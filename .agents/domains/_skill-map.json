@@ -18,7 +18,7 @@
     "security"
   ],
   "leadInstalledSkills": [
-    "orch-team",
+    "orch",
     "memoryctl",
     "next",
     "handoff",
@@ -41,7 +41,7 @@
   "roleDefaults": {
     "lead": [
       "memoryctl",
-      "orch-team"
+      "orch"
     ],
     "scout": [],
     "critic": [
@@ -110,6 +110,17 @@
       ],
       "lead": [
         "harness-economy-audit"
+      ]
+    },
+    "memory": {
+      "all": [
+        "memoryctl"
+      ],
+      "lead": [
+        "admit",
+        "consolidate-memory",
+        "curate",
+        "memory-domain-extraction"
       ]
     },
     "platform-shell": {}
@@ -284,7 +295,7 @@
       "id": "team",
       "match": "\\b(seat|scout|reviewer|coder|paseo|create_agent|delegate)\\b|скаут|тимлид|тим лид|ревьюер|агент",
       "skills": [
-        "orch-team"
+        "orch"
       ],
       "roles": [
         "lead"
@@ -511,6 +522,8 @@
     }
   ],
   "negation": "(?:\\b(?:never|no|do not|don't|does not|must not|without)\\b|(?<![а-яё])(?:не|нельзя|никогда|без)(?![а-яё]))(?:(?!\\b(?:but|however|yet)\\b|(?<![а-яё])(?:но|однако)(?![а-яё]))[^.;!?\\n])*",
+  "noTriggerSkills": {},
+  "noTriggerBriefWords": {},
   "skills": {
     "admit": {
       "class": "method",
@@ -630,7 +643,7 @@
       "class": "lead",
       "requires": []
     },
-    "orch-team": {
+    "orch": {
       "class": "core",
       "requires": []
     },

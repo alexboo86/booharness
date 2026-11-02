@@ -1,6 +1,6 @@
 ---
 name: next
-description: Checkpoint and hand over to a top-level lead with fresh context. Claude desktop uses the handover mod first, then clear-and-relay if the tool is absent, a spawn_task chip, or an authorized scheduled run. Codex desktop creates a new chat only on an explicit user request for that successor (decision 15403). Use when the operator types /next, asks to continue in a fresh session, or the lead-context hook reaches the handover limit (decision 11903); a hook alone does not authorize Codex chat creation.
+description: Checkpoint and hand over to a top-level lead with fresh context. Claude desktop uses the handover mod first, then clear-and-relay if the tool is absent, a spawn_task chip, or an authorized scheduled run. Codex desktop creates a new chat on an explicit user request; the operator's standing order 21159 is that request when the lead-context hook reports the limit (decision 21166). Use when the operator types /next, asks to continue in a fresh session, or the lead-context hook reaches the handover limit (decision 11903).
 lead_only: true
 argument-hint: "What the next session should focus on (optional)"
 ---
@@ -14,10 +14,13 @@ was skipped is named in the report rather than implied.
 If the operator passed an argument, it is what the next session should focus on:
 it steers the handoff title, the successor's next step, and nothing else.
 
-**Codex desktop authorization (decision #15403):** user-invoked `/next` can
-request the new task described by the successor prompt. A context-limit hook
-alone cannot authorize `create_thread`; checkpoint and provide continuation
-text instead. Editing this skill is NOT permission to launch a successor.
+**Codex desktop authorization (decision #21166):** user-invoked `/next` can
+request the new task described by the successor prompt, and so does the
+operator's standing order #21159 when the lead-context hook reports the
+handover limit: finish the step in hand, then run the new-chat route unasked.
+Automatic compaction is not a handover, and after the successor's `threadId`
+returns this thread does no further task work. Editing this skill is NOT
+permission to launch a successor.
 
 ## Standing authorization, and exactly what it covers
 
@@ -190,7 +193,8 @@ Follow [the successor protocol](reference/successor.md). Never start a
 successor as a child agent or a seat: it must be a top-level lead.
 
 In Codex desktop, use [the new-chat branch](reference/successor.md#codex-desktop-app-new-chat)
-only on an explicit user request. It does not clear this session or use a relay.
+on an explicit user request or on the hook's limit report (order #21159). It
+does not clear this session or use a relay.
 
 Its paths in the Claude desktop app, in this order (operator decisions #17572,
 #17492 and #15290): in place through the handover mod; if
@@ -199,7 +203,10 @@ then the chip; then the routine. For the mod route, write and verify the handoff
 do step 5.1, give the report, call
 `mcp__handover__run {text: <successor prompt>, clear: true}`, and end the turn
 with no more text. The mod runs `/clear` after the turn and submits the prompt
-as the first turn. For the relay route, step 5.1 comes before the relay request,
+as the first turn. Once the tool answers `queued`, end the turn at once —
+no retry, no manual successor in this same turn: the handover fires only when
+the turn ends (task 3436), and a same-turn fallback hands the track to two leads.
+For the relay route, step 5.1 comes before the relay request,
 the report comes before `clear_session`, and nothing follows the clear.
 Follow the order the protocol gives.
 A successor started through the routine gets bypass permissions, model `claude-opus-5-5` and effort `xhigh` (operator #15196): set them on the new session and read them back with `get_session`.
@@ -266,6 +273,7 @@ One compact block, no table:
 - In Claude, the handover tool is absent → use the relay route. No relay session,
   or the relay request is refused → do not clear. Take the
   chip, or the routine with the operator away, and name the refusal's words in
-  the report.
+  the report. No relay session → also offer the relay's own start chip
+  ([relay](reference/relay.md#start-it-once-and-again-when-it-is-lost)) for the next `/next`.
 - The lesson gate refuses → capture the lesson or supply a real reason. Retyping
   the commit type to dodge it is a defect, not a fix.

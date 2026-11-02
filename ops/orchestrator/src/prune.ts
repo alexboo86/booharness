@@ -14,8 +14,9 @@ import { collect } from './remote-repo.ts';
 import { ROLE_POLICY, landable, remoteCheckoutGone } from './seats-defs.ts';
 import { TERMINAL_TURN, type Seat, type Store, type Turn, type TurnPending } from './store.ts';
 import { dropCheckoutTargets } from './target-sweep.ts';
-import { deleteBranch, noteCodegraphDaemonStop, removeWorktree, stopCodegraphDaemon, worktreeListPorcelain, type CodegraphDaemonStop } from './worktrees.ts';
+import { deleteBranch, dropHostTargets, noteCodegraphDaemonStop, removeWorktree, stopCodegraphDaemon, worktreeListPorcelain, type CodegraphDaemonStop } from './worktrees.ts';
 import { projectConfig } from '../../../scripts/lib/harness-config.mjs';
+import { readInstallSetting } from './settings/index.ts';
 
 const project = projectConfig();
 
@@ -354,8 +355,13 @@ export function lastTurnEndedMs(turns: Pick<Turn, 'status' | 'ended_at'>[], now 
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Task 2861: how idle a local open seat must be before the sweep drops its cargo targets. */
+/** How idle an open seat must be before the sweep drops its cargo targets. */
 export const SEAT_TARGET_IDLE_MS = 4 * 60 * 60 * 1000;
+
+function seatTargetCheckout(seat: Seat): string | null {
+  const checkout = typeof seat.data.host === 'string' ? seat.data.remoteDir : seat.worktree;
+  return typeof checkout === 'string' && checkout.length > 0 ? checkout : null;
+}
 
 export type SeatTargetDrop = {
   seat: string;
@@ -366,16 +372,12 @@ export type SeatTargetDrop = {
   error?: string;
 };
 
-/** Task 2861 slice A: a local open seat — ready, with no running or queued turn and its
- *  last turn ended SEAT_TARGET_IDLE_MS ago or more — keeps its source, node_modules and
- *  .codegraph but loses its regenerable cargo targets (a 4 h fresh-build window, far
- *  below the daily sweep's 24 h). A host seat's paths name that host's filesystem: it is
- *  never considered, and never probed on this Mac. Returns one summary per seat whose
- *  targets were attempted. */
+/** Ready seats idle for 4h lose only stale Cargo targets. Remote filesystem facts are
+ *  decided on the host; mirrors are never probed or changed. One summary per attempt. */
 export async function dropIdleSeatTargets(store: Pick<Store, 'listSeats' | 'listTurns'>, options: { dryRun?: boolean } = {}): Promise<SeatTargetDrop[]> {
   const idle: Seat[] = [];
   for (const seat of store.listSeats('ready')) {
-    if (typeof seat.worktree !== 'string' || typeof seat.data.host === 'string') continue;
+    if (typeof seatTargetCheckout(seat) !== 'string') continue;
     const endedMs = lastTurnEndedMs(store.listTurns(seat.id));
     if (endedMs !== null && endedMs >= SEAT_TARGET_IDLE_MS) idle.push(seat);
   }
@@ -383,12 +385,19 @@ export async function dropIdleSeatTargets(store: Pick<Store, 'listSeats' | 'list
   for (const seat of idle) {
     // Other seats' drops were awaited since the listing: re-decide on a fresh turn read
     // at the moment of the drop, the same fresh-sample rule as the process clauses.
-    if (lastTurnEndedMs(store.listTurns(seat.id)) === null) continue;
+    const stillIdle = () => {
+      const endedMs = lastTurnEndedMs(store.listTurns(seat.id));
+      return endedMs !== null && endedMs >= SEAT_TARGET_IDLE_MS;
+    };
+    if (!stillIdle()) continue;
+    const checkout = seatTargetCheckout(seat)!;
     try {
-      const dropped = await dropCheckoutTargets(seat.worktree, { window: SEAT_TARGET_IDLE_MS, dryRun: options.dryRun });
-      summaries.push({ seat: seat.id, worktree: seat.worktree, removed: dropped.removed, bytesBefore: dropped.bytesBefore, skipped: dropped.skipped });
+      const dropped = typeof seat.data.host === 'string'
+        ? await dropHostTargets(seat.data.host, checkout, { targets: project.targetDirs, window: SEAT_TARGET_IDLE_MS, dryRun: options.dryRun, beforeDrop: stillIdle })
+        : await dropCheckoutTargets(checkout, { window: SEAT_TARGET_IDLE_MS, dryRun: options.dryRun });
+      summaries.push({ seat: seat.id, worktree: checkout, removed: dropped.removed, bytesBefore: dropped.bytesBefore, skipped: dropped.skipped });
     } catch (error) {
-      summaries.push({ seat: seat.id, worktree: seat.worktree, removed: [], bytesBefore: 0, skipped: [], error: (error as Error).message });
+      summaries.push({ seat: seat.id, worktree: checkout, removed: [], bytesBefore: 0, skipped: [], error: (error as Error).message });
     }
   }
   return summaries;
@@ -684,7 +693,11 @@ const PROOF_VERSION = 2;
  * repo missing' and every error or ownership reason still keep forever.
  */
 const AGED_KEPT = /^(?:change is not on repository HEAD|ignored files require inspection):|^branch tip moved since close/;
-const AGED_AFTER_MS = DAY_MS;
+const agedAfterMs = (stateDir: string): number => DAY_MS * (readInstallSetting(stateDir, 'machines.retentionMultiplier') as number);
+function idleClosedAgeReason(stateDir: string, kind: 'mirror' | 'checkout'): string {
+  const days = readInstallSetting(stateDir, 'machines.retentionMultiplier') as number;
+  return `idle-closed ${kind} is less than ${days === 1 ? 'one day' : `${days} days`} old`;
+}
 const BACKUP_CAP = 300 * 1024 * 1024;
 const BACKUP_OVER_CAP = 'backup over cap: untracked ';
 
@@ -857,7 +870,7 @@ async function pruneAged(store: Store, stateDir: string, seat: Seat, reason: str
     store.updateSeat(seat.id, { data: { autoPruneAgeBase: basis } }, 'seat.auto_prune_age_recorded', { reason });
   }
   const age = Date.now() - Date.parse(basis);
-  if (!Number.isFinite(age) || age < AGED_AFTER_MS) return null;
+  if (!Number.isFinite(age) || age < agedAfterMs(stateDir)) return null;
   if (!lstatSync(seat.worktree!, { throwIfNoEntry: false })?.isDirectory()) return null;
   const { repo, ref } = await coderRepo(seat);
   const aged = `aged unlanded checkout backed up and removed (closed ${Math.floor(age / 3_600_000)}h ago): ${reason}`;
@@ -961,7 +974,7 @@ function capRetryReason(seat: Seat): string | null {
   const reason = seat.data.autoPruneCapReason;
   const checkedAt = Date.parse(String(seat.data.autoPruneCapCheckedAt));
   return typeof reason === 'string' && reason.startsWith(BACKUP_OVER_CAP) &&
-    Number.isFinite(checkedAt) && Date.now() - checkedAt < AGED_AFTER_MS ? reason : null;
+    Number.isFinite(checkedAt) && Date.now() - checkedAt < DAY_MS ? reason : null;
 }
 
 function recordCapKeep(store: Store, seat: Seat, name: string): string {
@@ -1173,7 +1186,7 @@ export async function pruneAgedMirror(store: Store, stateDir: string, id: string
   }
   if (seat.data.autoClosedIdle === true) {
     const age = Date.now() - Date.parse(String(seat.data.closedAt));
-    if (!Number.isFinite(age) || age < AGED_AFTER_MS) return kept('idle-closed mirror is less than one day old');
+    if (!Number.isFinite(age) || age < agedAfterMs(stateDir)) return kept(idleClosedAgeReason(stateDir, 'mirror'));
   }
   const prior = seat.data.autoPruned as AutoPruned | undefined;
   if (prior?.checkoutOnly === true) {
@@ -1191,7 +1204,7 @@ export async function pruneAgedMirror(store: Store, stateDir: string, id: string
     store.updateSeat(id, { data: { autoPruneAgeBase: basis } }, 'seat.auto_prune_age_recorded', { reason: decision.reason });
   }
   const age = Date.now() - Date.parse(basis);
-  if (!Number.isFinite(age) || age < AGED_AFTER_MS) return decision;
+  if (!Number.isFinite(age) || age < agedAfterMs(stateDir)) return decision;
   if (!lstatSync(seat.worktree!, { throwIfNoEntry: false })?.isDirectory()) return decision;
   let marker: AutoPruned;
   try {
@@ -1238,7 +1251,7 @@ export async function pruneLanded(store: Store, stateDir: string, id: string, af
   if (checkoutInUse(store, seat)) return { ...base, reason: 'checkout in use' };
   if (seat.data.autoClosedIdle === true) {
     const age = Date.now() - Date.parse(String(seat.data.closedAt));
-    if (!Number.isFinite(age) || age < DAY_MS) return { ...base, reason: 'idle-closed checkout is less than one day old' };
+    if (!Number.isFinite(age) || age < agedAfterMs(stateDir)) return { ...base, reason: idleClosedAgeReason(stateDir, 'checkout') };
   }
   // A backup-and-remove interrupted between its marker and the deletion
   // resumes from the marker; the branch was never part of the approval.

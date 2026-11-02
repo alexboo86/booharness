@@ -23,14 +23,14 @@ and failure reproductions; omit repeated instructions and narrated work.
 9. **UI:** follow the project's design system where one exists; no hardcoded colours or sizes where the project has tokens.
 10. **Reply to the operator in Russian.**
     Lead sessions apply [`i-have-adhd`](.agents/skills/i-have-adhd/SKILL.md) to operator replies; this contract outranks it; seats do not receive it.
-11. **Memory before git:** use `memoryctl search` for prior work/decisions; git log supplies SHAs/diffs.
+11. **Memory first (lead):** before you assert, fix, propose or ask, check that subject in memory (`memoryctl search`), its lessons (`memoryctl lessons --path <file>`) and its domain knowledge page. Git log supplies SHAs/diffs; orch delivers a seat's lessons and pages by its `files`.
 
 `AGENTS.md` and `CLAUDE.md` must be byte-identical. Apply [edit-contract-mirror](.agents/skills/edit-contract-mirror/SKILL.md) to contract changes.
 
 ## Harness
 
 - **This repository is the harness home.** The orch daemon, the memory service files, the hooks and every installed link point into this checkout. Do not move or delete it; after moving it re-run `node ops/bootstrap/install-harness.mjs --no-require-providers` and `node ops/orchestrator/install.mjs`.
-- **orch** is orchestration: the local daemon at `127.0.0.1:7760` (MCP `orch`, board at `http://127.0.0.1:7760/`). A lead loads [`orch-team`](.agents/skills/orch-team/SKILL.md), picks the role and leaves the family to orch: the role matrix ([profiles.ts](ops/orchestrator/src/profiles.ts)) picks the family with the most headroom against a linear pace through its budget window. Families that are not installed on this machine stay paused: `node ops/orchestrator/src/main.ts pause <family> --reason "<why>"`, `unpause <family>`, `paused`. [orch README](ops/orchestrator/README.md).
+- **orch** is orchestration: the local daemon at `127.0.0.1:7760` (MCP `orch`, board at `http://127.0.0.1:7760/`). A lead loads [`orch`](.agents/skills/orch/SKILL.md), picks the role and leaves the family to orch: the role matrix ([profiles.ts](ops/orchestrator/src/profiles.ts)) picks the family with the most headroom against a linear pace through its budget window. Families that are not installed on this machine stay paused: `node ops/orchestrator/src/main.ts pause <family> --reason "<why>"`, `unpause <family>`, `paused`. [orch README](ops/orchestrator/README.md).
 - **No quorum.** Independent review finds reproduced defects; the lead adjudicates evidence. Neither author nor lead family reviews its own change, with one exception: claude may review a change another family authored, even under a claude lead. Review depth: one reviewer, two on a security path or when orch's `review_plan` raises it. Reports need claim/evidence or explicit no findings. Recreate an empty-returning seat once.
 - **Skills:** a lead sees only the lead set in `.agents/domains/_skill-map.json`; seats get their role's skills from `.agents/skills` through orch. Load by trigger.
 - **One memory:** `memoryd` on this machine at `http://127.0.0.1:7717` (LaunchAgent `local.harness.memoryd`, database `~/.local/state/memoryctl/memory.db`, embedder Ollama `qwen3-embedding:0.6b` at `127.0.0.1:11434`). No `service.url`: with that file absent every client defaults to the loopback URL. One daemon, one database, no second writer. Verify: `node ops/memory-local/install.mjs --check`, `curl -s http://127.0.0.1:7717/health`.
@@ -76,7 +76,7 @@ npm run check:commit -- <explicit paths>
 - **Memory:** `search` (locate) → `get <id>` (whole); `append` for durable facts and `handoff` at chunk end. Memory never commits, pushes, deploys or starts agents. Loose ends: `memoryctl task create --title <t> --priority P0|P1 --next <step>`, closed with evidence. [Memory contract](docs/agent/memory.md).
 - **Mandatory skills by trigger:** enumerate-cases/design, plan-before-code/edit, investigate-first/bug, surgical-patch/fix, verify-and-stop/completion, premortem/irreversible action. Use only available skills; unrelated skills are optional.
 - **Economy:** batch independent checks; extract a symbol with `codegraph node <symbol>`; avoid whole-file sweeps. Read a seat's report once; no transcript reading.
-- **Delegate:** sweeps across 3+ files/logs/memory to an orch scout, edits to an orch coder ([orch-team](.agents/skills/orch-team/SKILL.md)). Known files can be read directly. Scouts run only as orch seats (`seat_create` role scout).
+- **Delegate:** sweeps across 3+ files/logs/memory to an orch scout, edits to an orch coder ([orch](.agents/skills/orch/SKILL.md)). Known files can be read directly. Scouts run only as orch seats (`seat_create` role scout).
 - **Wait:** finish notifications, no polling/sleep loops; shell jobs run in background.
 - **RTK is mandatory** for heavy shell: `rtk <cmd>`. `rtk proxy` filters nothing (0% saving); for exact bytes run the command bare and bound it. Warn-only and logged; do not retry a denied form. [Filter catalogue](docs/agent/environment.md).
 
@@ -99,6 +99,6 @@ npm run check:commit -- <explicit paths>
 | [memory](docs/agent/memory.md) | tasks, lessons, registry, CAS |
 | [codex](docs/agent/codex.md), [grok](docs/agent/grok.md) | runtime configuration and quotas |
 | [resident-rules-why](docs/agent/resident-rules-why.md) | rule evidence and measurements |
-| [orch-team](.agents/skills/orch-team/SKILL.md) | delegation, research, review |
+| [orch](.agents/skills/orch/SKILL.md) | delegation, research, review |
 | [orch README](ops/orchestrator/README.md) | daemon, seats, roles, limits |
 | [harness knowledge page](.agents/domains/domain-harness/knowledge.md) | the map of the whole harness |

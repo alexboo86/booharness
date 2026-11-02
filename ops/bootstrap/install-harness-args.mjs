@@ -6,7 +6,7 @@ const FLAGS = [
 const OPTIONS = ['repo', 'home', 'secrets-file', 'platform', 'only'];
 const STEPS = [
   'code-intel', 'instructions', 'skills', 'codex', 'mcp', 'hooks', 'permissions',
-  'rtk-filters', 'rtk-excludes', 'pi-rtk', 'lead-rtk', 'opencode', 'path', 'orchestrator', 'plugins', 'py-tools',
+  'rtk-filters', 'rtk-excludes', 'pi-rtk', 'lead-rtk', 'opencode', 'path', 'orchestrator', 'plugins', 'py-tools', 'playwright',
 ];
 export const USAGE = [
   'Usage: node ops/bootstrap/install-harness.mjs [flags] [options]',

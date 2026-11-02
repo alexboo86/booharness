@@ -4,6 +4,12 @@
 // because that file carries a shebang, which a test runner's module transform
 // cannot parse — the helpers are the testable surface, the builder is not.
 import { domainOf } from '../../scripts/lib/domain-of.mjs';
+import { scrubbedGitEnv } from '../../scripts/git-env.mjs';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 /**
  * A page rides into a seat prompt, so it answers to a prompt budget, not to the
@@ -109,15 +115,12 @@ export function readKnowledgePage(domain, read) {
     }
     body = sections.map((section) => section.text).join('');
   } else {
-    const start = entry.search(/^## /m);
-    head = start < 0 ? entry : entry.slice(0, start);
-    body = start < 0 ? '' : entry.slice(start);
-    const starts = [...body.matchAll(/^## /gm)].map((match) => match.index);
-    sections = starts.map((at, i) => {
-      const text = body.slice(at, starts[i + 1] ?? body.length);
-      return { title: text.split(/\r?\n/, 1)[0].slice(3), file, text,
-        line: entry.slice(0, head.length + at).split('\n').length };
-    });
+    const parts = partSections(entry);
+    const start = parts[0]?.offset ?? entry.length;
+    head = entry.slice(0, start);
+    body = entry.slice(start);
+    sections = parts.map(({ title, text, offset }) => ({ title, file, text,
+      line: entry.slice(0, offset).split('\n').length }));
   }
   let firstLine = 1;
   const ranges = sections.map((section, at) => {
@@ -410,4 +413,113 @@ export function routeKnowledgeSections({ files, map, pageFor, budget = KNOWLEDGE
     return body;
   }, budget);
   return { sections, source: rendered ? 'map' : 'none' };
+}
+
+/** Derived FTS artifacts never open memory.db. No import-time I/O. */
+function knowledgeIndexSource(file) {
+  let db;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+    return db.prepare('SELECT * FROM source').get() ?? null;
+  } catch {
+    return null; // Missing or damaged metadata must not wedge publication.
+  } finally { db?.close(); }
+}
+
+export function knowledgeIndexCommit(file) {
+  return knowledgeIndexSource(file)?.commit_sha ?? null;
+}
+
+function* knowledgePassages(text, budget) {
+  if (budget < 4) throw new Error('knowledge heading exceeds passage budget');
+  while (text) {
+    let prefix = '', bytes = 0;
+    for (const char of text) {
+      if (bytes + Buffer.byteLength(char) > budget) break;
+      prefix += char;
+      bytes += Buffer.byteLength(char);
+    }
+    let end = prefix.length;
+    if (end < text.length) {
+      const blank = prefix.lastIndexOf('\n\n'), line = prefix.lastIndexOf('\n');
+      if (blank >= 0) end = blank + 2;
+      else if (line >= 0) end = line + 1;
+    }
+    yield text.slice(0, end);
+    text = text.slice(end);
+  }
+}
+
+function insertKnowledgePage(db, git, commit, file) {
+  const domain = knowledgeDomainOf(file);
+  if (!domain) throw new Error('invalid knowledge domain');
+  const read = (file) => git('show', `${commit}:${file}`);
+  const insert = db.prepare('INSERT INTO knowledge(path,heading,section_key,source_commit,body) VALUES (?,?,?,?,?)');
+  const page = readKnowledgePage(domain, read);
+  const preamble = { file, title: page.head.match(/^# (.+)$/m)?.[1] ?? '@preamble', text: page.head };
+  const seen = new Map();
+  for (const section of [preamble, ...page.sections]) {
+    const identity = `${section.file}#${section.title}`.normalize('NFC');
+    const ordinal = seen.get(identity) ?? 0;
+    seen.set(identity, ordinal + 1);
+    const key = createHash('sha256').update(`${identity}\0${ordinal}`).digest('hex');
+    const budget = 1800 - Buffer.byteLength(`${section.file}#${section.title}\n`);
+    for (const body of knowledgePassages(section.text, budget)) {
+      insert.run(section.file, section.title, key, commit, body);
+    }
+  }
+}
+
+function populateKnowledge(db, git, commit, log) {
+  const files = git('ls-tree', '-r', '--name-only', commit, '--', '.agents/domains').split('\n');
+  const pages = files.filter((file) => /^\.agents\/domains\/[^/]+\/knowledge\.md$/.test(file));
+  for (const file of pages) {
+    db.exec('SAVEPOINT page');
+    try {
+      insertKnowledgePage(db, git, commit, file);
+    } catch (error) {
+      db.exec('ROLLBACK TO page');
+      log(`knowledge index skipped ${file}: ${String(error.message).split('\n')[0]}`);
+    } finally {
+      db.exec('RELEASE page');
+    }
+  }
+}
+
+/** Read only pinned committed master blobs; publish a closed single-file DB. */
+export function rebuildKnowledgeIndex({ repoRoot, indexPath, log = console.error }) {
+  const git = (...args) => execFileSync('git', ['-C', repoRoot, ...args], {
+    encoding: 'utf8', env: scrubbedGitEnv(), maxBuffer: 16 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const temporary = `${indexPath}.${randomUUID()}.tmp`;
+  let db;
+  try {
+    const commit = git('rev-parse', 'refs/heads/master').trim();
+    const tree = git('rev-parse', `${commit}:.agents/domains`).trim();
+    // The builder's own bytes cover chunking rules and the index schema: a code-only landing rebuilds.
+    const builder = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
+    const source = knowledgeIndexSource(indexPath);
+    if (source?.domains_tree === tree && source.builder === builder) return { ok: true, changed: false, commit: source.commit_sha };
+    mkdirSync(dirname(indexPath), { recursive: true, mode: 0o700 });
+    closeSync(openSync(temporary, 'wx', 0o600));
+    db = new DatabaseSync(temporary);
+    db.exec(`BEGIN;
+      CREATE TABLE source(commit_sha TEXT NOT NULL, domains_tree TEXT NOT NULL, builder TEXT NOT NULL);
+      CREATE VIRTUAL TABLE knowledge USING fts5(path,heading,section_key UNINDEXED,source_commit UNINDEXED,body,tokenize='porter unicode61');`);
+    db.prepare('INSERT INTO source VALUES (?,?,?)').run(commit, tree, builder);
+    populateKnowledge(db, git, commit, log);
+    db.exec('COMMIT');
+    db.close();
+    db = null;
+    if (git('rev-parse', 'refs/heads/master').trim() !== commit) throw new Error('master moved during knowledge rebuild');
+    renameSync(temporary, indexPath);
+    return { ok: true, changed: true, commit };
+  } catch (error) {
+    log(`knowledge index rebuild failed: ${String(error.message).split('\n')[0]}`);
+    return { ok: false };
+  } finally {
+    db?.close();
+    rmSync(temporary, { force: true });
+  }
 }

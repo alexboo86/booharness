@@ -10,9 +10,9 @@ non-hyphen cwd characters replaced by `-` (`ops/orchestrator/src/seats-defs.ts`)
 
 Pi launches from the exact-version install and lockfile in `ops/pi-runtime/package.json`,
 not PATH. `open` uses the daemon checkout locally and `host.repo` remotely;
-`piRuntimeLayout` selects the absolute bin (`pi.cmd` on win32). `assertPiRuntime` checks
-that it exists and its installed version string equals the pin; the remote probe is
-bounded. Failure names the machine and `npm ci --prefix ops/pi-runtime`. Runtime sync
+`piRuntimeLayout` selects the absolute bin (`pi.cmd` on win32). `assertPiRuntime` resolves
+it through `resolvePiInstall`: the repo pin, or a higher version that `ops/pi-runtime/current.json`
+selects from `versions/<version>/` (task 3536); the remote probe is bounded. Failure names the machine and `npm ci --prefix ops/pi-runtime`. Runtime sync
 is git-only and the installer's orchestrator step is marker-gated
 (`ops/orchestrator/src/providers/pi.ts`). Stand scripts use the same install through
 `requirePiRuntime`, which refuses a missing/mismatched runtime before creation

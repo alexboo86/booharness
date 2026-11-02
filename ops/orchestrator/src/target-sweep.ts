@@ -7,13 +7,20 @@ import { promisify } from 'node:util';
 import { projectConfig } from '../../../scripts/lib/harness-config.mjs';
 import { DAY, DROP_GRACE, HOUR, acquireSweepGate, directoryBelow, inside, missing, treeBytes } from './sweep-shared.ts';
 
+import { BUILDERS, CARGO_MARKERS, FLOCK, PERL, RECENT_BUILD_RULE } from './target-sweep-rules.ts';
+
 const exec = promisify(execFile);
 const TARGETS = projectConfig().targetDirs;
 const STATE_TARGETS = projectConfig().stateTargetDirs;
 const EXEC_OPTIONS = { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 };
-/** A process whose executable is named so may be building: its cwd in the checkout pins every target. */
-const BUILDERS = /^(?:cargo|cargo-.+|rustc|rust-analyzer|tauri)$/;
 const DROPPING = '.dropping-';
+
+/** Task 3479: absolute tool paths defeat PATH-based absence simulation, so a test names
+ *  an absent binary through an ORCH_TEST_* override (the ORCH_TEST_UNREADABLE_PID pattern).
+ *  Production never sets these; the env read lives here to keep caller complexity flat. */
+function probeOverride(name: string, fallback: string): string {
+  return process.env[name] ?? fallback;
+}
 
 type Item = { path: string; bytesBefore: number };
 export type TargetSweepResult = {
@@ -27,7 +34,7 @@ type ProcessInfo = { pid: string; name: string; args: string; cwd: string | null
 
 async function marked(target: string): Promise<void> {
   const errors: string[] = [];
-  for (const name of ['CACHEDIR.TAG', '.rustc_info.json']) {
+  for (const name of CARGO_MARKERS) {
     try {
       const marker = await lstat(path.join(target, name));
       if (marker.isFile() && !marker.isSymbolicLink()) return;
@@ -39,25 +46,24 @@ async function marked(target: string): Promise<void> {
   throw new Error(errors.join('; '));
 }
 
+async function recentBuildEntries(dir: string, cutoff: number, depth: number): Promise<boolean> {
+  if (depth < 1) return false;
+  for await (const entry of await opendir(dir)) {
+    const file = path.join(dir, entry.name), stat = await lstat(file);
+    if (stat.mtimeMs >= cutoff) return true;
+    if (stat.isDirectory() && !stat.isSymbolicLink() && await recentBuildEntries(file, cutoff, depth - 1)) return true;
+  }
+  return false;
+}
+
 async function recentBuild(target: string, cutoff: number): Promise<boolean> {
-  for (const profile of ['debug', 'release']) {
+  for (const profile of RECENT_BUILD_RULE.profiles) {
     const root = path.join(target, profile);
     let stat;
     try { stat = await lstat(root); } catch (error) { if (missing(error)) continue; throw error; }
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`not a plain build directory: ${root}`);
     if (stat.mtimeMs >= cutoff) return true;
-    const entries = await opendir(root);
-    for await (const entry of entries) {
-      const file = path.join(root, entry.name);
-      const first = await lstat(file);
-      if (first.mtimeMs >= cutoff) return true;
-      if (first.isDirectory() && !first.isSymbolicLink()) {
-        const children = await opendir(file);
-        for await (const child of children) {
-          if ((await lstat(path.join(file, child.name))).mtimeMs >= cutoff) return true;
-        }
-      }
-    }
+    if (await recentBuildEntries(root, cutoff, RECENT_BUILD_RULE.depth)) return true;
   }
   return false;
 }
@@ -79,10 +85,14 @@ export class LivenessUnproved extends Error {
 }
 
 export async function processSnapshot(): Promise<ProcessInfo[]> {
-  const { stdout } = await exec('ps', ['-axww', '-o', 'pid=', '-o', 'args='], EXEC_OPTIONS)
+  // Task 3479: ps spawns by absolute path so no seat PATH shim can answer for it.
+  // The ORCH_TEST_PS seam (the ORCH_TEST_UNREADABLE_PID pattern below) lets a test
+  // name an absent binary — stripping PATH cannot reach an absolute tool.
+  const ps = probeOverride('ORCH_TEST_PS', '/bin/ps');
+  const { stdout } = await exec(ps, ['-axww', '-o', 'pid=', '-o', 'args='], EXEC_OPTIONS)
     .catch((error: { code: string | number }) => {
       // A missing liveness tool is not a missing candidate path.
-      throw new LivenessUnproved(String(process.pid), 'ps', typeof error.code === 'number' ? `exit ${error.code}` : error.code);
+      throw new LivenessUnproved(String(process.pid), ps, typeof error.code === 'number' ? `exit ${error.code}` : error.code);
     });
   const processes = new Map<string, ProcessInfo>();
   for (const line of stdout.split('\n')) {
@@ -182,11 +192,14 @@ async function lockHeld(file: string): Promise<boolean> {
   let stat;
   try { stat = await lstat(file); } catch (error) { if (missing(error)) return false; throw error; }
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`not a plain lock file: ${file}`);
+  // Task 3479: a test injects absent probe paths through ORCH_TEST_FLOCK/ORCH_TEST_PERL;
+  // PATH stripping cannot reach absolute tools.
+  const flock = probeOverride('ORCH_TEST_FLOCK', FLOCK), perl = probeOverride('ORCH_TEST_PERL', PERL);
   if (lockTool === undefined) {
-    // One probe per process, through PATH: flock(1) where util-linux ships it, otherwise perl.
+    // Never resolve through the seat's PATH-first gate shims.
     const tools = [
-      { file: 'flock', probe: ['-n', '/dev/null', '-c', 'true'], args: (lock: string) => ['-n', lock, '-c', 'true'] },
-      { file: 'perl', probe: ['-e', '0'], args: (lock: string) => ['-e', 'open(F,"<",$ARGV[0]) or exit 2; unless(flock(F,6)){exit 1} exit 0', '--', lock] },
+      { file: flock, probe: ['-n', '/dev/null', '-c', 'true'], args: (lock: string) => ['-n', lock, '-c', 'true'] },
+      { file: perl, probe: ['-e', '0'], args: (lock: string) => ['-e', 'open(F,"<",$ARGV[0]) or exit 2; unless(flock(F,6)){exit 1} exit 0', '--', lock] },
     ];
     for (const tool of tools) {
       try { await exec(tool.file, tool.probe, EXEC_OPTIONS); lockTool = tool; break; }
@@ -194,7 +207,7 @@ async function lockHeld(file: string): Promise<boolean> {
     }
     if (lockTool === undefined) lockTool = null;
   }
-  if (!lockTool) throw new Error('no flock tool available for the cargo lock try');
+  if (!lockTool) throw new Error('no absolute lock probe available (' + flock + ' or ' + perl + ')');
   try { await exec(lockTool.file, lockTool.args(file), EXEC_OPTIONS); return false; }
   catch (error) {
     if (missing(error)) throw error; // the tool vanished mid-run: unproved, keep the target
@@ -223,7 +236,7 @@ async function targetInUse(checkout: string, target: string, aliases: string[], 
     checkoutSpellings.some((spelling) => proc.args.includes(spelling) || (proc.cwd !== null && inside(spelling, proc.cwd))));
   const open = await openProcessPaths(candidates.map((proc) => proc.pid));
   if (open.some((file) => inside(target, file))) return 'open file or executable inside the target';
-  for (const profile of ['debug', 'release']) {
+  for (const profile of RECENT_BUILD_RULE.profiles) {
     if (await lockHeld(path.join(target, profile, '.cargo-lock'))) return `${profile} cargo lock held`;
   }
   return null;
@@ -240,6 +253,29 @@ async function dropInUse(dropping: string, processes: ProcessInfo[]): Promise<bo
   if (processes.some((proc) => (proc.cwd !== null && inside(dropping, proc.cwd)) || proc.args.includes(dropping))) return true;
   const open = await openProcessPaths(processes.map((proc) => proc.pid));
   return open.some((file) => inside(dropping, file));
+}
+
+/** Inspection is shared with dry runs; real deletion keeps its existing guards. */
+async function removeTargetDrop(root: string, relative: string, result: TargetSweepResult): Promise<void> {
+  const dropping = path.join(root, relative);
+  try {
+    await directoryBelow(root, relative);
+    // Only dry runs need bytes here: do not add a byte-walk failure to the real
+    // leftover deletion policy. Recheck confinement/liveness after the walk.
+    const candidate = result.dryRun ? { path: dropping, bytesBefore: await treeBytes(dropping) } : null;
+    await directoryBelow(root, relative);
+    if (await dropInUse(dropping, await processSnapshot())) {
+      result.skipped.push({ path: dropping, reason: 'in use by a live process' });
+      return;
+    }
+    if (candidate) {
+      result.candidates.push(candidate);
+      result.bytesBefore += candidate.bytesBefore;
+    } else {
+      await rm(dropping, { recursive: true, force: true });
+      result.removed.push(dropping);
+    }
+  } catch (error) { result.skipped.push({ path: dropping, reason: (error as Error).message }); }
 }
 
 /** Delete `<target>.dropping-<ms>` leftovers past the grace age: an interrupted recursive
@@ -264,18 +300,8 @@ async function removeStaleDrops(root: string, result: TargetSweepResult, now: nu
       if (!entry.name.startsWith(prefix)) continue;
       const stamp = entry.name.slice(prefix.length);
       if (!/^\d+$/.test(stamp) || now - Number(stamp) < DROP_GRACE) continue;
-      const dropping = path.join(parent, entry.name);
       const relative = parentRelative === '.' ? entry.name : `${parentRelative}/${entry.name}`;
-      try {
-        await directoryBelow(root, relative); // every component, re-validated at the rm
-        if (await dropInUse(dropping, await processSnapshot())) {
-          result.skipped.push({ path: dropping, reason: 'in use by a live process' });
-          continue;
-        }
-        await rm(dropping, { recursive: true, force: true });
-        result.removed.push(dropping);
-      }
-      catch (error) { result.skipped.push({ path: dropping, reason: (error as Error).message }); }
+      await removeTargetDrop(root, relative, result);
     }
   }
 }
@@ -299,7 +325,7 @@ export async function dropCheckoutTargets(checkout: string, options: { window: n
   }
   const aliases = [...new Set(options.aliases ?? [path.resolve(checkout)])];
   try {
-    if (!dryRun) await removeStaleDrops(root, result, options.now ?? Date.now());
+    await removeStaleDrops(root, result, options.now ?? Date.now());
     for (const suffix of TARGETS) {
       const target = path.join(root, suffix);
       let found = false;
@@ -373,27 +399,14 @@ async function dropStateTargets(result: TargetSweepResult, options: { stateRoot:
     for await (const entry of entries) {
       const target = path.join(parent, entry.name);
       const relative = parentRelative === '.' ? entry.name : `${parentRelative}/${entry.name}`;
-      // A `.dropping-` leftover is never a candidate; one whose base matches the
-      // pattern obeys the same grace rule as a checkout target's leftover.
+      // Leftovers whose base matches the pattern obey the same grace rule as
+      // checkout leftovers, including inspection-only candidacy in a dry run.
       const cut = entry.name.lastIndexOf(DROPPING);
       if (cut !== -1) {
         const stamp = entry.name.slice(cut + DROPPING.length);
-        if (matches(entry.name.slice(0, cut)) && /^\d+$/.test(stamp) && now - Number(stamp) >= DROP_GRACE && !dryRun) {
-        try {
-          // Every component re-validated at the rm: a leftover path must stay a plain
-          // directory below the state root until the moment it is deleted; liveness
-          // is sampled right before the rm (task 2861 review r3), as in removeStaleDrops.
-          await directoryBelow(root, relative);
-          if (await dropInUse(target, await processSnapshot())) {
-            result.skipped.push({ path: target, reason: 'in use by a live process' });
-          }
-          else {
-            await rm(target, { recursive: true, force: true });
-            result.removed.push(target);
-          }
+        if (matches(entry.name.slice(0, cut)) && /^\d+$/.test(stamp) && now - Number(stamp) >= DROP_GRACE) {
+          await removeTargetDrop(root, relative, result);
         }
-        catch (error) { result.skipped.push({ path: target, reason: (error as Error).message }); }
-      }
         continue;
       }
       // A plain file (.DS_Store) is not a target; symlinks and the rest still report.

@@ -15,9 +15,7 @@ function fixture(t) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const state = join(home, '.local/state/orch');
   mkdirSync(state, { recursive: true });
-  const cli = join(home, 'higgsfield');
-  writeFileSync(cli, `#!${process.execPath}
-const fs = require('node:fs');
+  const stubBody = `const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 const ledger = path.join(process.env.HOME, '..', 'higgsfield-ledger.jsonl');
@@ -36,7 +34,11 @@ if (args[0] === 'generate' && args[1] === 'create') {
 } else console.log('passthrough');
 console.error('stub stderr');
 process.exit(Number(process.env.STUB_EXIT || 0));
-`, { mode: 0o700 });
+`;
+  // win32 cannot spawn a shebang script without a shell: name the stub .cjs so
+  // the wrapper runs it through this node; POSIX keeps the direct shebang exec.
+  const cli = join(home, process.platform === 'win32' ? 'higgsfield.cjs' : 'higgsfield');
+  writeFileSync(cli, process.platform === 'win32' ? stubBody : `#!${process.execPath}\n${stubBody}`, { mode: 0o700 });
   const env = { ...process.env, HOME: home, ORCH_HIGGSFIELD_BIN: cli, STUB_LOG: join(home, 'calls.jsonl') };
   for (const key of Object.keys(env)) {
     if (key.startsWith('STUB_') && key !== 'STUB_LOG') delete env[key];

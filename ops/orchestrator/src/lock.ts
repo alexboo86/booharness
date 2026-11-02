@@ -29,7 +29,7 @@ export function processBorn(pid: number): string | null {
         { encoding: 'utf8', timeout: 2000 });
       return query.status === 0 && /^\d+$/.test(query.stdout.trim()) ? query.stdout.trim() : null;
     }
-    const query = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)],
+    const query = spawnSync(process.env.ORCH_TEST_PS ?? '/bin/ps', ['-o', 'lstart=', '-p', String(pid)],
       { encoding: 'utf8', timeout: 2000, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } });
     return query.status === 0 && query.stdout.trim() ? query.stdout.trim() : null;
   } catch {

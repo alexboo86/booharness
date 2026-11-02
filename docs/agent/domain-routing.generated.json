@@ -9,7 +9,6 @@
       ".claude/scripts/**",
       ".claude/skill-compass/**",
       ".claude/settings*.json",
-      "scripts/memory/**",
       "scripts/harness-report/**",
       "scripts/lib/install-*.mjs",
       "scripts/lib/harness-config.mjs",
@@ -25,7 +24,6 @@
       "scripts/check-mcp-delivery.mjs",
       "ops/bootstrap/**",
       "ops/orchestrator/**",
-      "ops/memory-nas/**",
       "ops/harness-kit/**",
       "ops/routines/**",
       "ops/claude-mods/**",
@@ -65,6 +63,16 @@
       "ops/ab-stand/**",
       "ops/pi-runtime/**"
     ],
+    "domain-memory": [
+      "scripts/memory/**",
+      "ops/memory-nas/**",
+      "ops/bootstrap/install-memory.mjs",
+      "scripts/lib/memory-installer.mjs",
+      ".agents/skills/admit/**",
+      ".agents/skills/curate/**",
+      ".agents/skills/consolidate-memory/**",
+      ".agents/skills/memory-domain-extraction/**"
+    ],
     "domain-platform-shell": [
       "**"
     ]
@@ -81,8 +89,18 @@
       "spec": 1035
     },
     {
+      "glob": "ops/bootstrap/install-memory.mjs",
+      "domain": "domain-memory",
+      "spec": 1032
+    },
+    {
       "glob": "scripts/check-domain-routing.mjs",
       "domain": "domain-harness",
+      "spec": 1032
+    },
+    {
+      "glob": "scripts/lib/memory-installer.mjs",
+      "domain": "domain-memory",
       "spec": 1032
     },
     {
@@ -201,6 +219,16 @@
       "spec": 1006
     },
     {
+      "glob": ".agents/skills/memory-domain-extraction/**",
+      "domain": "domain-memory",
+      "spec": 40
+    },
+    {
+      "glob": ".agents/skills/consolidate-memory/**",
+      "domain": "domain-memory",
+      "spec": 34
+    },
+    {
       "glob": "scripts/check-knowledge-*.mjs",
       "domain": "domain-harness",
       "spec": 24
@@ -211,6 +239,11 @@
       "spec": 23
     },
     {
+      "glob": ".agents/skills/curate/**",
+      "domain": "domain-memory",
+      "spec": 22
+    },
+    {
       "glob": ".claude/skill-compass/**",
       "domain": "domain-harness",
       "spec": 22
@@ -219,6 +252,11 @@
       "glob": "scripts/harness-bench/**",
       "domain": "domain-harness",
       "spec": 22
+    },
+    {
+      "glob": ".agents/skills/admit/**",
+      "domain": "domain-memory",
+      "spec": 21
     },
     {
       "glob": "scripts/test-harness-*.mjs",
@@ -312,7 +350,7 @@
     },
     {
       "glob": "ops/memory-nas/**",
-      "domain": "domain-harness",
+      "domain": "domain-memory",
       "spec": 15
     },
     {
@@ -327,7 +365,7 @@
     },
     {
       "glob": "scripts/memory/**",
-      "domain": "domain-harness",
+      "domain": "domain-memory",
       "spec": 15
     },
     {

@@ -9,7 +9,8 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { entryText, entryTextSha } from './embed-recipe.mjs';
-import { RERANK_HEAD, rerankedRows, searchResults } from './search-results.mjs';
+import { RERANK_HEAD, rerankedRows, searchResults, knowledgeSearchResponse } from './search-results.mjs';
+export { knowledgeResults } from './search-results.mjs';
 import {
   HttpError,
   TASK_CLOSED_STATUSES,
@@ -3795,12 +3796,11 @@ WHERE id = ?`).run(
 
   function searchResponse(prepared, scores) {
     if (!prepared.dense) return prepared.rows;
-    const rows = rerankedRows(prepared.rows, scores).slice(prepared.offset, prepared.offset + prepared.limit)
+    return searchResults(rerankedRows(prepared.rows, scores).slice(prepared.offset, prepared.offset + prepared.limit)
       .map((row) => {
         const words = denseBody.get(row.id).body.trim().split(/\s+/u);
         return { ...row, snippet: words.slice(0, 24).join(' ') + (words.length > 24 ? '…' : '') };
-      });
-    return searchResults(rows, searchNow());
+      }), searchNow());
   }
 
   function handle(req, res, url, bodyStr, context = {}) {
@@ -3836,7 +3836,7 @@ WHERE id = ?`).run(
       }
       if (url.pathname === '/api/memory/search') {
         if (req.method !== 'GET') throw new HttpError(405, 'method not allowed', { allowed: ['GET'] });
-        sendJson(res, 200, searchResponse(context.searchResult ?? search(url, context.queryVector), context.rerankScores));
+        sendJson(res, 200, knowledgeSearchResponse(searchResponse(context.searchResult ?? search(url, context.queryVector), context.rerankScores), url));
         return true;
       }
       if (url.pathname === '/api/memory/nearest-lessons') {

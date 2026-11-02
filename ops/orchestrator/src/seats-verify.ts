@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SeatManager } from './seats.ts';
 import type { ContextUsage, Family, ProviderSession } from './providers/types.ts';
-import { FINISHED_P, findingNamesFile, type Finding, type Sibling } from './grading.ts';
+import { findingNamesFile, type Finding, type Sibling } from './grading.ts';
+import { readInstallSetting } from './settings/index.ts';
 import { parseReport } from './report.ts';
 import { tableContractOf } from './seats-scope.ts';
 import { parseNumstat, testPath } from './review-plan.ts';
@@ -47,9 +48,21 @@ export async function treeDeltaPaths(self: SeatManager, before: string, now: str
     return parseNumstat(numstat, 'invalid correction numstat row').map((row) => row.path);
   }
 
-export async function recheckRoute(self: SeatManager, coder: Seat, coderTurn: string, reviewed: Turn, blockers: Finding[], git: (...args: string[]) => Promise<string>): Promise<{ kind: 'same' | 'new'; reason: string; model?: string | null }> {
+type RecheckRoute = { kind: 'same' | 'new'; reason: string; model?: string | null };
+
+function routeCorrectionPaths(paths: string[], blockers: Finding[], roots: string[]): RecheckRoute {
+    if (!paths.length) return { kind: 'same', reason: 'the correction changed nothing the reviewer had not seen', model: 'rule' };
+    const extra = paths.find((file) => !testPath(file) && !blockers.some((finding) => findingNamesFile(finding, file, paths, roots)));
+    return extra
+      ? { kind: 'new', reason: `correction path not named by the blockers: ${extra}`, model: 'rule' }
+      : { kind: 'same', reason: paths.some((file) => testPath(file)) ? 'every correction path is named by the blockers or is a test file' : 'every correction path is named by the blockers', model: 'rule' };
+}
+
+export async function recheckRoute(self: SeatManager, coder: Seat, coderTurn: string, reviewed: Turn, blockers: Finding[], git: (...args: string[]) => Promise<string>): Promise<RecheckRoute> {
     const failure = (coder.data.remoteSyncFailures as Record<string, string> | undefined)?.[coderTurn];
     if (failure) return { kind: 'new', reason: `correction delta unavailable: remote sync failed: ${failure}`, model: 'rule' };
+    const mode = readInstallSetting(self.options.stateDir, 'logic.recheckMode');
+    if (mode === 'same' || mode === 'new') return { kind: mode, reason: `operator recheck mode: always ${mode}`, model: 'rule' };
     const trees = (coder.data.trees as CoderTree[] | undefined) ?? [];
     const now = trees.find((entry) => entry.turn === coderTurn)?.tree;
     if (!now) return { kind: 'new', reason: 'correction delta unavailable: no tree was recorded at the correction end', model: 'rule' };
@@ -61,13 +74,15 @@ export async function recheckRoute(self: SeatManager, coder: Seat, coderTurn: st
     } catch (error) {
       return { kind: 'new', reason: `correction delta unavailable: ${(error as Error).message}`, model: 'rule' };
     }
-    if (!paths.length) return { kind: 'same', reason: 'the correction changed nothing the reviewer had not seen', model: 'rule' };
-    const roots = [coder.worktree!, String(coder.data.main ?? coder.data.repo)];
-    const extra = paths.find((file) => !testPath(file) && !blockers.some((finding) => findingNamesFile(finding, file, paths, roots)));
-    return extra
-      ? { kind: 'new', reason: `correction path not named by the blockers: ${extra}`, model: 'rule' }
-      : { kind: 'same', reason: paths.some((file) => testPath(file)) ? 'every correction path is named by the blockers or is a test file' : 'every correction path is named by the blockers', model: 'rule' };
+    return routeCorrectionPaths(paths, blockers, [coder.worktree!, String(coder.data.main ?? coder.data.repo)]);
   }
+
+async function routeDeferredRecheck(self: SeatManager, coder: Seat, coderTurn: string, reviewed: Turn, blockers: Finding[], git: (...args: string[]) => Promise<string>, deferral?: DeferredReplacement): Promise<RecheckRoute> {
+    if (deferral && readInstallSetting(self.options.stateDir, 'logic.recheckMode') !== 'same') {
+      return { kind: 'new', reason: `deferred from coder turn ${deferral.coderTurn} (${deferral.reason}); the host is mirrored again`, model: 'rule' };
+    }
+    return self.recheckRoute(coder, coderTurn, reviewed, blockers, git);
+}
 
 export async function correctionDelta(self: SeatManager, coder: Seat, coderTurn: string, git: (...args: string[]) => Promise<string>): Promise<{ paths: string[]; truncated: boolean } | null> {
     const unavailable = (reason: string) => {
@@ -107,6 +122,11 @@ export function deferredDue(self: SeatManager, coderId: string, turnId: string):
     return typeof data?.host === 'string' && data.remoteSyncState === 'ready' && !(data.remoteSyncFailures as Record<string, string> | undefined)?.[turnId] &&
       Object.keys((data.deferredReplacements as Record<string, DeferredReplacement> | undefined) ?? {}).length > 0;
   }
+
+function replacementRecheckNote(reviewer: Seat, next: Seat, reason: string): string {
+    const warning = typeof next.data.independenceWarning === 'string' ? `; ${next.data.independenceWarning}` : '';
+    return `reviewer ${reviewer.id} superseded by new reviewer ${next.id}: ${reason}; ${reviewer.id} is closed and its queued recheck turns are cancelled${warning}`;
+}
 
 export async function queueRechecks(self: SeatManager, coder: Seat, coderTurn: string, deferredOnly = false): Promise<void> {
     coder = self.store.getSeat(coder.id)!;
@@ -226,9 +246,7 @@ export async function queueRechecks(self: SeatManager, coder: Seat, coderTurn: s
         const extra = omitted.length ? `\n${omitted.length} further changed files were not passed for lessons: ${omitted.slice(0, 20).join(', ')}${omitted.length > 20 ? ` (+${omitted.length - 20} more in the diff)` : ''}. Review the entire diff.` : '';
         const listed = blockers.map((finding, i) => `${i + 1}. Claim: ${finding.claim}\nEvidence: ${finding.evidence}`).join('\n');
         const inspect = `git -C ${JSON.stringify(coder.worktree)} diff ${coder.data.base} (committed, staged and unstaged); list untracked with git -C ${JSON.stringify(coder.worktree)} ls-files --others --exclude-standard and read those files separately.${extra} Do not change the coder's checkout.`;
-        const route: { kind: 'same' | 'new'; reason: string; model?: string | null } = deferral
-          ? { kind: 'new', reason: `deferred from coder turn ${deferral.coderTurn} (${deferral.reason}); the host is mirrored again`, model: 'rule' }
-          : await self.recheckRoute(coder, coderTurn, latest, blockers, git);
+        const route = await routeDeferredRecheck(self, coder, coderTurn, latest, blockers, git, deferral);
         const model = route.model ?? null;
         decisions.push({ reviewer: reviewer.id, kind: route.kind, reason: route.reason, model });
         const same = async () => {
@@ -269,7 +287,12 @@ export async function queueRechecks(self: SeatManager, coder: Seat, coderTurn: s
           // A snapshot of the coder's worktree, as a lead creates one: its uncommitted change is `git diff HEAD^` there (task 1605).
           next = await self.create({ role: 'reviewer', author: coder.id, coauthors: reviewer.data.coauthors as string[] | undefined, title: reviewer.title, repo: coder.worktree!, snapshot: true, ...self.replacementPlacement(reviewer), ...(reviewer.data.images === true ? { images: true } : {}) }, { ...(await self.chooser?.() ?? {}), ...(coderLead ? { leadFamilies: [coderLead], leadFamily: coderLead } : {}), leadAsideNote: undefined, replaces: reviewer.id });
         } catch (error) {
-          // Reproduced blocker and major findings are never left unrechecked: without a replacement, their reviewer rechecks them.
+          // Auto mode preserves the safety fallback; an explicit new-only policy never
+          // silently queues the old reviewer instead. The failed replacement stays visible.
+          if (readInstallSetting(self.options.stateDir, 'logic.recheckMode') === 'new') {
+            notes.push(`reviewer ${reviewer.id} needs a new reviewer (${route.reason}), not created: ${(error as Error).message}; operator recheck mode new forbids reusing it`);
+            continue;
+          }
           notes.push(`reviewer ${reviewer.id} needs a new reviewer (${route.reason}), not created: ${(error as Error).message}; its blocker and major findings go back to it`);
           await same();
           continue;
@@ -281,7 +304,7 @@ export async function queueRechecks(self: SeatManager, coder: Seat, coderTurn: s
         try {
           const turn = self.prompt(next.id, brief, undefined, { files: files!, longBrief: 'The original review brief and the reproduced blocker and major findings and evidence must be transmitted in full.' });
           rechecks.push({ reviewer: next.id, turn: turn.id, kind: 'new', replaces: reviewer.id, model });
-          notes.push(`reviewer ${reviewer.id} superseded by new reviewer ${next.id}: ${route.reason}; ${reviewer.id} is closed and its queued recheck turns are cancelled`);
+          notes.push(replacementRecheckNote(reviewer, next, route.reason));
         } catch (error) {
           notes.push(`new reviewer ${next.id} for ${reviewer.id} not prompted: ${(error as Error).message}`);
         }
@@ -340,7 +363,7 @@ export function siblings(self: SeatManager, seat: Seat): Sibling[] {
       // 2026-09-22 a real review was compared with the 6-second, zero-tool report of the seat it
       // replaced (task 1434). An ungraded or malformed grade stays: it says nothing about the report.
       const grade = validGrade(self.store.getGrade(last.id), findings.length);
-      if (grade.status === 'graded' && grade.realReport < FINISHED_P) continue;
+      if (grade.status === 'graded' && grade.realReport < (readInstallSetting(self.options.stateDir, 'jev.grading.finished') as number)) continue;
       found.push({ seat: other.id, ended: last.ended_at, findings });
     }
     return found.sort((a, b) => b.ended.localeCompare(a.ended)).slice(0, MAX_SIBLINGS).map(({ seat: id, findings }) => ({ seat: id, findings }));

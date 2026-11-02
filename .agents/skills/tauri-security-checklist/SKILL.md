@@ -8,8 +8,7 @@ description: The review lens for a Tauri desktop app's attack surface — capabi
 A Tauri app is a native process that hands part of itself to a webview. Every
 capability you grant is granted to *whatever that webview ends up running*, and
 the webview runs content that is easier to influence than native code. This
-checklist is the review lens; for the v2 API consult the framework's live upstream documentation (this file deliberately carries no API surface that
-could go stale).
+checklist is the review lens for every Tauri app in this tree. For the adopted app's v2 API consult the framework's live upstream documentation (this file deliberately carries no API surface that could go stale); a product that is not this terminal must not load another product's terminal skill, whose project rules are its own.
 
 ## The governing question
 

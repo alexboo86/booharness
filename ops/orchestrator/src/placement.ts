@@ -1,14 +1,15 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { execFile, type ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ProfileRole } from './profiles.ts';
 import type { Family } from './providers/types.ts';
-import { readHost, type RemoteHost } from './config.ts';
+import { loadConfig, readHost, type RemoteHost } from './config.ts';
 import { effectiveInstruments, type Instruments } from './shared.entry.ts';
-import { ownGroup, refuseHostSsh, spawnProvider, sshNodeArgs } from './providers/spawn.ts';
+import { spawnHost, spawnProvider } from './providers/spawn.ts';
 import { projectConfig } from '../../../scripts/lib/harness-config.mjs';
+import { readInstallSetting } from './settings/index.ts';
 
 const project = projectConfig();
 const mcpByRole: Record<string, string[]> = JSON.parse(readFileSync(new URL('../mcp-by-role.json', import.meta.url), 'utf8'));
@@ -271,29 +272,29 @@ function requiredNodeMajor(): number {
 }
 
 /**
- * Prove a host entry before a seat depends on it: over ssh, run the entry's node and read its version.
- * Plain ssh with no remote-exec, so a host that has no repo checkout yet still answers. The entry
- * must have passed the hosts.json rules (checkHosts): its ssh alias and node path go to ssh as they are.
+ * Prove a host entry before a seat depends on it: run the entry's node and read its version, over
+ * the host's transport — plain ssh with no remote-exec (so a host that has no repo checkout yet still
+ * answers) or the paired agent's bootstrap exec stream. A probe whose command cannot start is
+ * 'unreachable' whatever the transport named: not connected, revoked or refused.
  */
 export function probeHost(host: RemoteHost, timeoutMs = PROBE_TIMEOUT_MS): Promise<HostProbe> {
-  let child: ReturnType<typeof spawn>;
+  let child: ReturnType<typeof spawnHost>;
   let required: number;
-  // This checkout's own fault, not the host's: no ssh starts without the major to compare with.
+  // This checkout's own fault, not the host's: no command starts without the major to compare with.
   try { required = requiredNodeMajor(); }
   catch (error) { return Promise.resolve({ ok: false, reason: 'required node unknown', error: (error as Error).message }); }
   try {
-    refuseHostSsh(host.ssh);
-    child = spawn('ssh', [...sshNodeArgs(host), '--version'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...ownGroup() });
+    child = spawnHost({ entry: host, kind: 'bootstrap', command: host.node, args: ['--version'], cwd: host.repo, stdin: 'ignore', ownGroup: true });
   } catch (error) {
     return Promise.resolve({ ok: false, reason: 'unreachable', error: (error as Error).message });
   }
   return probeEnd(child as ChildProcess & { stdout: Readable; stderr: Readable }, timeoutMs).then((end): HostProbe => {
-    if ('timedOut' in end) return { ok: false, reason: 'timeout', error: `no answer from '${host.ssh}' in ${timeoutMs} ms; ssh killed by SIGKILL` };
-    if ('error' in end) return { ok: false, reason: 'unreachable', error: `ssh did not start: ${end.error}` };
+    if ('timedOut' in end) return { ok: false, reason: 'timeout', error: `no answer from '${host.ssh}' in ${timeoutMs} ms; killed by SIGKILL` };
+    if ('error' in end) return { ok: false, reason: 'unreachable', error: `the probe did not start: ${end.error}` };
     const detail = end.stderr ? `: ${end.stderr}` : '';
     // 255 is ssh's own failure (no route, refused, no key); any other failure is the remote command's.
-    if (end.code === null) return { ok: false, reason: 'unreachable', error: `ssh to '${host.ssh}' killed by ${end.signal}${detail}` };
-    if (end.code === 255) return { ok: false, reason: 'unreachable', error: `ssh to '${host.ssh}' exit 255${detail}` };
+    if (end.code === null) return { ok: false, reason: 'unreachable', error: `host '${host.ssh}' probe killed by ${end.signal}${detail}` };
+    if (end.code === 255) return { ok: false, reason: 'unreachable', error: `host '${host.ssh}' unreachable: exit 255${detail}` };
     if (end.code !== 0) return { ok: false, reason: 'node not found', error: `'${host.node}' did not run on '${host.ssh}' (exit ${end.code})${detail}` };
     const version = /^v(\d+)\.\d+\.\d+\S*$/.exec(end.stdout.trim().split(/\r?\n/).pop() ?? '');
     if (!version) return { ok: false, reason: 'node not found', error: `'${host.node}' on '${host.ssh}' printed no node version: ${end.stdout.trim().slice(0, 200)}` };
@@ -368,19 +369,25 @@ export function probeDisk(target: Target, path: string, timeoutMs = PROBE_TIMEOU
  * ran loud all day. A host wins whenever its share beats what the Mac has left; the Mac still takes seats
  * when the hosts are fuller.
  */
-const MAC_RESERVE = { cores: 6, memGb: 12 } as const;
+type LocalReserve = { cores: number; memGb: number };
+function localReserve(stateDir = loadConfig().stateDir): LocalReserve {
+  return {
+    cores: readInstallSetting(stateDir, 'placement.reserveCores') as number,
+    memGb: readInstallSetting(stateDir, 'placement.reserveMemoryGb') as number,
+  };
+}
 
-/** A target's load as placement ranks it: on this Mac, MAC_RESERVE taken off its free cores and free memory, floored at zero. */
-function rankedLoad(target: Target, load: Load): Load {
+/** A target's ranked load: take the local reserve off free cores and memory, floored at zero. */
+function rankedLoad(target: Target, load: Load, reserve: LocalReserve): Load {
   if (target !== 'local') return load;
-  const freeCores = Math.max(0, load.cpus * (1 - load.cpuBusyPct / 100) - MAC_RESERVE.cores);
-  return { ...load, cpuBusyPct: 100 * (1 - freeCores / load.cpus), freeMemGb: Math.max(0, load.freeMemGb - MAC_RESERVE.memGb) };
+  const freeCores = Math.max(0, load.cpus * (1 - load.cpuBusyPct / 100) - reserve.cores);
+  return { ...load, cpuBusyPct: 100 * (1 - freeCores / load.cpus), freeMemGb: Math.max(0, load.freeMemGb - reserve.memGb) };
 }
 
 /** One ranking entry as the placement reason prints it; this Mac's names its reserve. */
-function rankDetail(target: Target, value: number, load: Load, activeSeats: number): string {
+function rankDetail(target: Target, value: number, load: Load, activeSeats: number, reserve: LocalReserve): string {
   const freeCores = load.cpus * (1 - load.cpuBusyPct / 100);
-  const kept = target === 'local' ? `; ${MAC_RESERVE.cores} cores and ${MAC_RESERVE.memGb} GB kept for the Mac` : '';
+  const kept = target === 'local' ? `; ${reserve.cores} cores and ${reserve.memGb} GB kept for the Mac` : '';
   return `${target} ${value.toFixed(1)} (free cores ${freeCores.toFixed(1)} of ${load.cpus}, free mem ${load.freeMemGb.toFixed(1)} of ${load.totalMemGb.toFixed(1)} GB, ${activeSeats} active${kept})`;
 }
 
@@ -401,6 +408,9 @@ const pathRule = (file: string, roots: readonly string[]): string | undefined =>
 };
 const touchesServer = (file: string) => pathRule(file, project.noWinPaths) !== undefined;
 export const touchesMacDesktop = (file: string) => pathRule(file, project.macOnlyPaths) !== undefined;
+/** The file that pins a seat to this Mac's desktop runtime: a macOnly path for any role, plus src/** for a designer — it verifies its result in the Tauri runtime, which runs only here (task 3454); a web/apps/** designer stays load-ranked. */
+export const desktopRuntimeFile = (role: ProfileRole, taskFiles: readonly string[]): string | undefined =>
+  taskFiles.find(touchesMacDesktop) ?? (role === 'designer' ? taskFiles.find((file) => pathRule(file, ['src']) !== undefined) : undefined);
 /** mac is this Mac, not any darwin host; win is any win32 host. */
 const NEED_FITS = {
   mac: { fits: (target: Target) => target === 'local', miss: (target: Target) => `${target} is not this Mac` },
@@ -415,8 +425,8 @@ export function macOnlyPin(family: Family, role: ProfileRole): { label: string; 
   return null;
 }
 
-/** Pure: the same inputs always give the same target and reason. Throws when no target is eligible. Hard rules come first; the lead's need then narrows the platform, load picks the machine (decision #12522). */
-export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles: readonly string[]; local: Candidate; hosts: Readonly<Record<string, Candidate>>; need: PlatformNeed; instruments?: Instruments }): { target: Target; reason: string } {
+/** Hard rules come first; the lead's need then narrows the platform, load and install reserve pick the machine (decision #12522). */
+export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles: readonly string[]; local: Candidate; hosts: Readonly<Record<string, Candidate>>; need: PlatformNeed; instruments?: Instruments; stateDir?: string }): { target: Target; reason: string } {
   const { role, family, taskFiles, local, hosts, need } = input;
   const instruments = input.instruments ?? effectiveInstruments(undefined);
   // A hard rule the lead's need cannot move: a Mac-only seat that needs Windows has no target.
@@ -426,7 +436,8 @@ export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles:
     return { target: 'local', reason: pin.reason };
   }
   const serverFile = taskFiles.find(touchesServer);
-  const desktopFile = taskFiles.find(touchesMacDesktop);
+  const desktopFile = desktopRuntimeFile(role, taskFiles);
+  const reserve = localReserve(input.stateDir);
   const candidates: [Target, Candidate][] = [['local', local], ...Object.entries(hosts).sort(([a], [b]) => a.localeCompare(b))];
   const skipped: string[] = [];
   const keep = (rows: [Target, Candidate][], ok: (target: Target, candidate: Candidate) => boolean, why: (target: Target, candidate: Candidate) => string) =>
@@ -448,14 +459,14 @@ export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles:
     }
     const missing = target !== 'local' ? missingHostInstruments(probe, instruments) : [];
     if (missing.length) { skipped.push(`${target} missing instrument: ${hostInstrumentCauses(probe, missing)}`); continue; }
-    const load = rankedLoad(target, probe.load);
+    const load = rankedLoad(target, probe.load, reserve);
     maxFreeCores = Math.max(maxFreeCores, load.cpus * (1 - load.cpuBusyPct / 100));
     maxFreeGb = Math.max(maxFreeGb, load.freeMemGb);
     measured.push({ target, load, activeSeats: candidate.activeSeats });
   }
   const ranked = measured.map(({ target, load, activeSeats }) => {
     const value = pressure(load, activeSeats, maxFreeCores, maxFreeGb);
-    return { target, value, detail: rankDetail(target, value, load, activeSeats) };
+    return { target, value, detail: rankDetail(target, value, load, activeSeats, reserve) };
   });
   const skipText = skipped.length ? `; skipped: ${skipped.join('; ')}` : '';
   if (!ranked.length) throw new Error(`no placement target is eligible for a ${family} ${role} that needs ${need}${skipText}`);
@@ -466,9 +477,9 @@ export function placeSeat(input: { role: ProfileRole; family: Family; taskFiles:
 }
 
 /** The target the load ranking would give a Pi coder with the same files under need `any`; null when this Mac wins or no target is eligible (failed probes, Mac-only files). The family is a stand-in: placeSeat's claude hard rule must not apply. Reuses the caller's probe results; it never probes. */
-export function lighterHost(input: { taskFiles: readonly string[]; local: Candidate; hosts: Readonly<Record<string, Candidate>>; instruments?: Instruments }): Target | null {
+export function lighterHost(input: { taskFiles: readonly string[]; local: Candidate; hosts: Readonly<Record<string, Candidate>>; instruments?: Instruments; stateDir?: string }): Target | null {
   try {
-    const placed = placeSeat({ role: 'coder', family: 'codex', taskFiles: input.taskFiles, need: 'any', instruments: input.instruments, local: input.local, hosts: input.hosts });
+    const placed = placeSeat({ ...input, role: 'coder', family: 'codex', need: 'any' });
     return placed.target === 'local' ? null : placed.target;
   } catch {
     return null;

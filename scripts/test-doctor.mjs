@@ -85,7 +85,7 @@ function fixture(t) {
     mkdirSync(dirname(join(repo, rel)), { recursive: true });
     copyFileSync(join(source, rel), join(repo, rel));
   };
-  for (const rel of ['ops/bootstrap/doctor.mjs', 'scripts/lib/harness-config.mjs', 'scripts/lib/is-main.mjs',
+  for (const rel of ['ops/bootstrap/doctor.mjs', 'scripts/lib/harness-config.mjs', 'scripts/lib/skill-map.mjs', 'scripts/lib/harness-settings.mjs', 'scripts/lib/is-main.mjs',
     'scripts/lib/memory-installer.mjs',
     ...clientFiles]) copy(rel);
   const config = { memory: { embed: { model: 'fixture' } }, names: { prefix: 'fixture' } };

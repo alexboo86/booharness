@@ -1,4 +1,5 @@
 // ONE path grammar for every reader of knowledge-page anchors
+export { domainOf } from './domain-of.mjs';
 // (scripts/check-knowledge-anchors.mjs, scripts/check-knowledge-history.mjs,
 // scripts/fix-knowledge-anchors.mjs). Task 2429: the three private copies
 // drifted, and none of them could read a path holding a Next.js dynamic route

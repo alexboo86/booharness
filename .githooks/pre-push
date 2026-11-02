@@ -41,12 +41,24 @@ if [ "$1" = "origin" ] && [ -f "$here/scripts/report-docs-note.mjs" ]; then
 fi
 
 [ "$SKIP_GIT_GUARD" = "1" ] && exit 0
+# The installed shim selects this main-checkout hook. Its policy must come
+# from the same trusted checkout, never the seat's cwd or the pushed commit.
+push_gate=$(node --input-type=module -e '
+  import { pathToFileURL } from "node:url";
+  try {
+    const { readHarnessBoolean } = await import(pathToFileURL(process.argv[1] + "/scripts/lib/harness-config.mjs"));
+    console.log(readHarnessBoolean(process.argv[1], "git.pushGate"));
+  } catch (error) { console.error(error.message); process.exit(1); }
+' "$here") || {
+    echo "pre-push: blocked. $here/.agents/harness-settings.json: cannot read publication policy." >&2
+    exit 1
+}
 fail=0
 
 # Every configured destination requires publication acknowledgement.
 lan_sync=0
 
-if [ "$lan_sync" = "0" ]; then
+if [ "$lan_sync" = "0" ] && [ "$push_gate" = "true" ]; then
     # Fail closed: a publication gate that cannot be found is not a pass.
     safety="$here/scripts/check-push-safety.mjs"
     if [ ! -f "$safety" ]; then

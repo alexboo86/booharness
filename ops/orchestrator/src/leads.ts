@@ -40,7 +40,7 @@ export type LeadContext = {
   origin: string | null;
   /** A session a person drives (the Claude or Codex app, a terminal), not a seat, a one-shot or a subagent. */
   interactive: boolean;
-  /** Claude completed /next's successor step since the last human message. */
+  /** A successor was created since the last human message. */
   handedOver: boolean;
 };
 
@@ -86,7 +86,8 @@ function head(file: string): any {
   }
 }
 
-const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
+/** Normalize a reported token count without accepting negative or non-finite values. */
+export const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
 
 /** A claude transcript entry's context: everything the call read, cached or not. Subagents and synthetic entries are not the lead's. */
 function claudeEntry(entry: any): { tokens: number; model: string | null } | null {
@@ -144,6 +145,65 @@ function codexInteractive(payload: any): boolean {
   return source !== 'exec' && !(source && typeof source === 'object' && 'subagent' in source);
 }
 
+/** A parsed rollout record or block: its fields are read, never trusted. */
+type RolloutRecord = { readonly [key: string]: unknown } | null | undefined;
+
+/** Codex injects these user-role messages; developer-role hook text is not human either. */
+function codexHuman(item: RolloutRecord): boolean {
+  if (item?.type !== 'message' || item.role !== 'user') return false;
+  const content = item.content;
+  const text = typeof content === 'string' ? content : Array.isArray(content)
+    ? content.map((block: RolloutRecord) => typeof block?.text === 'string' ? block.text : '').join('\n') : '';
+  return !text.startsWith('# AGENTS.md instructions') && !text.startsWith('<external_codex_apps_open_page>');
+}
+
+function codexSuccessorCall(item: RolloutRecord): boolean {
+  return item?.type === 'function_call' && item.namespace === 'mcp__codex_app' && item.name === 'create_thread' && typeof item.call_id === 'string';
+}
+
+function createdThread(result: RolloutRecord): boolean {
+  const threadId = result?.threadId;
+  return typeof threadId === 'string' && threadId.trim() !== '' && !result?.isError && !result?.error;
+}
+
+function codexThreadCreated(output: unknown): boolean {
+  if (typeof output !== 'string') return false;
+  const result = parse(output);
+  if (!result || result.isError || result.error) return false;
+  if (createdThread(result)) return true;
+  return Array.isArray(result.content) && result.content.some(textBlockCreated);
+}
+
+function textBlockCreated(block: RolloutRecord): boolean {
+  const text = block?.text;
+  return block?.type === 'text' && typeof text === 'string' && createdThread(parse(text));
+}
+
+/** Handover can precede a large tool entry even when the latest token count is in the short tail. */
+function codexHandoverLines(file: string, lines: readonly string[], bytes: number): readonly string[] {
+  const bound = 8 * 1024 * 1024;
+  return bytes < bound && statSync(file).size > bytes ? tail(file, bound) : lines;
+}
+
+/** A successful create_thread result, paired with its call in the already-read tail. */
+function codexHandedOver(lines: readonly string[]): boolean {
+  const pending = new Set<string>();
+  let handedOver = false;
+  for (const line of lines) {
+    const entry = parse(line);
+    if (entry?.type !== 'response_item') continue;
+    const item = entry.payload;
+    if (codexHuman(item)) {
+      pending.clear();
+      handedOver = false;
+    } else if (codexSuccessorCall(item)) pending.add(item.call_id);
+    else if (item?.type === 'function_call_output' && pending.delete(item.call_id)) {
+      if (codexThreadCreated(item.output)) handedOver = true;
+    }
+  }
+  return handedOver;
+}
+
 /** A codex token_count event: the last call's tokens and the window the model reports. */
 function codexEntry(entry: any): { tokens: number; window: number | null } | null {
   const info = entry?.type === 'event_msg' && entry.payload?.type === 'token_count' ? entry.payload.info : null;
@@ -166,7 +226,7 @@ export function readLeadContext(file: string): LeadContext | null {
   let at: string | null = null;
   for (const bytes of [512 * 1024, 8 * 1024 * 1024]) {
     const lines = tail(file, bytes);
-    const handedOver = !codex && claudeHandedOver(lines);
+    const handedOver = codex ? codexHandedOver(codexHandoverLines(file, lines, bytes)) : claudeHandedOver(lines);
     for (let i = lines.length - 1; i >= 0; i -= 1) {
       const entry = parse(lines[i]);
       if (!entry) continue;
@@ -187,7 +247,7 @@ export function readLeadContext(file: string): LeadContext | null {
           context = {
             family: 'codex', session: String(meta.payload?.id ?? path.basename(file, '.jsonl')), cwd: turn?.cwd ?? meta.payload?.cwd ?? null,
             model: typeof turn?.model === 'string' ? turn.model : null, tokens: found.tokens, window: found.window, at,
-            origin: meta.payload?.originator ?? null, interactive: codexInteractive(meta.payload), handedOver: false,
+            origin: meta.payload?.originator ?? null, interactive: codexInteractive(meta.payload), handedOver,
           };
           if (at !== null) return context;
         }

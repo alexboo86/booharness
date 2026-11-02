@@ -13,7 +13,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Harness } from './providers/types.ts';
-import { contractRole, reportContract, type ContractRole, type ReportRole, type TableContract } from './report.ts';
+import { contractRole, reportContract, LESSON_ID, type ContractRole, type ReportRole, type TableContract } from './report.ts';
+export { LESSON_ID } from './report.ts';
 import { readKnowledgePage, routeKnowledgeSections } from '../../bootstrap/knowledge-page-lib.mjs';
 import { renderLessonContext } from '../../bootstrap/lesson-router.mjs';
 import { route as routeSkills } from '../../bootstrap/skill-router.mjs';
@@ -25,9 +26,23 @@ import { MAX_QUESTION_WORDS, SCOUT_CALLERS } from './shared.entry.ts';
 import { renderModulesSection } from './context-modules.ts';
 import { remotePiMissingServers } from './remote-pi-mcp.ts';
 import { checkConfigHealth } from './config-health.ts';
+import { ROLE_POLICY } from './role-policy.ts';
+import { loadConfig } from './config.ts';
+import { readInstallSetting } from './settings/index.ts';
 
 const REPO = new URL('../../../', import.meta.url);
-const SEAT_JEV_TIMEOUT_MS = 5000;
+
+/** Resolve once per brief, before either router runs; never once per lesson. */
+function briefMemorySettings() {
+  const { stateDir } = loadConfig();
+  const enabled = readInstallSetting(stateDir, 'memory.lessons.enabled') as boolean;
+  const maxLessons = readInstallSetting(stateDir, 'memory.lessons.maxCount') as number | null;
+  const knowledge = readInstallSetting(stateDir, 'memory.knowledge.enabled') as boolean;
+  const configuredTimeout = readInstallSetting(stateDir, 'memory.jevTimeoutMs') as number;
+  const timeoutMs = process.env.SEAT_JEV_TIMEOUT_MS ? Number(process.env.SEAT_JEV_TIMEOUT_MS) : configuredTimeout;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error('SEAT_JEV_TIMEOUT_MS must be an integer 1..2147483647');
+  return { lessons: enabled && maxLessons !== 0, maxLessons, knowledge, timeoutMs };
+}
 
 /** One sentence of purpose, then the contract each worker role is held to. */
 export const ROLE_NOTES: Record<ContractRole, string> = {
@@ -113,8 +128,8 @@ const STE_REPORT_LINE = 'The free text of the report follows the `ASD-STE100` ru
  * `steRule` is the STE rule block this turn's message carries: the closing then binds the report's
  * free text to it. A null block keeps the closing byte-identical to a session with no switch.
  */
-export function closing(role: ReportRole, timeoutMs = 30 * 60_000, lessons: readonly string[] = [], steRule: string | null = null, table?: TableContract): string {
-  return `${DUTY[contractRole(role)]}${table ? ` ${TABLE_NOTE}` : ''} ${deadlineNote(timeoutMs)} ${DECISIONS} Final delivery to the lead: English.${steRule ? ` ${STE_REPORT_LINE}` : ''} ${reportContract(role, lessons, table)} ${BANS}`;
+export function closing(role: ReportRole, timeoutMs = 30 * 60_000, lessons: readonly string[] = [], steRule: string | null = null, table?: TableContract, repeatLessons: readonly string[] = []): string {
+  return `${DUTY[contractRole(role)]}${table ? ` ${TABLE_NOTE}` : ''} ${deadlineNote(timeoutMs)} ${DECISIONS} Final delivery to the lead: English.${steRule ? ` ${STE_REPORT_LINE}` : ''} ${reportContract(role, lessons, table, repeatLessons)} ${BANS}`;
 }
 
 // grok's native run_terminal_command splits on whitespace and passes quotes
@@ -132,18 +147,23 @@ const NATIVE_SHELL_NOTES: Record<string, (off: readonly string[]) => string> = {
   },
 };
 
-const READ_ONLY: ReadonlySet<ReportRole> = new Set(['scout', 'critic', 'researcher', 'debater']);
+const readOnlyRole = (role: ReportRole): boolean => ROLE_POLICY[role]?.access === 'read-only';
 
 
 /** What a Pi seat has and how it is meant to be used (task 1436, operator 2026-09-23). */
-function piInstruments(readOnly: boolean, off: readonly string[], remote: boolean, host?: string): string {
+function piInstruments(readOnly: boolean, off: readonly string[], remote: boolean, host?: string, scout = false): string {
   const lines = ['## Your instruments (Pi)', ''];
   // An instrument the seat turned off (task 1452) is not advertised; the
   // retraction section below names the replacement for what the stock text mentions.
   if (!off.includes('codegraph')) lines.push('- `codegraph_explore` is one of your tools: ask it FIRST for how X works, who calls Y, what a change touches. It returns the source with line numbers, so it replaces a grep-and-read loop. `rg` is for a known literal.');
   else lines.push('- `rg` is for a known literal.');
   if (!off.includes('memory')) lines.push('- `memoryctl_memory` is your memory tool: `hot`, then `search` (ids and titles), then `get <id>` for the whole entry; `lessons` with a file path before you judge or edit that file.');
-  lines.push('- rtk is automatic: your bash commands that rtk has a filter for (git, rg, grep, cat, ls, find, tsc, cargo, tests, …) are rewritten to `rtk <cmd>` before they run, so you need not type `rtk`; never use `rtk proxy` or `rtk run` (they filter nothing); for exact bytes, bound the command (`head`, `rg -m`).');
+  if (scout) {
+    // Operator decision #22391: a scout runs without rtk rewriting, so it must bound its own output.
+    lines.push('- rtk is OFF for a scout seat: no `rtk` rewrite — run readers bare and bound your own output (`head` for long reads, `rg -m` for search).');
+  } else {
+    lines.push('- rtk is automatic: your bash commands that rtk has a filter for (git, rg, grep, cat, ls, find, tsc, cargo, tests, …) are rewritten to `rtk <cmd>` before they run, so you need not type `rtk`; never use `rtk proxy` or `rtk run` (they filter nothing); for exact bytes, bound the command (`head`, `rg -m`).');
+  }
   if (readOnly) {
     const readers = ['rg'];
     if (!off.includes('codegraph')) readers.push('the codegraph CLI (callers, callees, impact, node, explore)');
@@ -153,7 +173,7 @@ function piInstruments(readOnly: boolean, off: readonly string[], remote: boolea
     if (remote || host !== undefined) {
       lines.push('- This host cannot read the report of an earlier seat, because the daemon and its dependencies are on a different machine. Put the turn id that you could not read into `notChecked` and continue with the brief.');
     } else {
-      const script = fileURLToPath(new URL('./main.ts', import.meta.url)).replaceAll('\\', '/');
+      const script = fileURLToPath(new URL('./main.ts', import.meta.url)).replaceAll('\\', '/'); // suite-inputs: path only, not a load
       lines.push(`- Read an earlier seat's report with \`node ${quoteShellPath(script, process.platform)} wait <turn>\` (optional \`--json\` last); this is the loaded orch checkout, not your working directory.`);
     }
   } else {
@@ -221,8 +241,22 @@ export function seatContract(): string {
     '### Tree and checks', checks.replace(SEAT_CHECKS_STRIP, ''), '### Product constraints', ...bullets].join('\n\n');
 }
 
-export function codeIntelRules(): string {
+/** Only a Pi scout runs without rtk (#22391): RTK_DISABLED reaches the Pi extension; a native scout's hook still rewrites. */
+function rtkOffScout(role: ReportRole, harness: Harness): boolean {
+  return role === 'scout' && harness === 'pi';
+}
+
+export function codeIntelRules(scout = false): string {
   const contract = readFileSync(new URL('CLAUDE.md', REPO), 'utf8');
+  // Operator decision #22391: a scout runs without rtk rewriting, so the pinned
+  // 'RTK is mandatory' rule is swapped for the scout's own self-bounding guidance.
+  if (scout) {
+    return ['Code intel', 'Blast radius'].map((label) => {
+      const line = contract.split(/\r?\n/).find((entry) => entry.startsWith(`- **${label}**`));
+      if (!line) throw new Error(`CLAUDE.md: missing ${label} rule`);
+      return line;
+    }).concat('- **RTK is off** for a scout seat: no `rtk` rewrite — run readers bare and bound your own output (`head` for long reads, `rg -m` for search).').join('\n');
+  }
   return ['Code intel', 'Blast radius', 'RTK is mandatory'].map((label) => {
     const line = contract.split(/\r?\n/).find((entry) => entry.startsWith(`- **${label}**`));
     if (!line) throw new Error(`CLAUDE.md: missing ${label} rule`);
@@ -388,9 +422,6 @@ export async function codeMapSection(files: string[], cwd: string, explore = cod
   }
 }
 
-/** A memory id as lesson-router.mjs names it: a positive integer or a uuid; the tag below carries only these characters. */
-export const LESSON_ID = /^(?:[1-9][0-9]*|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i;
-
 export type ContextInput = { role: ReportRole; family: string; harness: Harness; brief: string; files: string[]; snapshot?: boolean; timeoutMs?: number; instruments?: Instruments;
   /** The STE rule block (plan 14879 D6), read at each turn: appended once after the closing. Null keeps today's message. */
   steRule?: string | null;
@@ -402,6 +433,8 @@ export type ContextInput = { role: ReportRole; family: string; harness: Harness;
   model?: string;
   /** debater round table (operator #19423): the option list the member picks and votes from. */
   options?: string[];
+  /** Lessons delivered in full to the reviewed author/coauthors. */
+  repeatLessons?: string[];
   /** Test seams, same shape as the real collaborators; production never passes them. */
   lookup?: typeof memoryctl; route?: typeof routeSkills; explore?: typeof codegraphExplore; remoteExplore?: typeof remoteCodegraphExplore };
 
@@ -431,7 +464,7 @@ export function imageSkillOf(names: readonly string[], mapPath: string | URL = S
 }
 
 /** A failed lessons lookup means unknown, never an empty lesson set or a failed worker turn. */
-export async function lessonSection(files: string[], brief: string, role: ReportRole, lookup = memoryctl): Promise<{ text: string; source: string; reason?: string } & LessonDelivery> {
+export async function lessonSection(files: string[], brief: string, role: ReportRole, lookup = memoryctl, routing: { timeoutMs: number; maxLessons: number | null }): Promise<{ text: string; source: string; reason?: string } & LessonDelivery> {
   const sources = [];
   const warnings: string[] = [];
   for (const file of files) {
@@ -447,7 +480,7 @@ export async function lessonSection(files: string[], brief: string, role: Report
   try {
     // The router and its config belong to the daemon checkout, not the seat's older base.
     lessons = sources.length ? await renderLessonContext({ sources, brief, role,
-      repoRoot: fileURLToPath(REPO), timeoutMs: SEAT_JEV_TIMEOUT_MS }) : null;
+      repoRoot: fileURLToPath(REPO), timeoutMs: routing.timeoutMs, maxLessons: routing.maxLessons }) : null;
   } catch (error) {
     const reason = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300);
     checkConfigHealth();
@@ -460,13 +493,35 @@ export async function lessonSection(files: string[], brief: string, role: Report
     ...(warnings.length ? { reason: 'memory-unavailable' } : lessons?.reason ? { reason: lessons.reason } : {}) };
 }
 
-export async function seatContext({ role, family, harness, brief, files, snapshot = false, timeoutMs = 30 * 60_000, instruments = ALL_ON, suppressLessons = false, steRule = null, cwd = fileURLToPath(REPO), remote = false, host, model, options, lookup = memoryctl, route = routeSkills, explore = codegraphExplore, remoteExplore = remoteCodegraphExplore }: ContextInput): Promise<string> {
+async function authorLessonSection(ids: readonly string[], lookup: typeof memoryctl, enabled = true): Promise<string[]> {
+  if (!ids.length || !enabled) return [];
+  const rows = await Promise.all(ids.map(async (id) => {
+    try {
+      const lesson = JSON.parse(await lookup(['get', '--id', id, '--json'])) as { title?: unknown };
+      if (typeof lesson.title !== 'string' || !lesson.title.trim()) throw new Error('missing title');
+      return `- ${id}: ${lesson.title.replace(/\s+/g, ' ').trim()}`;
+    } catch (error) {
+      return `- ${id}: unavailable (${String((error as Error).message).replace(/\s+/g, ' ').slice(0, 200)}); read this lesson before marking a repeat`;
+    }
+  }));
+  return [`## Lessons the author and coauthors received in full\n\n${rows.join('\n')}`];
+}
+
+/** Operator #19248: the designer captures and reads its own visual result; there is no screenshot seat. On this Mac the capture tool is Peekaboo (peekaboo.ts). */
+function visualProofSections(role: ReportRole): string[] {
+  return role === 'designer'
+    ? ['Visual proof: before you report, capture the surface you changed (on this Mac the capture tool is Peekaboo, `peekaboo`) and read the image yourself; a surface you changed but never looked at is not verified.']
+    : [];
+}
+
+export async function seatContext({ role, family, harness, brief, files, snapshot = false, timeoutMs = 30 * 60_000, instruments = ALL_ON, suppressLessons = false, steRule = null, cwd = fileURLToPath(REPO), remote = false, host, model, options, repeatLessons = [], lookup = memoryctl, route = routeSkills, explore = codegraphExplore, remoteExplore = remoteCodegraphExplore }: ContextInput): Promise<string> {
+  const memory = briefMemorySettings();
   const paths = [...new Set(files)];
-  const readOnly = READ_ONLY.has(role);
+  const readOnly = readOnlyRole(role);
   const off = instrumentsOff(instruments);
   const table = Array.isArray(options) && options.length ? { options } : undefined;
   // A reading role cannot act on "this file broke this way before": no lesson bodies for it.
-  const lessonFiles = readOnly || suppressLessons ? [] : paths;
+  const lessonFiles = readOnly || suppressLessons || !memory.lessons ? [] : paths;
   // Started now so its latency overlaps the lesson and skill routers. A reading role gets no map.
   const codeMap = readOnly ? null : codeMapSection(paths, cwd, explore, host, remoteExplore);
   const sections = [
@@ -474,6 +529,7 @@ export async function seatContext({ role, family, harness, brief, files, snapsho
     `Role (${role}): ${ROLE_NOTES[contractRole(role)]}${table ? ` ${TABLE_NOTE}` : ''}`,
   ];
   if (!readOnly) sections.push('A git worktree you add for comparison is removed with `git worktree remove --force <path>` before your report.');
+  sections.push(...visualProofSections(role));
   const missingServers = host === undefined ? [] : remotePiMissingServers(role);
   if (missingServers.length) {
     sections.push(`This host has no MCP server ${missingServers.join(', ')}. For production data, tell the lead to use a seat on the Mac.`);
@@ -484,23 +540,11 @@ export async function seatContext({ role, family, harness, brief, files, snapsho
   }
   if (snapshot) sections.push('## Your checkout\n\nThis worktree is the lead\'s working tree as one commit on top of its HEAD: the change you are given is exactly `git diff HEAD^`, uncommitted and new files included.');
   let knowledgeRouter = 'none';
-  if (paths.length) {
-    if (readOnly) sections.push(`## Files that matter\n\n${paths.map((file) => `- ${file}`).join('\n')}`);
-    const routing = JSON.parse(readFileSync(new URL('docs/agent/domain-routing.generated.json', REPO), 'utf8'));
-    const pageFor = (domain: string) => readKnowledgePage(domain, (path: string) => {
-      try {
-        return readFileSync(new URL(path, REPO), 'utf8');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-        throw error;
-      }
-    });
-    // The map render decides the sections, never Jev (operator decision #12450), so the tag's knowledgeReason is always none.
-    const knowledge = routeKnowledgeSections({ files: paths, map: routing, pageFor });
+  if (readOnly && paths.length) sections.push(`## Files that matter\n\n${paths.map((file) => `- ${file}`).join('\n')}`);
+  if (memory.knowledge) {
+    const knowledge = briefKnowledge(paths);
     knowledgeRouter = knowledge.source;
     sections.push(...knowledge.sections);
-  } else {
-    sections.push('## Knowledge: none delivered\n\nThe brief named no files, so no knowledge page was delivered. The pages are `.agents/domains/domain-<name>/knowledge.md`, one per domain: read the one covering your subject BEFORE forming a hypothesis.');
   }
   const modules = renderModulesSection(fileURLToPath(REPO), paths);
   if (modules) sections.push(modules);
@@ -509,27 +553,28 @@ export async function seatContext({ role, family, harness, brief, files, snapsho
   let lessonReason = suppressLessons ? 'stand-no-lessons' : 'none';
   const delivered: LessonDelivery = { full: [], indexed: [] };
   if (lessonFiles.length) {
-    const lessons = await lessonSection(lessonFiles, brief, role, lookup);
+    const lessons = await lessonSection(lessonFiles, brief, role, lookup, memory);
     lessonRouter = lessons.source;
     lessonReason = lessons.reason ?? 'none';
     delivered.full = lessons.full;
     delivered.indexed = lessons.indexed;
     sections.push(lessons.text);
   }
+  sections.push(...await authorLessonSection(repeatLessons, lookup, memory.lessons));
   if (codeMap) sections.push(await codeMap);
   // A native CLI (claude, glm) loads the project CLAUDE.md itself; sending the slice again would only duplicate it.
   if (harness !== 'native') sections.push(`## Seat contract\n\n${seatContract()}`);
-  sections.push(`## Code intel\n\n${codeIntelRules()}`);
+  sections.push(`## Code intel\n\n${codeIntelRules(rtkOffScout(role, harness))}`);
   if (off.length) sections.push(instrumentsOffSection(off));
   if (harness === 'native' && NATIVE_SHELL_NOTES[family]) sections.push(NATIVE_SHELL_NOTES[family](off));
-  if (harness === 'pi') sections.push(piInstruments(readOnly, off, remote, host));
+  if (harness === 'pi') sections.push(piInstruments(readOnly, off, remote, host, role === 'scout'));
   // The role's own skills (the skill map's roleDefaults) are part of the brief, inlined: a seat that
   // was only told to read one often did not (task 1436). The routed rest are listed with their path,
   // and the board lights each one the seat reads.
   let routed: Awaited<ReturnType<typeof routeSkills>>;
   try {
     // The imported router defaults to its own (daemon) checkout, never cwd.
-    routed = await route({ role, files: paths, brief, timeoutMs: SEAT_JEV_TIMEOUT_MS });
+    routed = await route({ role, files: paths, brief, timeoutMs: memory.timeoutMs });
   } catch (error) {
     const reason = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300);
     checkConfigHealth();
@@ -566,8 +611,23 @@ export async function seatContext({ role, family, harness, brief, files, snapsho
   sections[0] += `\n<!-- orch-skills required=${required.join(',')} listed=${listed.map(({ name }: { name: string }) => name).join(',')} router=${skillRouter} lessons=${lessonRouter} knowledge=${knowledgeRouter} skillReason=${skillReason} lessonReason=${lessonReason} knowledgeReason=none model=${typeof skillModel === 'string' && /^[a-zA-Z0-9._-]+$/.test(skillModel) ? skillModel : 'null'}${addedSkills.length ? ` added=${addedSkills.filter((name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)).join(',')}` : ''} -->`;
   // Which lessons this context delivered (seats.ts logs them per turn and holds the report to the full ones).
   sections[0] += `\n<!-- orch-lessons full=${delivered.full.join(',')} indexed=${delivered.indexed.join(',')} -->`;
-  sections.push(`<!-- brief:start -->${brief}<!-- brief:end -->`, closing(role, timeoutMs, delivered.full, steRule, table));
+  sections.push(`<!-- brief:start -->${brief}<!-- brief:end -->`, closing(role, timeoutMs, delivered.full, steRule, table, repeatLessons));
   // The STE rule block (plan 14879 D6), appended once; a null block adds no line at all.
   if (steRule) sections.push(steRule);
   return `${sections.join('\n\n')}\n`;
+}
+
+function briefKnowledge(paths: string[]) {
+  if (!paths.length) return { source: 'none', sections: ['## Knowledge: none delivered\n\nThe brief named no files, so no knowledge page was delivered. The pages are `.agents/domains/domain-<name>/knowledge.md`, one per domain: read the one covering your subject BEFORE forming a hypothesis.'] };
+  const routing = JSON.parse(readFileSync(new URL('docs/agent/domain-routing.generated.json', REPO), 'utf8'));
+  const pageFor = (domain: string) => readKnowledgePage(domain, (path: string) => {
+    try {
+      return readFileSync(new URL(path, REPO), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  });
+  // The map render decides the sections, never Jev (operator decision #12450).
+  return routeKnowledgeSections({ files: paths, map: routing, pageFor });
 }

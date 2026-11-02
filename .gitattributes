@@ -28,3 +28,4 @@
 *.dmg   binary
 *.bin   binary
 *.pem   binary
+ops/orchestrator/src/settings/categories/index.ts merge=union

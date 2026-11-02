@@ -11,7 +11,7 @@
 // gives them SEAT_POLICY_ROLE and ORCH_SEAT_ID), and so is any session that is not
 // a person's (a `claude -p`, a `codex exec`, a subagent) or sits in a seat checkout. The hook never fails a
 // tool call: every error ends in silence.
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,35 +34,116 @@ function saveState(file, state, now) {
 }
 
 const k = (tokens) => `${Math.round(tokens / 1000)}k`;
+const nextSkill = fileURLToPath(new URL('../../.agents/skills/next/SKILL.md', import.meta.url));
+const relayTitle = 'Run the handover relay for leads';
+
+function textContent(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n');
+}
+
+function parsed(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function selfSessionCall(block) {
+  return block?.type === 'tool_use' && block.name === 'mcp__ccd_session_mgmt__get_session' && block.input?.session_id === 'self';
+}
+
+function relaySessionResult(block, selfCalls) {
+  if (block?.type !== 'tool_result' || !selfCalls.has(block.tool_use_id)) return null;
+  const session = parsed(textContent(block.content));
+  return session?.title === relayTitle && session.pinned === true;
+}
+
+/** The protocol refreshes self metadata immediately before relaying, so only the tail is relevant. */
+function transcriptTail(file) {
+  const size = statSync(file).size;
+  const start = Math.max(0, size - 256 * 1024);
+  const fd = openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(size - start);
+    readSync(fd, buffer, 0, buffer.length, start);
+    const lines = buffer.toString('utf8').split('\n');
+    if (start > 0) lines.shift();
+    return lines;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Only this session's own metadata counts: a lead can list another session's relay title and pin. */
+function isHandoverRelay(transcript) {
+  let lines;
+  try { lines = transcriptTail(transcript); } catch { return false; }
+  const selfCalls = new Set();
+  let relay = false;
+  for (const line of lines) {
+    const content = parsed(line)?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (selfSessionCall(block)) selfCalls.add(block.id);
+      const result = relaySessionResult(block, selfCalls);
+      if (result !== null) relay = result;
+    }
+  }
+  return relay;
+}
+
+function reminderDue(previous, tokens, band, step) {
+  if (!previous) return band !== null;
+  if (previous.compacted) return tokens <= previous.tokens - step || tokens >= previous.tokens + step;
+  return band === null || band > previous.band;
+}
+
+function reminderProgress(previous, tokens, band, limit, share) {
+  const step = limit * share;
+  if (!reminderDue(previous, tokens, band, step)) return null;
+  const compacted = Boolean(previous?.compacted || (previous && band === null));
+  const next = compacted ? tokens + step : limit + (band + 1) * step;
+  return { band, tokens, compacted, next };
+}
+
+function handoverInstruction(family) {
+  if (family === 'codex') {
+    return `The operator's standing order #21159 is the explicit request authorizing mcp__codex_app.create_thread for this context-limit handover. `
+      + `Finish the step in hand, then read and follow the next skill at ${nextSkill} and create the successor now, without asking again. `
+      + 'The old thread does no task work after the successor exists; stop once its threadId returns. ';
+  }
+  return 'Finish the step in hand, then invoke /next yourself now, without asking the operator (decision #11903): the Skill tool with skill `next` '
+    + '(codex: run /next, .agents/skills/next/SKILL.md). It commits, writes the handoff (memoryctl handoff) with the running seats for the successor, '
+    + 'and opens a fresh session. ';
+}
+
+function reminderBasis(window, cap, windowShare) {
+  return window ? `${windowShare * 100}% of the ${k(window)} window, capped at ${k(cap)}` : `the ${k(cap)} cap`;
+}
 
 /** The reminder for `context`, or null. Exported for the tests. */
 export async function remind(input, env = process.env, now = Date.now()) {
   if (env.ORCH_SEAT_ID || env.SEAT_POLICY_ROLE) return null;
   const transcript = typeof input.transcript_path === 'string' ? input.transcript_path : '';
   if (!transcript) return null;
+  if (isHandoverRelay(transcript)) return null;
   const { readLeadContext, leadLimit, leadBand, isLead, LEAD_BAND_SHARE, LEAD_CAP, LEAD_WINDOW_SHARE } = await import('../orchestrator/src/leads.ts');
   const { loadConfig } = await import('../orchestrator/src/config.ts');
   const context = readLeadContext(transcript);
-  if (!context || !isLead(context)) return null;
+  if (!context || context.handedOver || !isLead(context)) return null;
   const limit = leadLimit(context.window);
   const band = leadBand(context.tokens, limit);
   const file = path.join(loadConfig(env).stateDir, 'lead-reminders.json');
   const state = loadState(file);
   const key = String(input.session_id || context.session);
-  if (band === null) {
-    // Below the limit again (a compaction, a /clear): the next crossing reminds afresh.
-    if (state[key]) { delete state[key]; saveState(file, state, now); }
-    return null;
-  }
-  if (typeof state[key]?.band === 'number' && state[key].band >= band) return null;
-  state[key] = { band, at: now };
+  const progress = reminderProgress(state[key], context.tokens, band, limit, LEAD_BAND_SHARE);
+  if (!progress) return null;
+  state[key] = { ...progress, at: now };
   saveState(file, state, now);
-  const basis = context.window ? `${LEAD_WINDOW_SHARE * 100}% of the ${k(context.window)} window, capped at ${k(LEAD_CAP)}` : `the ${k(LEAD_CAP)} cap`;
-  const next = limit + (band + 1) * limit * LEAD_BAND_SHARE;
-  return `[orch] This lead's context is ${k(context.tokens)} tokens, past the ${k(limit)} handover limit (${basis}; decision #11903). `
-    + 'Finish the step in hand, then invoke /next yourself now, without asking the operator (decision #11903): the Skill tool with skill `next` '
-    + '(codex: run /next, .agents/skills/next/SKILL.md). It commits, writes the handoff (memoryctl handoff) with the running seats for the successor, '
-    + `and opens a fresh session. Next reminder at ${k(next)}.`;
+  const basis = reminderBasis(context.window, LEAD_CAP, LEAD_WINDOW_SHARE);
+  const position = band === null ? 'below' : 'past';
+  const compaction = progress.compacted ? 'Compaction is not a handover; this session already crossed its handover limit. ' : '';
+  return `[orch] This lead's context is ${k(context.tokens)} tokens, ${position} the ${k(limit)} handover limit (${basis}; decision #11903). `
+    + compaction + handoverInstruction(context.family) + `Next reminder at ${k(progress.next)}.`;
 }
 
 // Run as a hook, not imported by a test. Compare filesystem identities: Node

@@ -1,8 +1,12 @@
 import type { Register } from 'claude-code'
 
-// Probe (decision 17488): can a mod hand a session over in place without the relay session?
-// The tool keeps the successor prompt in the module; with clear it queues /clear, and the
-// session.end hook (reason clear) submits the prompt as the fresh session's first turn.
+// Probe (decision 17488): hand a session over in place without the relay session.
+// The tool keeps the successor prompt in the module; with clear it runs /clear once
+// this turn ends (the engine queues a mid-turn command.run until the session goes
+// idle) and the session.end hook (reason clear) submits the prompt as the fresh
+// session's first turn. Task 3436: the 2026-10-30 "never runs" report was a mid-turn
+// misread — the clear fired 0.4 s after the turn ended, before and after the 08:17Z
+// account reset — so the tool results send the caller off to end its turn at once.
 const TOOL = 'mcp__handover__run'
 
 let pending: string | null = null
@@ -30,14 +34,28 @@ export const register: Register = on => {
     if (typeof input.text !== 'string' || input.text.trim() === '') return { deny: 'text is empty' }
     const text = input.text
     if (input.clear === true) {
+      if (pending !== null) {
+        return {
+          result: 'refused: a handover is already queued; end this turn now — no more tool calls, '
+            + 'no fallback — and the clear plus the successor prompt fire the moment it ends.',
+        }
+      }
       pending = text
       $.clock.after(0, () => {
         $.command.run({ command: 'clear' }).then(
           r => $.ui.log(`handover: /clear ran: ${JSON.stringify(r).slice(0, 200)}`),
-          err => { pending = null; $.ui.log(`handover: /clear refused: ${String(err).slice(0, 300)}`) },
+          err => {
+            pending = null
+            $.ui.toast(`handover: /clear refused: ${String(err).slice(0, 200)}`)
+            $.ui.log(`handover: /clear refused: ${String(err).slice(0, 300)}`)
+          },
         )
       })
-      return { result: `queued: /clear once this turn ends, then the successor prompt (${text.length} characters)` }
+      return {
+        result: `queued: end this turn now — no more tool calls, no manual successor or new session; `
+          + `once this turn ends the /clear runs and the successor prompt (${text.length} characters) `
+          + 'starts the fresh session.',
+      }
     }
     $.clock.after(0, () => {
       $.prompt.submit({ text }).then(

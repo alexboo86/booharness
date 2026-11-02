@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readHarnessConfig, harnessLabel, harnessPaths, harnessTaskName, embedUrlRefusal } from '../../scripts/lib/harness-config.mjs';
 import { importPinnedEmbedModel, readEmbedImportPin } from '../../scripts/lib/import-embed-model.mjs';
+import { resolveServiceNodeBin } from '../../scripts/lib/memory-installer.mjs';
 import { isMain } from '../../scripts/lib/is-main.mjs';
 import { forwardLaunchdLabel, forwardSshArgs, workerPlistPath } from '../../scripts/lib/memory-forward.mjs';
 import { currentUserSid, renderTaskXml, queryTask, endTask, createTask, runTask, deleteTask } from '../bootstrap/win-task.mjs';
@@ -264,6 +265,34 @@ const localEmbedUrl = (value) => {
   }
 };
 
+// A Homebrew execPath is a version-specific Cellar keg (task 3427): brew
+// removing that version leaves the unit it was baked into unable to start.
+// The last resort for the interpreter is the stable brew spelling — or a
+// refusal naming the override, never the keg. The `refuse` callback lets the
+// caller exit with its own prefix.
+function stableNodeBin(refuse) {
+  const resolution = resolveServiceNodeBin(process.execPath);
+  if (resolution.refusal !== undefined) {
+    refuse(`no version-stable node for the unit: ${resolution.refusal}`);
+  }
+  return resolution.nodeBin;
+}
+
+// An explicit --node decides the interpreter on its own: the automatic
+// resolution below can refuse (a keg execPath with no stable spelling), and
+// that refusal must not veto an interpreter the operator named themselves,
+// so the resolution runs only when --node is absent (task 3427 correction).
+// `uninstalling` skips the resolution entirely: --uninstall renders no unit,
+// so its last resort is the plain execPath, as before task 3427 (correction 4:
+// the eager resolution made a keg with no stable spell exit 1 before the
+// uninstall branch ever ran). Top level, and fed by the caller, so install()'s
+// own branching does not grow with the selection it delegates here.
+function selectNodeBin({ explicit, envNode, localNode, execPath, resolveStable, uninstalling = false }) {
+  if (explicit != null) return explicit;
+  if (process.platform !== 'darwin') return execPath;
+  return envNode || (existsSync(localNode) ? localNode : (uninstalling ? execPath : resolveStable()));
+}
+
 // C2 will call this after ending a forward task. A reverse forward has no local
 // listening port: only this executable and the exact rendered line identify it.
 export async function stopForward(commandLine) {
@@ -325,10 +354,20 @@ function savedEmbedAddress() {
 }
 // process.execPath resolves symlinks. Keep the bootstrap's stable invocation
 // path, or the local-bin link, so a runtime upgrade does not strand launchd.
+// A Homebrew execPath is a version-specific Cellar keg (task 3427); the last
+// resort resolves the stable brew spelling in stableNodeBin below. The donor
+// install-memory treats what we pass as an explicit MEMORYCTL_NODE_BIN, so
+// this thin half must resolve the stable spelling itself — except for
+// --uninstall, which renders no unit and resolves nothing.
 const localNode = path.join(HOME, '.local', 'bin', 'node');
-const nodeBin = opt('--node', process.platform === 'darwin'
-  ? process.env.MEMORYCTL_NODE_BIN || (existsSync(localNode) ? localNode : process.execPath)
-  : process.execPath);
+const nodeBin = selectNodeBin({
+  explicit: opt('--node', null),
+  envNode: process.env.MEMORYCTL_NODE_BIN,
+  localNode,
+  execPath: process.execPath,
+  uninstalling: flag('--uninstall'),
+  resolveStable: () => stableNodeBin(fail),
+});
 
 if (!['darwin', 'win32'].includes(process.platform)) fail('this installer loads a launchd unit; macOS only');
 if (!/^\d{2,5}$/.test(port)) fail(`--port expects a number, got '${port}'`);

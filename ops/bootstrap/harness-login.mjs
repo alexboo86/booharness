@@ -14,7 +14,18 @@ const USAGE = 'usage: harness-login <family> [--quota] [--force]';
 const secretScript = fileURLToPath(new URL('./harness-secret.mjs', import.meta.url));
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
-function terminalCommand(login) {
+const CLAUDE_UNPROVED = 'Claude login is unknown (Keychain is not read); refusing a second login that may rotate the current token. Use --force only to sign in again intentionally.';
+
+/** A login that cannot start; `code` names why, without any credential content. */
+export class LoginRefused extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'LoginRefused';
+    this.code = code;
+  }
+}
+
+function loginWords(login) {
   const words = login.command.split(' ');
   // This is a script, not a PATH alias. Resolve it relative to this module so
   // an arbitrary cwd (or a checkout path containing spaces) works as well.
@@ -24,8 +35,7 @@ function terminalCommand(login) {
     try {
       words.splice(0, 1, process.execPath, pinnedPi());
     } catch {
-      console.error('pinned Pi CLI not found; run npm ci in ops/pi-runtime before logging in.');
-      return null;
+      throw new LoginRefused('cli-missing', 'pinned Pi CLI not found; run npm ci in ops/pi-runtime before logging in.');
     }
     // Pi 1.3.0 has no startup /login flag; positional text is a model prompt.
     // Keep the provider instruction in scrollback instead of clearing it on
@@ -34,10 +44,47 @@ function terminalCommand(login) {
   } else {
     const cli = resolveOnPath(words[0], canonicalSearchDirs());
     if (!cli) {
-      console.error(`${words[0]} login CLI not found in canonical directories; install it before logging in.`);
-      return null;
+      throw new LoginRefused('cli-missing', `${words[0]} login CLI not found in canonical directories; install it before logging in.`);
     }
     words[0] = cli;
+  }
+  return words;
+}
+
+function claudeLoginUnproved(family) {
+  if (process.platform !== 'darwin' || family !== 'claude') return false;
+  const home = os.homedir();
+  const proof = checkLogin(family, { home, orchStateDir: path.join(home, '.local', 'state', 'orch') });
+  // An unknown file proof cannot disprove the running Claude Code session or
+  // its Keychain login. A second login rotates that token (decision 10650).
+  return proof.state === 'unknown';
+}
+
+/**
+ * The login argv and environment of one family, without opening a terminal
+ * (task 3459 A2). Only kinds pi and cli: a key family signs in through
+ * harness-secret, never through a terminal a page drives.
+ */
+export function loginCommand(family, { force = false } = {}) {
+  const logins = loadFamilyLogins();
+  if (!Object.hasOwn(logins, family)) throw new LoginRefused('unknown', 'unknown login');
+  const { login: { kind }, terminalLogin } = logins[family];
+  if (kind !== 'pi' && kind !== 'cli') throw new LoginRefused('key-family', `${family} signs in with an API key, not a terminal login`);
+  if (!force && claudeLoginUnproved(family)) throw new LoginRefused('login-unproved', CLAUDE_UNPROVED);
+  const argv = loginWords(terminalLogin);
+  // Slash commands leave no conversation worth keeping: no Pi session file.
+  if (kind === 'pi') argv.push('--no-session');
+  return { family, kind, argv, env: {}, ...(terminalLogin.provider ? { provider: terminalLogin.provider } : {}) };
+}
+
+function terminalCommand(login) {
+  let words;
+  try {
+    words = loginWords(login);
+  } catch (error) {
+    if (!(error instanceof LoginRefused)) throw error;
+    console.error(error.message);
+    return null;
   }
   if (process.platform === 'win32') {
     const literal = (word) => `'${word.replaceAll("'", "''")}'`;
@@ -83,15 +130,9 @@ function main() {
     console.error('no terminal login descriptor');
     return 1;
   }
-  if (process.platform === 'darwin' && family === 'claude' && !flags.includes('--force')) {
-    const home = os.homedir();
-    const proof = checkLogin(family, { home, orchStateDir: path.join(home, '.local', 'state', 'orch') });
-    // An unknown file proof cannot disprove the running Claude Code session or
-    // its Keychain login. A second login rotates that token (decision 10650).
-    if (proof.state === 'unknown') {
-      console.error('Claude login is unknown (Keychain is not read); refusing a second login that may rotate the current token. Use --force only to sign in again intentionally.');
-      return 1;
-    }
+  if (!flags.includes('--force') && claudeLoginUnproved(family)) {
+    console.error(CLAUDE_UNPROVED);
+    return 1;
   }
   const command = terminalCommand(login);
   if (!command) return 1;

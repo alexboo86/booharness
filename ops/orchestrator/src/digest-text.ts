@@ -22,22 +22,37 @@ export function modelCallFlags(raw: unknown, harness: unknown, family: unknown):
     : [];
 }
 
-/**
- * One flag per done-report criterion that nothing runnable proves: no check at all, a check that
- * names no command in checks (task 1641). Reported failures are flagged by reportOf.
- */
-export function criteriaFlags(report: Record<string, unknown> | null | undefined): string[] {
-  if (!report || report.status !== 'done' || !Array.isArray(report.criteria)) return [];
-  const checks = (report.checks ?? []) as { command: string }[];
+/** A designer's capture-read criterion names the capture or the Mac's capture tool (task 3454). */
+const CAPTURE_READ = /capture|peekaboo/i;
+
+/** Task 3454 (operator #19248): a done designer report must carry a capture-read criterion. A capture criterion with no runnable check is flagged by criterionCheckFlags, not twice. */
+function captureReadFlags(report: Record<string, unknown>, role?: string): string[] {
+  if (role !== 'designer') return [];
+  const read = (report.criteria as CriterionEntry[]).some((entry) => CAPTURE_READ.test(`${String(entry?.criterion ?? '')} ${String(entry?.check ?? '')}`));
+  return read ? [] : ['designer report: no capture read criterion — capture the changed surface (Peekaboo on this Mac) and read the image yourself before reporting'];
+}
+
+/** One flag per criterion that nothing runnable proves: no check at all, a check that names no command in checks (task 1641). */
+function criterionCheckFlags(criteria: CriterionEntry[], checks: { command: string }[]): string[] {
   const flags: string[] = [];
-  for (const [i, entry] of (report.criteria as CriterionEntry[]).entries()) {
+  for (const [i, entry] of criteria.entries()) {
     const label = `criterion ${i + 1} (${String(entry.criterion).slice(0, 80)})`;
     if (entry.check === null || entry.check === undefined) { flags.push(`${label}: no runnable check — ${String(entry.reason ?? 'no reason given')}`); continue; }
     const named = String(entry.check);
     const hit = checks.find((check) => checkCommand(check.command) === checkCommand(named) || check.command.includes(named));
-    if (!hit) { flags.push(`${label}: check names no command in checks: ${named}`); continue; }
+    if (!hit) flags.push(`${label}: check names no command in checks: ${named}`);
   }
   return flags;
+}
+
+/**
+ * The done-report criterion flags: nothing runnable proves them (task 1641), plus the designer's
+ * missing capture read (task 3454). Reported failures are flagged by reportOf.
+ */
+export function criteriaFlags(report: Record<string, unknown> | null | undefined, role?: string): string[] {
+  if (!report || report.status !== 'done' || !Array.isArray(report.criteria)) return [];
+  const checks = (report.checks ?? []) as { command: string }[];
+  return [...captureReadFlags(report, role), ...criterionCheckFlags(report.criteria as CriterionEntry[], checks)];
 }
 
 function languageLine(language: NonNullable<Digest['language']>): string {
@@ -96,7 +111,7 @@ export function formatDigest(digest: Digest, options: { inlineTable?: boolean } 
   if (report.verdict !== undefined) rows.push(`verdict: ${item(report.verdict)}${advisory ? ' (advisory; suggestions only)' : ''}`);
   const proposals = (report.memory ?? []) as { op: string; id?: number; title: string; reason: string; body: string; links?: Record<string, unknown> }[];
   if (proposals.length) {
-    rows.push(`memory proposals: ${proposals.length} (lessons require lead capture: node scripts/memory/capture-lesson.mjs; other proposals require lead memory_apply ${item(digest.turn)})`);
+    rows.push(`memory proposals: ${proposals.length} (lessons require lead capture: node scripts/memory/capture-lesson.mjs <domain> "<title>" --anchor <file:symbol> --trigger "<when>" --rule "<rule>" --why "<root cause>" --evidence "<commit/test>"; other proposals require lead memory_apply ${item(digest.turn)})`);
     for (const application of digest.lessonApplications ?? []) {
       rows.push(`lesson[${application.index}]: ${item(application.title)} · ${item(application.outcome)}`);
     }

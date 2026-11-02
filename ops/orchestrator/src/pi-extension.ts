@@ -21,7 +21,8 @@
 // The Pi SDK is installed with the seat harness, not in the orchestrator's build dependencies.
 // Type only the small API surface used here so checking orch never depends on a global Pi install.
 import { refuseReadOnly, bannedProgram, refuseSkillInstall, SKILL_INSTALL_REFUSAL, refuseBroadSearch, refuseStash, STASH_REFUSAL, SEAT_BASH_BUILD_TIMEOUT_SECONDS, SEAT_BASH_TIMEOUT_SECONDS, seatBashTimeoutSeconds } from './seat-guard.ts';
-import { hasWorktree, landable, pathInWriteScope } from './seats-defs.ts';
+import { hasWorktree, landable } from './seats-defs.ts';
+import { mutatingTargets, readWriteScope, writeScopeBlock } from './shared.entry.ts';
 import { instrumentBan, parseOffEnv, PI_DIRECT_TOOLS, refuseTool } from './shared.entry.ts';
 import { request as httpRequest } from 'node:http';
 import { chmodSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
@@ -30,6 +31,7 @@ import os from 'node:os';
 import { SCOUT_TOOL } from './shared.entry.ts';
 import { planCheck } from './check-verify.ts';
 import { stableJson } from './watch.ts';
+import { buildTable, mask, DEFAULT_PATTERNS, type VeilMaskTable } from './secrets-veil-mask.mjs';
 
 type SeatToolExecute = (id: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<{
   content: { type: string; text?: string }[]; details?: unknown;
@@ -72,66 +74,28 @@ function fusedBash(toolName: string, input: unknown): { command?: unknown; timeo
   return thenRun && typeof thenRun === 'object' ? thenRun : undefined;
 }
 
-/** Repo-relative target, or null when the path leaves the seat checkout. */
-function scopeRelative(raw: string, cwd = process.cwd()): string | null {
-  if (!raw || raw.startsWith('~') || raw.includes('\0')) return null;
-  const abs = path.resolve(cwd, raw);
-  const rel = path.relative(cwd, abs);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  return rel.split(path.sep).join('/');
+/** Stand anchors are opaque tokens owned by hashline's private session registry,
+ *  not encoded paths. Only its anchor-only editors may bypass missing targets. */
+function opaqueHashlineMutation(toolName: string, standArm: string | undefined): boolean {
+  if (standArm !== 'hashline-edit-451' && standArm !== 'hashline-edit-500') return false;
+  return toolName === 'insert' || toolName === 'replace'
+    || (standArm === 'hashline-edit-500' && toolName === 'replace_within');
 }
 
-function patchFileTargets(text: string): string[] {
-  const found: string[] = [];
-  for (const match of text.matchAll(/^\*\*\* (?:Add|Update|Delete) File: ([^\r\n]+)/gm)) found.push(match[1].trim());
-  for (const match of text.matchAll(/^\*\*\* Move to: ([^\r\n]+)/gm)) found.push(match[1].trim());
-  for (const match of text.matchAll(/^diff --git a\/(\S+) b\/(\S+)/gm)) {
-    if (match[1] !== '/dev/null') found.push(match[1]);
-    if (match[2] !== '/dev/null') found.push(match[2]);
-  }
-  return found.map((file) => file.replace(/^['"]|['"]$/g, ''));
+function mutationGuard(scope: readonly string[] | 'unreadable' | undefined, readOnly: boolean, role: string) {
+  const worktree = process.cwd();
+  const guarded = !readOnly && hasWorktree(role);
+  const standArm = process.env.ORCH_SEAT_STAND_ARM;
+  return (toolName: string, input: unknown) => {
+    if (!MUTATING_TOOLS.has(toolName)) return undefined;
+    if (scope === undefined) {
+      if (!guarded) return undefined;
+      if (!mutatingTargets(toolName, input).length && opaqueHashlineMutation(toolName, standArm)) return undefined;
+    }
+    return writeScopeBlock(toolName, input, scope, worktree);
+  };
 }
 
-const MUTATING_PATH_KEYS = ['path', 'file_path', 'filePath', 'from', 'to', 'source', 'destination', 'src', 'dest', 'old_path', 'new_path'];
-
-/** Paths a mutating call names. apply_patch also reads patch headers; other tools do not scan file text. */
-function mutatingTargets(toolName: string, input: unknown): string[] {
-  const obj = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-  const direct = MUTATING_PATH_KEYS.flatMap((key) => typeof obj[key] === 'string' ? [obj[key] as string] : []);
-  if (toolName !== 'apply_patch') return direct;
-  const blobs = [obj.patch, obj.input, obj.diff, typeof input === 'string' ? input : undefined];
-  return [...direct, ...blobs.filter((value): value is string => typeof value === 'string').flatMap(patchFileTargets)];
-}
-
-function readWriteScope(raw: string | undefined): readonly string[] | undefined | 'unreadable' {
-  if (raw === undefined || raw === '') return undefined;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) return 'unreadable';
-    return parsed;
-  } catch {
-    return 'unreadable';
-  }
-}
-
-/** Block a mutating tool whose target is outside the seat write scope. Bash is not in MUTATING_TOOLS. */
-function writeScopeBlock(toolName: string, input: unknown, scope: readonly string[] | 'unreadable' | undefined): { block: true; reason: string } | undefined {
-  if (scope === undefined || !MUTATING_TOOLS.has(toolName)) return undefined;
-  if (scope === 'unreadable') {
-    return { block: true, reason: 'write scope is set but unreadable; no mutating tool may run until the seat is restarted with a scope list.' };
-  }
-  const named = scope.join(', ');
-  const targets = mutatingTargets(toolName, input);
-  if (!targets.length) {
-    return { block: true, reason: `write scope blocks ${toolName}: the call names no target path. Scope: ${named}.` };
-  }
-  const outside = targets.filter((file) => {
-    const rel = scopeRelative(file);
-    return rel === null || !pathInWriteScope(rel, scope);
-  });
-  if (!outside.length) return undefined;
-  return { block: true, reason: `write scope blocks ${toolName} outside the seat scope (${named}): ${outside.join(', ')}` };
-}
 /** Names the brief's check, not a suite; tests are back in full (operator #14235). */
 const VERIFY_LOOP_MESSAGE = 'You changed files and ran no check since your last edit; run the check your brief names, then finish with your complete final report, including every finding and changed file, not a summary.';
 
@@ -228,7 +192,159 @@ async function betterTool(commandText: string): Promise<string | null> {
   }
 }
 
+/** Task 3459 L3: a supervised lead's tool results are masked before its model reads them. The
+ *  mask is the vendored secrets-veil mod's (ops/claude-mods/secrets-veil/src/mask.ts, reused
+ *  through secrets-veil-mask.mjs — never copied): named vendor values, shape patterns and
+ *  high-entropy tokens. The interactive copy question is not ported; a lead that needs a raw
+ *  value is told the result is masked.
+ */
+/** The mod's 21 vendor names (register.ts readNamed). A deployment's own variable names cannot
+ *  be listed in a public mod, so orch's own tokens rely on the pattern and entropy layers. */
+const VEIL_ENV_NAMES = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'MISTRAL_API_KEY', 'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'HF_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'GITLAB_TOKEN', 'NPM_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AZURE_OPENAI_API_KEY', 'STRIPE_SECRET_KEY', 'SLACK_BOT_TOKEN', 'VERCEL_TOKEN', 'CLOUDFLARE_API_TOKEN', 'OP_SERVICE_ACCOUNT_TOKEN'] as const;
+/** The mod's minimum named value length (register.ts MIN_NAMED_VALUE_LENGTH). */
+const VEIL_MIN_NAMED_VALUE_LENGTH = 8;
+/** The mod's own caps (register.ts MAX_STRING_CHARS / MAX_MASK_CHARS / MAX_MASK_MS): the veil
+ *  keeps the same safety envelope — an oversize or overlong result is withheld, not passed. */
+const VEIL_MAX_STRING_CHARS = 1_000_000;
+const VEIL_MAX_MASK_CHARS = 8_000_000;
+const VEIL_MAX_MASK_MS = 4_000;
+/** The mod's WITHHELD text (register.ts): the refusal the model reads instead of a raw result. */
+const VEIL_WITHHELD = 'secrets-veil could not mask this result, so it is withheld rather than shown unmasked.';
+
+class VeilRefusal extends Error {}
+
+type VeilBudget = { chars: number; deadline: number };
+/** What a tool_result handler may patch (SeatPiAPI); content is a lie of convenience — any part
+ *  shape the engine carries survives the deep walk. */
+type VeilPatch = { content: { type: string; text?: string }[]; structuredContent?: unknown; details?: Record<string, unknown> };
+
+/** The armed table: named values from this child's env plus patterns and entropy (the mod's
+ *  session.start table, register.ts). Pure; a build failure fails closed to refusal below. */
+function veilTable(): VeilMaskTable {
+  const named: Record<string, string> = {};
+  for (const name of VEIL_ENV_NAMES) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.length >= VEIL_MIN_NAMED_VALUE_LENGTH) named[name] = value;
+  }
+  return buildTable(Object.keys(named), named, DEFAULT_PATTERNS, { entropy: true });
+}
+
+/** Keys under which tool results carry media bytes (register.ts MEDIA_KEYS: Read file.base64,
+ *  source.data). */
+const VEIL_MEDIA_KEYS = new Set(['base64', 'data']);
+/** File signatures (byte offset, bytes) of PNG, JPEG, GIF, WEBP and PDF (register.ts
+ *  MEDIA_SIGNATURES). */
+const VEIL_MEDIA_SIGNATURES: ReadonlyArray<ReadonlyArray<readonly [number, string]>> = [
+  [[0, '\x89PNG\r\n\x1a\n']],
+  [[0, '\xff\xd8\xff']],
+  [[0, 'GIF87a']],
+  [[0, 'GIF89a']],
+  [[0, 'RIFF'], [8, 'WEBP']],
+  [[0, '%PDF-']],
+];
+/** A string that is wholly the base64 of an image or PDF, by the decoded file signature (mirror
+ *  of register.ts isEncodedMedia — the vendored hooks file resolves ../src/mask.js, which only
+ *  jiti maps to mask.ts, so the predicate is mirrored here like the VEIL_ENV_NAMES list; the
+ *  mask itself stays reused through secrets-veil-mask.mjs). */
+function isEncodedMedia(value: string): boolean {
+  const body = /^(?:data:[a-z]+\/[a-z0-9.+-]+;base64,)?([A-Za-z0-9+/]+={0,2})$/.exec(value)?.[1];
+  if (body === undefined || body.length < 64) return false;
+  const head = atob(body.slice(0, 16));
+  return VEIL_MEDIA_SIGNATURES.some((parts) => parts.every(([at, bytes]) => head.startsWith(bytes, at)));
+}
+/** A media string: an encoded image/PDF under a media key or inside a real image block. The mod
+ *  masks named values only there (no pattern/entropy pass) and waives the single-value text cap
+ *  — the entropy layer once turned screenshot base64 into eight bullets and the API refused the
+ *  image, and an ordinary screenshot exceeds the text cap (register.ts media rule, 2026-10-21).
+ *  A lead must still read a screenshot. Every other string is text and stays fail-closed. */
+function isMediaString(key: string | undefined, image: boolean, value: string): boolean {
+  return (image || (key !== undefined && VEIL_MEDIA_KEYS.has(key))) && isEncodedMedia(value);
+}
+/** One string under the mod's caps, split out of veilDeep so both stay easy to audit. A media
+ *  string skips the single-value text cap; the result cap still holds (register.ts). */
+function veilString(value: string, table: VeilMaskTable, budget: VeilBudget, key: string | undefined, image: boolean): string {
+  const media = isMediaString(key, image, value);
+  if (!media && value.length > VEIL_MAX_STRING_CHARS) throw new VeilRefusal('a single value is longer than the masking cap');
+  budget.chars += value.length;
+  if (budget.chars > VEIL_MAX_MASK_CHARS) throw new VeilRefusal('result is larger than the masking cap');
+  const use = media ? { entries: table.entries.filter((entry) => entry.type === 'env'), entropy: null } : table;
+  return mask(value, use).text;
+}
+/** Deep-mask one value (the mod's maskDeep shape, register.ts): strings mask in place, numbers
+ *  and booleans pass, plain containers rebuild, and anything else is refused rather than rebuilt
+ *  wrong. Throws VeilRefusal past the mod's caps. key is the enclosing property name and image
+ *  says the walk sits inside a real image block; together they gate the media rule. Every other
+ *  string — including the text fields of an unknown block that Anthropic-compatible routes
+ *  serialize as text — gets the full named/pattern/entropy mask (CWE-200 fix). */
+function veilDeep(value: unknown, table: VeilMaskTable, budget: VeilBudget, key?: string, image = false): unknown {
+  if (Date.now() > budget.deadline) throw new VeilRefusal('masking ran past its time cap');
+  if (typeof value === 'string') return veilString(value, table, budget, key, image);
+  if (value === null || typeof value !== 'object') return value;
+  const inside = image || (value as { type?: unknown }).type === 'image';
+  if (Array.isArray(value)) return value.map((item) => veilDeep(item, table, budget, undefined, inside));
+  // A Buffer, Map, Set or class instance would come back as a plain object the engine may reject
+  // for shape, and a rejected answer leaves the original standing: refuse it (register.ts).
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) throw new VeilRefusal('result holds a value the veil cannot rebuild');
+  const out: Record<string, unknown> = {};
+  for (const [itemKey, item] of Object.entries(value as Record<string, unknown>)) out[itemKey] = veilDeep(item, table, budget, itemKey, inside);
+  return out;
+}
+
+/** The refusal patch: content alone on purpose — replacing content without structuredContent
+ *  drops the raw structuredContent too (lesson #18562), which a refusal must never pass on. */
+function veilRefusal(): VeilPatch {
+  return { content: [{ type: 'text', text: VEIL_WITHHELD }] };
+}
+
+/** The lead veil's tool_result handler. Fail closed like the mod: a table failure or any mask
+ *  error answers refusal text, never the raw result — and the handler itself never throws,
+ *  because the runner catches a handler error and keeps the original (runner.js emitToolResult). */
+function leadVeilHandler(): (event: { content?: unknown; structuredContent?: unknown; details?: unknown }) => VeilPatch {
+  let table: VeilMaskTable | null = null;
+  try {
+    table = veilTable();
+  } catch {
+    table = null;
+  }
+  return (event) => {
+    if (table === null) return veilRefusal();
+    try {
+      const budget: VeilBudget = { chars: 0, deadline: Date.now() + VEIL_MAX_MASK_MS };
+      const content = Array.isArray(event.content)
+        ? event.content.map((part) => veilDeep(part, table as VeilMaskTable, budget))
+        : veilDeep(event.content, table, budget);
+      const structured = event.structuredContent === undefined ? undefined : veilDeep(event.structuredContent, table, budget);
+      const details = event.details === undefined ? undefined : veilDeep(event.details, table, budget);
+      // Re-pass structuredContent and details with replaced content (lesson #18562): a patch
+      // that replaces content alone makes the runner drop structuredContent instead.
+      return {
+        content: content as VeilPatch['content'],
+        ...(structured !== undefined ? { structuredContent: structured } : {}),
+        ...(details !== undefined ? { details: details as Record<string, unknown> } : {}),
+      };
+    } catch {
+      return veilRefusal();
+    }
+  };
+}
+
+/** Task 3459 L3: arm the lead-only tool-result veil. Only a lead child sets
+ *  ORCH_PI_LEAD_SECRETS_VEIL (pi-lead.ts buildSpawn); a seat keeps raw results. */
+function armLeadVeil(pi: SeatPiAPI): void {
+  if (process.env.ORCH_PI_LEAD_SECRETS_VEIL === 'on') {
+    pi.on('tool_result', leadVeilHandler());
+  }
+}
+
 export default async function orchSeat(pi: SeatPiAPI) {
+  // Task 3459 L3: mask a supervised lead's tool results before its model reads them. Registered
+  // first among the tool_result handlers, so the advisory notes and the spill file below see
+  // masked text. Only a lead child sets ORCH_PI_LEAD_SECRETS_VEIL (pi-lead.ts buildSpawn); a seat
+  // keeps raw results (task 3200 keeps the mods off seats). Load-fail closed: the shim refuses a
+  // lead child whose orch extension did not load (pi-lead-child.mjs get_commands), and a loaded
+  // extension with a broken table answers refusal per result (leadVeilHandler).
+  armLeadVeil(pi);
   // Orch requests compaction only between prompts, through the public RPC API.
   // This hook also counts Pi's own successful threshold/overflow compactions.
   // Failed/aborted attempts do not count; no host session-file read is needed.
@@ -251,11 +367,12 @@ export default async function orchSeat(pi: SeatPiAPI) {
     });
   }
   const readOnly = process.env.ORCH_SEAT_ACCESS === 'read-only';
-  const writeScope = readWriteScope(process.env.ORCH_SEAT_WRITE_SCOPE);
+  const role = process.env.SEAT_POLICY_ROLE ?? '';
+  const blockMutation = mutationGuard(readWriteScope(process.env.ORCH_SEAT_WRITE_SCOPE), readOnly, role);
   // Task 1999 (lesson #11940): a full-access worker seat is refused `git stash`
   // outright — the stack is one per repository — while a read-only seat's
   // allowlist already refuses every git verb outside GIT_READ.
-  const guardsStash = hasWorktree(process.env.SEAT_POLICY_ROLE ?? '');
+  const guardsStash = hasWorktree(role);
   const standArm = process.env.ORCH_SEAT_STAND_ARM;
   const off = parseOffEnv(process.env.ORCH_SEAT_INSTRUMENTS_OFF);
   const ban = instrumentBan(off);
@@ -286,7 +403,7 @@ export default async function orchSeat(pi: SeatPiAPI) {
   // allow-listed check after its last edit. All of its state, handlers and resets live in this
   // branch so a non-landable seat carries nothing new. Resets are on agent_settled, not turn_end
   // (one orch prompt is several model steps; turn_end fires per step).
-  if (landable(process.env.SEAT_POLICY_ROLE ?? '')) {
+  if (landable(role)) {
     // `mutatedUnchecked` is the mutation with no check since; continuations are counted per turn.
     let mutatedUnchecked = false;
     let verifyContinuations = 0;
@@ -338,7 +455,7 @@ export default async function orchSeat(pi: SeatPiAPI) {
   pi.on('tool_call', (event) => {
     const offWhy = refuseTool(event.toolName, event.input, ban);
     if (offWhy) return { block: true, reason: `${offWhy}: this A/B arm runs without it. Use the instruments the brief leaves you.` };
-    const scopeWhy = writeScopeBlock(event.toolName, event.input, writeScope);
+    const scopeWhy = blockMutation(event.toolName, event.input);
     if (scopeWhy) return scopeWhy;
     // A fused then_run is a bash command in all but name: same cap and refusals.
     const input = event.toolName === 'bash' ? event.input as { command?: unknown; timeout?: unknown } : fusedBash(event.toolName, event.input);

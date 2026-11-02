@@ -11,5 +11,9 @@
     "@brightdata/mcp": "2.11.1",
     "@sinco-lab/mcp-youtube-transcript": "0.0.12",
     "@upstash/context7-mcp": "3.2.5"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
   }
 }

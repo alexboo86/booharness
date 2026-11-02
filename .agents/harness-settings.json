@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "values": {
+    "git.syncCommits": true,
+    "git.pushGate": true,
+    "jev.historyGatePercent": 60,
+    "gates.complexityEnabled": true
+  }
+}

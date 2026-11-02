@@ -16,8 +16,9 @@
 //
 // So there is one helper, and every script uses it.
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -159,4 +160,81 @@ export function git(args, options = {}) {
     ...options,
     env: scrubbedGitEnv(options.env),
   });
+}
+
+/** Scrubbed Git result, optionally against a caller's disposable index. */
+export function gitRun(args, { cwd, indexFile } = {}) {
+  const env = scrubbedGitEnv();
+  if (indexFile) env.GIT_INDEX_FILE = indexFile;
+  return spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+}
+
+let indexSeq = 0;
+function tempIndexPath() {
+  indexSeq += 1;
+  return join(tmpdir(), `check-pass-${process.pid}-${indexSeq}`);
+}
+
+function copyIndexGeneration(source, indexFile) {
+  try {
+    const fd = openSync(source, 'r');
+    try {
+      // Git replaces the index by rename: preserve one generation's bytes and
+      // timestamps together, including Git's racy-clean content protection.
+      const stat = fstatSync(fd);
+      writeFileSync(indexFile, readFileSync(fd));
+      utimesSync(indexFile, stat.atime, stat.mtime);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function copyWorkIndex(cwd, indexFile) {
+  const real = gitRun(['rev-parse', '--path-format=absolute', '--git-path', 'index'], { cwd });
+  if (real.status !== 0 || real.error) return false;
+  if (!copyIndexGeneration(real.stdout.trim(), indexFile)) return false;
+  const shared = gitRun(['rev-parse', '--shared-index-path'], { cwd, indexFile: real.stdout.trim() });
+  return shared.status === 0 && !shared.error && !shared.stdout.trim();
+}
+
+function reusableIndex(cwd, indexFile) {
+  const flags = gitRun(['ls-files', '-v', '-z'], { cwd, indexFile });
+  if (flags.status !== 0 || flags.error || flags.stdout.split('\0').some(entry => /^[a-zS] /.test(entry))) return false;
+  // A removed but present ignored file is tracked by HEAD, not by the copied index.
+  const deleted = gitRun(['diff', '--cached', '--name-only', '--diff-filter=D', '-z', 'HEAD'], { cwd, indexFile });
+  return deleted.status === 0 && !deleted.error && !deleted.stdout;
+}
+
+/** Build a tree without rewriting the caller's index; remove temporary indexes
+ *  even when filling or writing the tree fails. */
+export function withTempIndex(cwd, fill, { seedFromIndex = false } = {}) {
+  const indexFile = tempIndexPath();
+  try {
+    if (!seedFromIndex || !(copyWorkIndex(cwd, indexFile) && reusableIndex(cwd, indexFile))) {
+      // Start fresh: read-tree over the copied index can retain its flags.
+      rmSync(indexFile, { force: true });
+      const read = gitRun(['read-tree', 'HEAD'], { cwd, indexFile });
+      if (read.status !== 0 || read.error) return null;
+    }
+    if (!fill(indexFile)) return null;
+    const tree = gitRun(['write-tree'], { cwd, indexFile });
+    if (tree.status !== 0 || tree.error) return null;
+    return tree.stdout.trim();
+  } finally {
+    rmSync(indexFile, { force: true });
+    rmSync(`${indexFile}.lock`, { force: true });
+  }
+}
+
+/** Snapshot tracked and untracked, non-ignored working bytes with safe index
+ *  seeding. Shared by commit stamps and standalone whole-tree guards. */
+export function workTree(cwd = process.cwd()) {
+  return withTempIndex(cwd, indexFile => {
+    const add = gitRun(['-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', 'add', '-A'], { cwd, indexFile });
+    return add.status === 0 && !add.error;
+  }, { seedFromIndex: true });
 }

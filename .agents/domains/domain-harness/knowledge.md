@@ -1,8 +1,8 @@
 # Knowledge: the agent harness
 
 fact-checked: codex 2026-09-20 — 143 claims, 88 confirmed / 44 wrong / 11 unverifiable; applies to an older body, not this rewrite
-amended: 2026-10-29 — skill-routing part: motion role defaults (motion-media, ffmpeg-skill) added (task 3336 S1) (NOT fact-checked)
-body-sha256: 6d4500df37f9
+amended: 2026-11-02 — task 3554: reset priority across groups (NOT fact-checked)
+body-sha256: aa74253b17e3
 
 Patterns:
 - Commit gates: `scripts/check-commit.mjs` (not in this kit)
@@ -22,13 +22,12 @@ Patterns:
 - [Seat context: knowledge, lessons and skills](knowledge/seat-context-knowledge-lessons-and-skills.md): Seat prompt assembly: context.ts combines role duties, task files, knowledge passages, lessons, routed skills and the code map; page routing and rendering set the delivery budgets.
 - [Lesson capture and delivery](knowledge/lesson-capture-and-delivery.md): Lesson capture and delivery: drain-inbox, the capture gate, cross-domain reanchor refiling, proposal ledger, lesson router, domain-lessons hook and Jev client.
 - [Skill routing and vendored skills](knowledge/skill-routing-and-vendored-skills.md): Skill selection and provenance: _skill-map.json, role/domain/trigger routing, skill-router, the harness allowlist, vendored skill receipts and run-script pins.
-- [Memory service and durable records](knowledge/memory-service-and-durable-records.md): Durable memory service: memoryd is the single writer; service-client, NAS backup, vector state, the embedding model and domain routing connect clients to stored records.
 - [Harness prefix configuration](knowledge/harness-prefix-configuration.md): Harness naming and paths: names.prefix validation, harnessPaths, state/cache/secrets directories, service labels and prefix config tests.
 - [Embedding models and vector search](knowledge/embedding-models-and-vector-search.md): Embedding recipes and vector search: embed-recipe MODELS, query/document prefixes, memoryd model validation and backlog, vector imports and search benchmarks.
 - [Memory lessons and task records](knowledge/memory-lessons-and-task-records.md): Memory record workflows: lesson capture and gate, dedupe ledger, task helpers, handoff_draft and the boundary between session context and durable records.
 - [Orch daemon, storage and installation](knowledge/orch-daemon-storage-and-installation.md): Orch daemon deployment and storage: the SQLite store, daemon lock, HTTP/MCP endpoints, chat routes and OS service installers.
 - [Task board and wake responses](knowledge/task-board-and-wake-responses.md): Task-board reads and writes: loopback /tasks pages and routes, memoryd task operations, chat assignment notices, wake responses and drag-and-drop.
-- [Lead chat rules and handover](knowledge/lead-chat-rules-and-handover.md): Lead coordination and handover: orch-team rules, successor prompt, relay behavior, chat wake, restart consent and account-lease coordination.
+- [Lead chat rules and handover](knowledge/lead-chat-rules-and-handover.md): Lead coordination and handover: orch rules, successor prompt, relay behavior, chat wake, restart consent and account-lease coordination.
 - [Shared-account lease](knowledge/shared-account-lease.md): Shared-account ownership: app-lease and account-slots, SQLite lease renewal/release, chat binding and the macOS launch plan.
 - [Providers, roles and worktrees](knowledge/providers-roles-and-worktrees.md): Seat providers and worktrees: provider selection, Pi runtime routes, role duties, instrument settings, the seat contract and checkout setup.
 - [Provider session contracts and adapters](knowledge/provider-session-contracts-and-adapters.md): Provider session interfaces and adapters: Claude, Codex, ACP and Pi routes, credential isolation, session guards and provider lifecycle contracts.
@@ -62,4 +61,4 @@ Patterns:
 - [Memory deep-search: the re-rank routes](knowledge/memory-deep-search-re-rank-routes.md): Memory deep-search routes: deep-search.mjs re-ranks the top 30 with Jev by default, terra and grok by --via, no route after a Jev failure, the jev-test-state pin.
 - [The duplicate-constants step of the commit gate](knowledge/duplicate-constants-gate-step.md): Duplicate-constants step: check:commit runs check-duplicate-constants.mjs in each run on the working tree, no path trigger, no override flag, the remedy in the summary.
 - [The AI MCP removal: what the harness keeps](knowledge/ai-mcp-removal-what-the-harness-keeps.md): AI MCP removal: domain-ai-mcp is retired with its memory kept, the bridge mcp-booharness-servers stays without three tools, one deletion-reference waiver.
-- [Claude Code mods: the orch-board pane](knowledge/claude-mods-orch-board-pane.md): Claude Code mods: ops/claude-mods, engine-written types, CLAUDE_CODE_PLUGIN_DIRS loading, the orch-board Pult pane, its 4-post chat tail, the handover mod.
+- [Claude Code mods](knowledge/claude-mods.md): Claude Code mods: ops/claude-mods, engine-written types, CLAUDE_CODE_PLUGIN_DIRS loading, the lead-wake idle hold, the handover mod, vendored mods.

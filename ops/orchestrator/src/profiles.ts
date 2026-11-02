@@ -26,14 +26,16 @@ import { loadConfig } from './config.ts';
 import { FAMILIES, type Family } from './providers/types.ts';
 import { FAMILY_EFFORTS, hasAdapter } from './providers/index.ts';
 import { formatPause, pauseFor } from './paused-families.ts';
-import { SAFE } from './seats-defs.ts';
+import { SAFE, landable } from './seats-defs.ts';
+import { ROLE_CATALOGUE, ROLE_CATALOGUE_FILE } from './role-policy.ts';
 import type { FamilyLoad, Reading } from './limits.ts';
+import { readInstallSetting } from './settings/index.ts';
 
 /** The quality tier of one matrix cell as the pick reads it; `tierOf` of role-quality.ts answers this shape. It is declared here and not imported, so that this module does not depend on the statistics modules. */
 export type CellTier = { tier: 'WEAK' | 'NORMAL'; warning: string | null; cell: { rated: number; mean: number | null; failShare: number } | null };
 
 export type Profile = { model: string; effort: string | null };
-export type ProfileRole = 'scout' | 'researcher' | 'debater' | 'coder' | 'tester' | 'designer' | 'copywriter' | 'motion' | 'reviewer' | 'critic' | 'legal' | 'bughunter' | 'security';
+export type ProfileRole = string;
 /** Accounting only: a critic keeps the scout lifecycle, but never shares scout burn or stats. */
 export type AccountingRole = ProfileRole;
 export function accountingRole<R extends string>(seat: { role: R; data: Record<string, unknown> }): R | 'critic' {
@@ -47,132 +49,36 @@ export function accountingRole<R extends string>(seat: { role: R; data: Record<s
 export const accountingRoleSql = (seat: string): string =>
   `CASE WHEN ${seat}.role = 'critic' OR (${seat}.role = 'scout' AND json_type(${seat}.data, '$.critic') = 'true') THEN 'critic' ELSE ${seat}.role END`;
 
-const SOL = 'gpt-6.1-sol';
-// Every reviewer runs at high, never max (operator 2026-09-28, decision #12649).
-// glm max found no more reproduced findings per review at similar tokens (task 1718);
-// qwen's route clamps both max and high to xhigh.
-const REVIEWER_MATRIX: Partial<Record<Family, Profile>> = {
-  claude: { model: 'claude-sonnet-5-5', effort: 'high' },
-  codex: { model: SOL, effort: 'high' },
-  kimi: { model: 'k3.1-pro', effort: 'high' },
-  glm: { model: 'glm-5.3', effort: 'high' },
-  grok: { model: 'grok-4.7', effort: 'high' },
-  qwen: { model: 'qwen3.8-max', effort: 'high' },
-  mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-};
-export const MATRIX: Record<ProfileRole, Partial<Record<Family, Profile>>> = {
-  scout: {
-    opencode: { model: 'glm-5.3-flash', effort: null },
-    grok: { model: 'grok-4.7', effort: 'low' },
-    qwen: { model: 'qwen3.8-flash', effort: 'low' },
-    mimo: { model: 'mimo-v2.6-flash', effort: 'low' },
-    // ~20x cheaper than Sol on the shared Codex plan quota; glm flash spends 1/3 of glm-5.3 (decision #12038).
-    // high, not medium: at medium it returned partial on large reconnaissance (operator #12934).
-    codex: { model: 'gpt-6-luna', effort: 'high' },
-    // high, not low: the 2026-10-20..27 trial scored 0.649 against 0.558 at low, at twice the tokens per turn
-    // (decision #18608, task 2692); glm accepts only low, high and max.
-    glm: { model: 'glm-5.3-flash', effort: 'high' },
-  },
-  researcher: {
-    grok: { model: 'grok-4.7', effort: 'medium' },
-    codex: { model: SOL, effort: 'medium' },
-    claude: { model: 'claude-sonnet-5', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'medium' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'low' },
-  },
-  debater: {
-    codex: { model: SOL, effort: 'medium' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'high' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  coder: {
-    codex: { model: SOL, effort: 'high' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    // medium, not high: qwen's route clamps high to xhigh, a budget of 262144 reasoning tokens for one response;
-    // medium is a budget of 16384 (operator 2026-10-08, decision #15253; reference #15206).
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  // A copy of the coder row, not the same object: a later coder edit must not move tester (task 2802).
-  tester: {
-    codex: { model: SOL, effort: 'high' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  // Copies of the coder row, not the same object: a later coder edit must not move them (task 2802 S1b).
-  designer: {
-    codex: { model: SOL, effort: 'high' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  copywriter: {
-    codex: { model: SOL, effort: 'high' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  // A copy of the designer row, not the same object (task 3336 S1): the motion role runs the
-  // designer family matrix, and a later designer edit must not move motion.
-  motion: {
-    codex: { model: SOL, effort: 'high' },
-    claude: { model: 'claude-opus-5-5', effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'medium' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  reviewer: REVIEWER_MATRIX,
-  // The same object as reviewer, not a copy (decision 13286; plan 14746 D2): a plan critic
-  // runs the whole reviewer matrix, so one edit moves both.
-  critic: REVIEWER_MATRIX,
-  // A copy of the reviewer row, not the same object: a later reviewer edit must not move legal (task 2802 S1b).
-  legal: {
-    claude: { model: 'claude-sonnet-5-5', effort: 'high' },
-    codex: { model: SOL, effort: 'high' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'high' },
-    grok: { model: 'grok-4.7', effort: 'high' },
-    qwen: { model: 'qwen3.8-max', effort: 'high' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  bughunter: {
-    codex: { model: SOL, effort: 'max' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'max' },
-    qwen: { model: 'qwen3.8-max', effort: 'max' },
-    // Pi's MiMo catalog has no thinkingLevelMap: getSupportedThinkingLevels tops out at high.
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-  // A copy of the bughunter row: max effort where the route supports it (kimi and mimo top out
-  // at high); a later bughunter edit must not move security (task 2802 S1b).
-  security: {
-    codex: { model: SOL, effort: 'max' },
-    kimi: { model: 'k3.1-pro', effort: 'high' },
-    glm: { model: 'glm-5.3', effort: 'max' },
-    qwen: { model: 'qwen3.8-max', effort: 'max' },
-    mimo: { model: 'mimo-v2.6-pro', effort: 'high' },
-  },
-};
+/** The compiled defaults are a checked view of the catalogue, not a second role list. */
+function compiledMatrix(): Record<ProfileRole, Partial<Record<Family, Profile>>> {
+  const matrix: Record<ProfileRole, Partial<Record<Family, Profile>>> = {};
+  for (const entry of ROLE_CATALOGUE) {
+    const row: Partial<Record<Family, Profile>> = {};
+    for (const [name, cell] of Object.entries(entry.models)) {
+      if (!(FAMILIES as readonly string[]).includes(name)) throw new Error(`${ROLE_CATALOGUE_FILE}: role '${entry.name}' family '${name}': unknown orch family; expected one of ${FAMILIES.join(', ')}`);
+      const family = name as Family;
+      if (!hasAdapter(family, 'pi') && !hasAdapter(family, 'native')) throw new Error(`${ROLE_CATALOGUE_FILE}: role '${entry.name}' family '${name}': no adapter and no Pi route`);
+      if (cell.effort !== null && !FAMILY_EFFORTS[family].includes(cell.effort)) throw new Error(`${ROLE_CATALOGUE_FILE}: role '${entry.name}' family '${name}': effort '${cell.effort}' is not accepted by ${family}`);
+      row[family] = { ...cell };
+    }
+    matrix[entry.name] = row;
+  }
+  // Decision 13286: the critic takes the reviewer row itself; the catalogue loader pins equal cells.
+  if (matrix.critic && matrix.reviewer) matrix.critic = matrix.reviewer;
+  return matrix;
+}
+export const MATRIX = compiledMatrix();
+
+/** Catalogue turn limits in minutes; every role carries its effective value explicitly. */
+export const ROLE_TURN_LIMIT_MINUTES: Record<ProfileRole, number> = Object.fromEntries(
+  ROLE_CATALOGUE.map((entry) => [entry.name, entry.turnLimitMinutes]),
+);
+
+/** A turn's limit when the lead names none: the role's catalogue default, else `fallback` for a legacy unknown role. */
+export function turnLimitMs(seat: { role: string }, fallback: number): number {
+  const minutes = ROLE_TURN_LIMIT_MINUTES[seat.role];
+  return minutes === undefined ? fallback : minutes * 60_000;
+}
 
 /** The role matrix as each production choice reads it (task 2275 slice M1b, plan 16302): `<stateDir>/roles.json` (loadConfig's dir, the daemon's own), read at each choice in the pattern of readPauseRecords, so a file that appears or changes takes effect with no daemon restart. An absent file returns the compiled MATRIX itself, not a copy, so a test's in-place patch of MATRIX stays visible; a role the file does not name keeps its compiled row, and an absent `critic` key means the reviewer row of the result as the SAME object (decision 13286), while a present one is its own row. A malformed file or a failed cell check throws and names the file, the role, the family and the rule; no part of a bad file is used. The parsed table is kept only while the file's mtime and size do not change. Every read goes through here at call time, never captured at module load. */
 export function roleMatrix(): Record<ProfileRole, Partial<Record<Family, Profile>>> {
@@ -417,6 +323,22 @@ export function setRole(role: string, family: string, model: string, effort?: st
   });
 }
 
+/** Advisory only: roles writes still use unsetRole and revalidate at write time. */
+export function qualityRemovalCheck(role: string, family: string): { allowed: boolean; reason: string | null } {
+  const matrix = roleMatrix();
+  if (!Object.hasOwn(matrix, role) || !Object.hasOwn(matrix[role], family)) throw new Error('unknown role/family cell');
+  const remaining = Object.keys(matrix[role]).filter((name) => name !== family);
+  if (!remaining.length) return { allowed: false, reason: `role '${role}': refusing to leave an empty row` };
+  const reviewers = role === 'reviewer' ? remaining : Object.keys(matrix.reviewer ?? {});
+  for (const [authorRole, row] of Object.entries(matrix)) {
+    if (!landable(authorRole)) continue;
+    const authors = authorRole === role ? remaining : Object.keys(row);
+    const stranded = authors.find((author) => !reviewers.some((reviewer) => reviewer !== author));
+    if (stranded) return { allowed: false, reason: `${authorRole}/${stranded}: author and reviewer families could no longer differ` };
+  }
+  return { allowed: true, reason: null };
+}
+
 /** Remove one family. A role the file does not name is copied first. An empty row is refused and nothing is written. */
 export function unsetRole(role: string, family: string): Record<string, unknown> {
   return changeRoles((raw, file) => {
@@ -467,8 +389,50 @@ export const MAX_REVIEWERS = 2;
 /** Working coder seats a family may run before an automatic coder pick steps aside; an explicitly named family is never refused by it (operator, task 1501; default 2→3, decision #11828; every family 5, operator decision #14790; codex 10, operator decision #16961; glm 10, operator decision #20271). */
 export const CODER_CAP: Partial<Record<Family, number>> = { codex: 10, glm: 10 };
 export const DEFAULT_CODER_CAP = 5;
-export function coderCap(family: Family): number {
-  return CODER_CAP[family] ?? DEFAULT_CODER_CAP;
+export function coderCap(family: Family, stateDir = loadConfig().stateDir): number {
+  return readInstallSetting(stateDir, `seats.coderCap.${family}`) as number;
+}
+
+type RoutingPolicy = { supported: string[]; percentages: Record<string, number> | null };
+function routingPolicy(stateDir: string): RoutingPolicy {
+  const supported = readInstallSetting(stateDir, 'routing.supportedFamilies') as string[];
+  const manual = readInstallSetting(stateDir, 'routing.manual') as boolean;
+  return { supported, percentages: manual ? readInstallSetting(stateDir, 'routing.percentages') as Record<string, number> : null };
+}
+function routingShare(policy: RoutingPolicy, family: Family): number | null {
+  return policy.percentages === null ? null : policy.percentages[family] ?? 0;
+}
+function routingAllows(policy: RoutingPolicy, family: Family): boolean {
+  return policy.supported.includes(family) && routingShare(policy, family) !== 0;
+}
+function routingRunnable(policy: RoutingPolicy, runnable: (family: Family) => boolean): (family: Family) => boolean {
+  return (family) => runnable(family) && routingAllows(policy, family);
+}
+type ManualRank = { family: Family; working: number; manualShare: number | null; outage: unknown; auth: unknown };
+function manualScore(row: ManualRank): number {
+  return row.manualShare! / (1 + row.working);
+}
+function manualCompare(a: ManualRank, b: ManualRank): number {
+  return Number(!!(a.outage || a.auth)) - Number(!!(b.outage || b.auth))
+    || manualScore(b) - manualScore(a) || a.family.localeCompare(b.family);
+}
+function routingCompare<R extends ManualRank>(paceCompare: (a: R, b: R) => number): (a: R, b: R) => number {
+  return (a, b) => a.manualShare === null ? paceCompare(a, b) : manualCompare(a, b);
+}
+function manualOrder<R extends ManualRank>(rows: R[]): R[] {
+  return rows[0]?.manualShare == null ? rows : rows.sort(manualCompare);
+}
+function budgetAlert(rows: { family: Family; used: number | null; elapsed: number | null }[], stateDir: string): string {
+  if (!readInstallSetting(stateDir, 'budget.alertAheadOfPace')) return '';
+  const ahead = rows.filter((row) => row.used !== null && row.elapsed !== null && row.used > row.elapsed);
+  return ahead.length ? `; WARNING: ahead of pace: ${ahead.map((row) => `${row.family} used ${row.used}% at ${row.elapsed!.toFixed(1)}% elapsed`).join(', ')}` : '';
+}
+function routingNote(row: ManualRank): string {
+  return row.manualShare === null ? '' : `; manual routing: ${row.family} share ${row.manualShare}%, score ${manualScore(row).toFixed(2)}`;
+}
+function routingReason(row: ManualRank, paceReason: string): string {
+  if (row.manualShare === null) return paceReason;
+  return paceReason.startsWith('WARNING:') ? `manual family allocation; ${paceReason}` : 'manual family allocation';
 }
 
 export type Load = Pick<FamilyLoad, 'family' | 'worst'> & Partial<Pick<FamilyLoad, 'readings' | 'readAt' | 'outageError' | 'authError' | 'resets'>> & { estimate?: { window: string; used: number; burn: number; resetsAt: string } | null;
@@ -551,8 +515,9 @@ export function appliesToModel(reading: Reading, model: string): boolean {
 }
 
 /** Each runnable, not-avoided family of a role with its budget pace reading: what pickFamily ranks. */
-export function rankFamilies(role: ProfileRole, loads: Load[], avoid: ReadonlySet<Family>, runnable: (family: Family) => boolean, now = Date.now(), model?: string, reservations: readonly Reservation[] = [], workingSeats: ReadonlyMap<Family, number> = new Map(), tiers: ReadonlyMap<Family, CellTier> = new Map()) {
-  return (Object.keys(roleMatrix()[role]) as Family[]).filter(runnable).filter((family) => !avoid.has(family)).map((family) => {
+export function rankFamilies(role: ProfileRole, loads: Load[], avoid: ReadonlySet<Family>, runnable: (family: Family) => boolean, now = Date.now(), model?: string, reservations: readonly Reservation[] = [], workingSeats: ReadonlyMap<Family, number> = new Map(), tiers: ReadonlyMap<Family, CellTier> = new Map(), stateDir = loadConfig().stateDir) {
+  const policy = routingPolicy(stateDir);
+  const rows = (Object.keys(roleMatrix()[role]) as Family[]).filter(runnable).filter((family) => policy.supported.includes(family)).filter((family) => !avoid.has(family)).map((family) => {
     const load = loads.find((row) => row.family === family);
     let weekResets = 0;
     let shortResets = 0;
@@ -647,28 +612,47 @@ export function rankFamilies(role: ProfileRole, loads: Load[], avoid: ReadonlySe
     const veto = burn !== null && Number.isFinite(burn) && burn > 0 && effectiveUsed !== null && 100 - effectiveUsed - reserved < burn;
     const blocked = reserveHit || (effectiveUsed !== null && (belowBudgetFloor(100 - effectiveUsed - reserved, atPace, burn) || throttle || veto));
     const scopedSpent = readings.some((reading) => reading.window.includes('·') && !reading.window.endsWith('·mcp') && windowMs(reading.window) !== null && reading.used >= 100);
-    return { family, budget, used, effectiveUsed, reserve, reserveHit, elapsed, headroom, headroomDays, need, needWindow, atPace, weekResets, shortResets, throttleLifted: shortFloorLifted && !throttle, resetsUnknown: load?.resets === null, working: workingSeats.get(family) ?? 0, tier: tiers.get(family)?.tier ?? 'NORMAL', tierCell: tiers.get(family)?.cell ?? null, burn, reserved, pending: pending.length, blocked, throttle, throttledBy, overrun, veto, scopedSpent, outage: load?.outageError ?? null, auth: load?.authError ?? null };
+    return { family, budget, used, effectiveUsed, reserve, reserveHit, elapsed, headroom, headroomDays, need, needWindow, atPace, weekResets, shortResets, throttleLifted: shortFloorLifted && !throttle, resetsUnknown: load?.resets === null, working: workingSeats.get(family) ?? 0, manualShare: routingShare(policy, family), tier: tiers.get(family)?.tier ?? 'NORMAL', tierCell: tiers.get(family)?.cell ?? null, burn, reserved, pending: pending.length, blocked, throttle, throttledBy, overrun, veto, scopedSpent, outage: load?.outageError ?? null, auth: load?.authError ?? null };
   });
+  return manualOrder(rows);
 }
 
 // Task 2382 P4: the 2026-10-11 18:56Z trial sent three scouts to opencode
 // (need 33.0x, A 0/1/2) over glm at 1.2x; cap only the spread, not the raw need.
 export const NEED_SPREAD_CAP = 3;
 
-/** Choose a seat by capped needed pace over the role's working seats when a budget is at or behind its reset, otherwise by headroom in days plus one binary seven-day credit for any banked weekly reset, less half a day per working seat of the family in this pick's role; exhausted windows and a turn too expensive step aside. A coder pick also steps aside from a family already running its coder cap of working coders (`coderCap`; `workingCoders`, the reservations' notion of working); when every candidate is capped the cap yields to the best-ranked choice rather than refusing. `workingSeats` is A, the store's count of the wallet's seats in this role (provisioning, working, or a ready seat with no turn younger than 10 min), read in the same synchronous step as the pick; with none and one readable window per family the order is exactly the pre-spread order. `tiers` is the quality tier of the role's matrix cell per family (task 2382 P3b): among the spend-first rows NORMAL ranks before WEAK (plan 16330), a tier never refuses a pick and never touches the ahead-of-pace order; with an empty map every row is NORMAL and the order is exactly the pre-tier order. */
-export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<Family>, runnable: (family: Family) => boolean, now = Date.now(), paused: ReadonlySet<Family> = new Set(), model?: string, reservations: readonly Reservation[] = [], workingCoders: ReadonlyMap<Family, number> = new Map(), workingSeats: ReadonlyMap<Family, number> = new Map(), tiers: ReadonlyMap<Family, CellTier> = new Map()): { family: Family; why: string; eligible: EligibleFamily[] } {
-  const allowed = (Object.keys(roleMatrix()[role]) as Family[]).filter(runnable);
+/** Only inventory that can reset the longest token window gets cross-pace priority.
+ * rankFamilies has already discarded expired, invalid and unavailable inventory. */
+function hasPaceReset(row: { budget: Reading | null; weekResets: number; shortResets: number }): boolean {
+  if (!row.budget || row.budget.window.endsWith('·mcp')) return false;
+  const duration = windowMs(row.budget.window);
+  return (duration === 7 * 24 * 3600_000 && row.weekResets > 0)
+    || (duration === 5 * 3600_000 && row.shortResets > 0);
+}
+
+function resetPriorityNote(row: ReturnType<typeof rankFamilies>[number], allAside: boolean): string {
+  if (allAside || row.manualShare !== null || !hasPaceReset(row)) return '';
+  return `; reset priority: usable reset left for longest window ${row.budget!.window}`;
+}
+
+/** Choose eligible families with a usable reset for their longest token window first. Within each reset group, choose by capped needed pace over the role's working seats when a budget is at or behind its reset, otherwise by headroom in days plus one binary seven-day credit for any banked weekly reset, less half a day per working seat of the family in this pick's role; exhausted windows and a turn too expensive step aside. A coder pick also steps aside from a family already running its coder cap of working coders (`coderCap`; `workingCoders`, the reservations' notion of working); when every candidate is capped the cap yields to the best-ranked choice rather than refusing. `workingSeats` is A, the store's count of the wallet's seats in this role (provisioning, working, or a ready seat with no turn younger than 10 min), read in the same synchronous step as the pick. `tiers` is the quality tier of the role's matrix cell per family (task 2382 P3b): among the spend-first rows NORMAL ranks before WEAK (plan 16330), a tier never refuses a pick and never touches the ahead-of-pace order; with an empty map every row is NORMAL and the order is exactly the pre-tier order. */
+export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<Family>, runnable: (family: Family) => boolean, now = Date.now(), paused: ReadonlySet<Family> = new Set(), model?: string, reservations: readonly Reservation[] = [], workingCoders: ReadonlyMap<Family, number> = new Map(), workingSeats: ReadonlyMap<Family, number> = new Map(), tiers: ReadonlyMap<Family, CellTier> = new Map(), stateDir = loadConfig().stateDir): { family: Family; why: string; eligible: EligibleFamily[] } {
+  const policy = routingPolicy(stateDir);
+  const allowed = (Object.keys(roleMatrix()[role]) as Family[]).filter(runnable).filter((family) => routingAllows(policy, family));
   const open = allowed.filter((family) => !avoid.has(family) && !paused.has(family));
   if (!open.length) throw new Error(`no family is left for a ${role}: allowed ${allowed.join(', ') || 'none'}, stepping aside ${[...avoid].join(', ') || 'none'}, paused ${[...paused].join(', ') || 'none'}`);
-  const ranked = rankFamilies(role, loads, avoid, runnable, now, model, reservations, workingSeats, tiers);
+  const ranked = rankFamilies(role, loads, avoid, routingRunnable(policy, runnable), now, model, reservations, workingSeats, tiers, stateDir);
   // A provider that is down or refuses the family's credential serves no seat: ranked last either way.
   const down = (row: typeof ranked[number]) => Number(!!(row.outage || row.auth));
-  // At or behind pace on what is spent (atPace, task 2974) first, by capped need over the
+  // Task 3554 (#17669): usable resets for the longest window outrank the pace groups.
+  // Within each reset group, at or behind pace on spend (atPace, task 2974) first, by capped need over the
   // role's working seats (task 2382: the spread term), so a budget about to reset is used
   // without giving one wallet every parallel seat. Ahead of pace adds one binary seven-day credit
   // for any banked weekly reset and pays half a day per working seat (decision 17805,
   // revising #17669); equal spread scores use raw need, then today's chain.
   const spendFirst = (row: typeof ranked[number]) => row.atPace;
+  // Two ordered binary groups: reset availability first, then spend-first pace.
+  const paceGroup = (row: typeof ranked[number]) => 2 * Number(hasPaceReset(row)) + Number(spendFirst(row));
   const spreadScore = (row: typeof ranked[number]) => Math.min(row.need ?? 0, NEED_SPREAD_CAP) / (1 + row.working);
   // Decision 17805 D1/D3: the ahead-of-pace key — headroom days plus one binary seven-day
   // credit for any banked weekly reset (never seven per reset; the count still prints),
@@ -679,16 +663,17 @@ export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<
   // rank before the WEAK ones (plan 16330); each half keeps the spread order. A
   // tier never reaches the ahead-of-pace rows, which use reset-adjusted headroom days.
   const tierRank = (row: typeof ranked[number]) => row.tier === 'WEAK' ? 1 : 0;
-  const compare = (a: typeof ranked[number], b: typeof ranked[number]) =>
+  const paceCompare = (a: typeof ranked[number], b: typeof ranked[number]) =>
     down(a) - down(b)
     || (a.used === null ? 1 : 0) - (b.used === null ? 1 : 0)
     || (a.headroomDays === null ? 1 : 0) - (b.headroomDays === null ? 1 : 0)
-    || Number(spendFirst(b)) - Number(spendFirst(a))
+    || paceGroup(b) - paceGroup(a)
     || (spendFirst(a) && spendFirst(b) ? tierRank(a) - tierRank(b) : 0)
     || (spendFirst(a) && spendFirst(b) ? spreadScore(b) - spreadScore(a) : 0)
     || (spendFirst(a) && spendFirst(b) ? b.need! - a.need! : 0)
     || (!spendFirst(a) && !spendFirst(b) && a.headroomDays !== null && b.headroomDays !== null ? aheadKey(b) - aheadKey(a) : 0)
     || (a.used ?? Infinity) - (b.used ?? Infinity) || a.family.localeCompare(b.family);
+  const compare = routingCompare(paceCompare);
   const available = ranked.filter((row) => !paused.has(row.family));
   const eligible = available.filter((row) => !row.outage && !row.auth && !row.reserveHit && !row.blocked && row.used !== null);
   const allAside = !eligible.length;
@@ -696,17 +681,18 @@ export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<
   // budget is not capacity, even if every other family stepped aside.
   const fallback = available.filter((row) => !row.reserveHit && !row.scopedSpent && !row.overrun && (row.effectiveUsed === null || row.effectiveUsed + row.reserved < 100));
   if (allAside && !fallback.length) throw new Error(`no family has budget left for a ${role}: ${ranked.map((row) => `${row.family} ${row.used}%${row.reserveHit ? ` (${row.family} reserve ${row.reserve}% kept for hermes-agent)` : ''}`).join(', ')}`);
-  const best = allAside ? fallback.sort((a, b) => down(a) - down(b) || (a.effectiveUsed === null ? Infinity : a.effectiveUsed + a.reserved) - (b.effectiveUsed === null ? Infinity : b.effectiveUsed + b.reserved) || a.family.localeCompare(b.family))[0]
+  const best = allAside ? fallback.sort(routingCompare((a, b) => down(a) - down(b) || (a.effectiveUsed === null ? Infinity : a.effectiveUsed + a.reserved) - (b.effectiveUsed === null ? Infinity : b.effectiveUsed + b.reserved) || a.family.localeCompare(b.family)))[0]
     : eligible.sort(compare)[0];
   // The coder cap only moves the choice, never refuses: the next family in the
   // same ranking wins while one is free; a fully capped field keeps the best.
   const working = (family: Family) => workingCoders.get(family) ?? 0;
+  const cap = (family: Family) => coderCap(family, stateDir);
   let choice = best;
   let capNote: string | null = null;
-  if (role === 'coder' && working(best.family) >= coderCap(best.family)) {
-    const free = (allAside ? fallback : eligible).find((row) => working(row.family) < coderCap(row.family));
+  if (role === 'coder' && working(best.family) >= cap(best.family)) {
+    const free = (allAside ? fallback : eligible).find((row) => working(row.family) < cap(row.family));
     if (free) {
-      capNote = `coder cap ${coderCap(best.family)}: ${best.family} already has ${working(best.family)} working coder seat${working(best.family) === 1 ? '' : 's'}; picking ${free.family} instead`;
+      capNote = `coder cap ${cap(best.family)}: ${best.family} already has ${working(best.family)} working coder seat${working(best.family) === 1 ? '' : 's'}; picking ${free.family} instead`;
       choice = free;
     } else {
       capNote = `coder cap: every eligible family is already at its working coder cap; cap not enforced`;
@@ -733,7 +719,8 @@ export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<
   // are sorted where `best` was chosen). A family that stepped aside never names itself
   // the runner-up; its cause stays in the ranking details above.
   const runnerUp = (allAside ? fallback : eligible).find((row) => row.family !== choice.family);
-  const spreadNote = `; pick spread: ${spreadOf(choice)}${runnerUp ? `; runner-up ${spreadOf(runnerUp)}` : ''}`;
+  const resetNote = resetPriorityNote(choice, allAside);
+  const spreadNote = `; pick spread: ${spreadOf(choice)}${runnerUp ? `; runner-up ${spreadOf(runnerUp)}` : ''}${resetNote}${routingNote(choice)}${budgetAlert(available, stateDir)}`;
   // One warning for the whole pick (an absent, old or malformed tier file): the reader
   // answers it for every cell, and every cell is then NORMAL (task 2382 P3b).
   const tierWarning = [...tiers.values()].find((answer) => answer.warning)?.warning ?? null;
@@ -741,7 +728,7 @@ export function pickFamily(role: ProfileRole, loads: Load[], avoid: ReadonlySet<
   // with less raw headroom that holds a banked weekly reset reads as ranked, not misordered.
   const aheadWhy = choice.headroomDays === null ? 'highest reset-adjusted pace headroom'
     : `highest reset-adjusted pace headroom ${aheadKey(choice).toFixed(1)} d (headroom ${choice.headroomDays.toFixed(1)} d${choice.weekResets >= 1 ? ' + 7 d week reset' : ''}${choice.working ? ` - 0.5 d x ${choice.working} working` : ''})`;
-  return { eligible: eligible.filter((row) => role !== 'coder' || working(row.family) < coderCap(row.family))
+  return { eligible: eligible.filter((row) => role !== 'coder' || working(row.family) < cap(row.family))
     .map(({ family, used, elapsed, burn }) => ({ family, used: used!, elapsed, burn })),
-    family: choice.family, why: `${choice.auth ? 'WARNING: auth failure emergency fallback' : choice.outage ? 'WARNING: provider outage emergency fallback' : allAside ? choice.used === null ? 'WARNING: no readable budget; usage unknown' : 'WARNING: all families stepped aside; least-loaded budget fallback' : spendFirst(choice) ? 'most budget to spend before its reset' : aheadWhy}: ${choice.family}; ranking: ${details.join('; ')}${capNote ? `; ${capNote}` : ''}${spreadNote}${tierWarning ? `; ${tierWarning}` : ''}${avoid.size ? `; stepping aside: ${[...avoid].join(', ')}` : ''}${paused.size ? `; paused: ${[...paused].join(', ')}${pauseText.length ? ` (${pauseText.join('; ')})` : ''}` : ''}${pausedBest ? `; WARNING: the first-ranked family is paused: ${pauseFor(pausedBest.family) ? formatPause(pauseFor(pausedBest.family)!, now) : pausedBest.family}` : ''}` };
+    family: choice.family, why: `${routingReason(choice, choice.auth ? 'WARNING: auth failure emergency fallback' : choice.outage ? 'WARNING: provider outage emergency fallback' : allAside ? choice.used === null ? 'WARNING: no readable budget; usage unknown' : 'WARNING: all families stepped aside; least-loaded budget fallback' : spendFirst(choice) ? 'most budget to spend before its reset' : aheadWhy)}: ${choice.family}; ranking: ${details.join('; ')}${capNote ? `; ${capNote}` : ''}${spreadNote}${tierWarning ? `; ${tierWarning}` : ''}${avoid.size ? `; stepping aside: ${[...avoid].join(', ')}` : ''}${paused.size ? `; paused: ${[...paused].join(', ')}${pauseText.length ? ` (${pauseText.join('; ')})` : ''}` : ''}${pausedBest ? `; WARNING: the first-ranked family is paused: ${pauseFor(pausedBest.family) ? formatPause(pauseFor(pausedBest.family)!, now) : pausedBest.family}` : ''}` };
 }

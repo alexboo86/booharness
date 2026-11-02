@@ -4,21 +4,100 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { defaultHarness, FAMILIES, hasAdapter } from './providers/index.ts';
 import type { Family, Harness } from './providers/types.ts';
-import { effectiveInstruments } from './shared.entry.ts';
+import { effectiveInstruments, extraWriteScope, INSTRUMENT_KEYS } from './shared.entry.ts';
+import { readInstallSetting } from './settings/index.ts';
 import { isStandArm } from './stand.ts';
 import { remotePiMcpPath } from './remote-pi-mcp.ts';
 import type { Seat } from './store.ts';
 import { accountingRole, appliesToModel, MAX_REVIEWERS, pickFamily, rankFamilies, roleMatrix, windowMs } from './profiles.ts';
 import { readPaused } from './paused-families.ts';
 import { readHost, readHosts } from './config.ts';
-import { hostInstrumentCauses, lighterHost, missingHostInstruments, needsBrightdataWeb, placeSeat, PLATFORM_NEEDS, touchesMacDesktop, type Candidate, type LoadProbe, type PlatformNeed, type Target } from './placement.ts';
+import { desktopRuntimeFile, hostInstrumentCauses, lighterHost, macOnlyPin, missingHostInstruments, needsBrightdataWeb, placeSeat, PLATFORM_NEEDS, touchesMacDesktop, type Candidate, type LoadProbe, type PlatformNeed, type Target } from './placement.ts';
 import { assertMirrorPath } from './remote-worktree.ts';
 import { checkoutTop, largestUntrackedSnapshotDirs, repoOf, resolveCommit, snapshotBytes, snapshotCommit } from './worktrees.ts';
 import { chainHolds } from './seats-drain.ts';
-import { ROLE_POLICY, landable, reviewRights, normalizeFile, stringsOf, SAFE } from './seats-defs.ts';
+import { ROLE_POLICY, landable, reviewRights, normalizeFile, stringsOf, SAFE, writeScopeOf } from './seats-defs.ts';
 import type { SeatRole, CreateSeat, Choose } from './seats-defs.ts';
 import { seatModel } from './seats-scope.ts';
+import { chatLiveHandle } from './chat.ts';
+import { domainLeadsRegistered } from './land-domain.ts';
 import { imageInput } from './model-input.ts';
+import { roleImagesDefault } from './role-policy.ts';
+
+type ModelHolder = { seat: Seat; why: string };
+
+function writerAside(avoid: Set<Family>, holders: ModelHolder[], seat: Seat, why: string, level: unknown): void {
+  if (level === 'different-family') avoid.add(seat.family as Family);
+  if (level !== 'none') holders.push({ seat, why });
+}
+
+function leadFamilyAside(role: SeatRole, level: unknown, author?: string): boolean {
+  if (reviewRights(role) || role === 'critic') return level !== 'none' && (level === 'different-family' || author === undefined);
+  return true;
+}
+
+function requireReviewAuthor(input: CreateSeat, choose: Choose, level: unknown, avoid: Set<Family>, runnable: (family: Family) => boolean, paused: Set<Family>): void {
+  if (level !== 'different-model' || input.author !== undefined) return;
+  if (!reviewRights(input.role) && input.role !== 'critic') return;
+  const candidates = input.family !== undefined ? [input.family as Family]
+    : (Object.keys(roleMatrix()[input.role as SeatRole]) as Family[]).filter((family) => runnable(family) && !paused.has(family));
+  const leads = new Set(choose.leadFamilies);
+  if (candidates.some((family) => leads.has(family) && avoid.has(family)) && candidates.every((family) => avoid.has(family))) {
+    throw new Error("the lead's family steps aside when no author is named: name author to check its resolved model; a single-provider install can review by naming the author and using a different model");
+  }
+}
+
+function createIndependenceWarning(role: SeatRole, level: unknown, stateDir: string): string | undefined {
+  if (!reviewRights(role) && role !== 'critic' && role !== 'debater') return undefined;
+  const effective = role === 'debater' ? readInstallSetting(stateDir, 'logic.independence.debaterDebater') : level;
+  if (effective !== 'none') return undefined;
+  const pairing = role === 'critic' ? 'plan author/critic' : role === 'debater' ? 'debater/debater' : 'author/reviewer';
+  return `${role} is not independent: ${pairing} independence is set to none.`;
+}
+
+function debaterModelAside(avoid: Set<Family>, other: Seat, input: CreateSeat): void {
+  const wanted = (family?: Family) => seatModel({ role: 'debater', family, data: { model: input.model ?? null } });
+  const model = seatModel(other);
+  if (model === undefined) return;
+  if (input.family !== undefined || input.model !== undefined) {
+    if (wanted(input.family as Family) === model) throw new Error(`${other.id} already debates "${input.title}" on model ${model}: the two debaters of one fork never run the same model (operator #16088); leave family and model out, or name a family with another model`);
+  } else {
+    for (const candidate of Object.keys(roleMatrix().debater) as Family[]) if (wanted(candidate) === model) avoid.add(candidate);
+  }
+}
+
+function debaterAside(avoid: Set<Family>, others: Seat[], input: CreateSeat, level: unknown): void {
+  if (level === 'none') return;
+  for (const other of others) {
+    if (level === 'different-family') {
+      if (input.family === other.family) throw new Error(`${other.id} already debates "${input.title}": debaters must use different families`);
+      avoid.add(other.family as Family);
+    }
+    debaterModelAside(avoid, other, input);
+  }
+}
+
+/**
+ * The domain-lead create gate (task 3419, decision #22281): while any domain lead is registered, a
+ * writing seat must name its creator through a session with a live chat binding, or seat_land's
+ * domain gate fails open. An unreadable or empty registry keeps the fail-open create; read-only
+ * roles and idempotent retries of stored seats (returned before createSeat) are unaffected. The
+ * returned handle is stored once at create, so land gates on the handle bound here, never a later
+ * lookup: a release or rebind after creation cannot drop the domain gate.
+ */
+async function creatorLeadHandle(self: SeatManager, role: string, input: CreateSeat, choose: Choose): Promise<string | null> {
+  if (!landable(role)) return input.leadHandle ?? null;
+  const live = chatLiveHandle(self.store, choose.leadSession);
+  if (live) return live;
+  if (await domainLeadsRegistered()) {
+    // A stable error name lets a boundary (the lesson action routes) answer a labelled 4xx for
+    // this refusal alone; the gate's rule and message are unchanged.
+    const refusal = new Error(`role '${role}' writes to the repo: while domain leads are registered (decision #22281), seat_create needs the creating lead's session${choose.leadSession ? ` '${choose.leadSession}'` : ''} with a live chat binding; the session is ${choose.leadSession ? 'not bound to a live handle' : 'missing'}`);
+    refusal.name = 'CreatorSessionRefusal';
+    throw refusal;
+  }
+  return input.leadHandle ?? null;
+}
 
 
 export const SNAPSHOT_REMOTE_MAX_BYTES = 256 * 1024 * 1024;
@@ -53,11 +132,11 @@ function roleNeedsImages(role: string, map: SkillMap | null): boolean {
   });
 }
 
-/** Lead flag, or a role default that requires image input. A non-boolean flag is refused. `images: true` does not read the map. */
+/** Lead flag, then the catalogue's image default. The legacy map-path seam still serves the older focused tests. */
 function effectiveImages(input: { role: string; images?: unknown }, mapPath: string | URL = SKILL_MAP): boolean {
   if (input.images !== undefined && typeof input.images !== 'boolean') throw new Error('images must be true or false');
   if (input.images === true) return true;
-  return roleNeedsImages(input.role, readSkillMap(mapPath));
+  return mapPath === SKILL_MAP ? roleImagesDefault(input.role) : roleNeedsImages(input.role, readSkillMap(mapPath));
 }
 
 /** The round-table option list a create carries, or undefined (operator #19423). Refused when malformed. */
@@ -72,6 +151,11 @@ function tableOptions(input: { role: string; options?: unknown }): string[] | un
   if (new Set(trimmed).size !== trimmed.length) throw new Error('options must be distinct after trimming');
   return trimmed;
 }
+function sameCreateGrants(options: string[] | undefined, writeScope: CreateSeat['writeScope'], data?: Record<string, unknown> | null): boolean {
+  return JSON.stringify(options) === JSON.stringify(Array.isArray(data?.options) ? data.options : undefined)
+    && JSON.stringify(writeScope) === JSON.stringify(data?.writeScope);
+}
+
 export async function createIdempotent(self: SeatManager, input: CreateSeat, choose: Choose & { replaces?: string }, skillMap?: string): Promise<Seat> {
     if (typeof input.request_id !== 'string' || !/^[A-Za-z0-9][\w.-]{0,127}$/.test(input.request_id)) throw new Error('request_id must be 1..128 characters of letters, digits, _, - or .');
     // A retry of a create whose answer the client lost (task 1757): the stored row,
@@ -89,15 +173,19 @@ export async function createIdempotent(self: SeatManager, input: CreateSeat, cho
     };
     const images = effectiveImages(input, skillMap);
     const options = tableOptions(input);
+    const writeScope = extraWriteScope(input.writeScope, writeScopeOf(input.role) !== undefined);
     const mismatched = (seat: { role: string; title: string; critic?: boolean; data?: Record<string, unknown> | null }): boolean =>
       roleOf(input) !== roleOf(seat) || title !== seat.title || criticOf(input) !== criticOf(seat) || images !== (seat.data?.images === true)
-      || JSON.stringify(options) !== JSON.stringify(Array.isArray(seat.data?.options) ? seat.data.options : undefined);
+      || !sameCreateGrants(options, writeScope, seat.data);
     // A known mismatch refuses before any chain wait. Repo comparison stays with resolution.
-    const stored = self.store.seatByRequestId(requestId);
-    if (stored && mismatched(stored)) refuse(stored.id);
+    const storedRow = () => {
+      const row = self.store.seatByRequestId(requestId);
+      if (row && mismatched(row)) refuse(row.id);
+      return row;
+    };
+    storedRow();
     const finish = async (onCoderChain: boolean): Promise<Seat> => {
-      const existing = self.store.seatByRequestId(requestId);
-      if (existing && mismatched(existing)) refuse(existing.id);
+      let existing = storedRow();
       let top: string;
       try {
         // Same named failure as createSeat: a request_id create queued behind removal must not
@@ -108,13 +196,15 @@ export async function createIdempotent(self: SeatManager, input: CreateSeat, cho
         if (existing) refuse(existing.id);
         throw error;
       }
+      // The create this retry repeats may have stored its row and left `creating` during the await.
+      existing ??= storedRow();
       if (existing) {
         if (top !== existing.data.repo) refuse(existing.id);
         return existing;
       }
       const inFlight = self.creating.get(requestId);
       if (inFlight) {
-        if (input.role !== inFlight.role || title !== inFlight.title || top !== inFlight.repo || (input.role === 'critic') !== inFlight.critic || images !== inFlight.images || JSON.stringify(options) !== JSON.stringify(inFlight.options)) {
+        if (input.role !== inFlight.role || title !== inFlight.title || top !== inFlight.repo || (input.role === 'critic') !== inFlight.critic || images !== inFlight.images || !sameCreateGrants(options, writeScope, inFlight)) {
           const row = self.store.seatByRequestId(requestId);
           refuse(row?.id ?? 'a create still in flight');
         }
@@ -124,7 +214,7 @@ export async function createIdempotent(self: SeatManager, input: CreateSeat, cho
       const work = onCoderChain
         ? createSeat(self, input, choose, skillMap, images, true)
         : self.createSeat(input, choose, skillMap, images);
-      self.creating.set(requestId, { role: input.role, title, repo: top, critic: input.role === 'critic', images, options, work });
+      self.creating.set(requestId, { role: input.role, title, repo: top, critic: input.role === 'critic', images, options, writeScope, work });
       try { return await work; } finally { self.creating.delete(requestId); }
     };
     const owner = await coderOwningCheckout(self, input.repo);
@@ -183,11 +273,84 @@ function placementFiles(self: SeatManager, input: CreateSeat): string[] {
   return [...new Set([...(input.files ?? []), ...inherited].map(normalizeFile).filter(Boolean))];
 }
 
+function refuseUnsupportedFamily(family: Family, stateDir: string): void {
+  const supported = readInstallSetting(stateDir, 'routing.supportedFamilies') as string[];
+  if (!supported.includes(family)) throw new Error(`${family} is removed from supported families; add it back before creating a seat`);
+}
+
+function enforceMaxOpen(self: SeatManager): void {
+  const max = readInstallSetting(self.options.stateDir, 'seats.maxOpen') as number | null;
+  if (max === null) return;
+  const count = Object.entries(self.store.seatCounts()).reduce((sum, [status, n]) => sum + (status === 'closed' ? 0 : n), 0);
+  if (count >= max) throw new Error(`seats.maxOpen limit ${max} reached (${count} open seats); close a seat or raise the limit`);
+}
+
+function configuredInstruments(stateDir: string, override: unknown) {
+  const instruments = effectiveInstruments(override);
+  for (const key of INSTRUMENT_KEYS) {
+    const enabled = readInstallSetting(stateDir, `instruments.${key}`) as boolean;
+    instruments[key] = enabled && instruments[key];
+  }
+  return instruments;
+}
+
+type DefaultSkip = { value: PlatformNeed; cause: string };
+
+/** Why this seat is confined to this Mac, reusing the placement rules: claude or motion (macOnlyPin),
+ * the native harness, an A/B stand arm, or a desktop-runtime file (desktopRuntimeFile) (task 3459). */
+function macPinnedCause(input: CreateSeat, role: SeatRole, files: readonly string[]): string | null {
+  const pin = macOnlyPin(input.family as Family, role);
+  if (pin) return pin.tail;
+  if (input.harness === 'native') return 'native harness runs on this Mac';
+  if (input.standArm !== undefined) return 'an A/B stand arm runs on this Mac only';
+  const desktopFile = desktopRuntimeFile(role, files);
+  return desktopFile === undefined ? null : `this Mac's desktop runtime (${desktopFile}) requires this Mac`;
+}
+
+/** The install default resolves through the same path as an explicit need (task 3459), except for
+ * a seat confined to this Mac — native harness, A/B stand arm, claude or motion (macOnlyPin), a
+ * desktop-runtime file (desktopRuntimeFile) and, folded in at its own check, an oversized snapshot.
+ * Those keep today's omitted-needs placement with no refusal, and the placement reason names the
+ * cause. Explicit needs and hosts are untouched; a host-bound scout keeps its parent's machine. */
+function defaultPlacement(self: SeatManager, input: CreateSeat, role: SeatRole, files: readonly string[]): { need: PlatformNeed; skip?: DefaultSkip } {
+  if (input.needs !== undefined || input.host !== undefined) return { need: 'any' };
+  if (input.parent !== undefined && typeof self.store.getSeat(input.parent)?.data.host === 'string') return { need: 'any' };
+  const need = readInstallSetting(self.options.stateDir, 'machines.defaultPlacement') as PlatformNeed;
+  if (need === 'any') return { need: 'any' };
+  const cause = macPinnedCause(input, role, files);
+  return cause === null ? { need } : { need: 'any', skip: { value: need, cause } };
+}
+
+/** The prefix that names a skipped install default and its cause (task 3459). */
+function skipNoteFor(skip: DefaultSkip | undefined): string {
+  return skip ? `machines.defaultPlacement ${skip.value} does not apply: ${skip.cause}; ` : '';
+}
+
+/** The placement journal's need note: the lead's need needs none, a resolved default names itself,
+ * and the omitted note names a skipped default's cause (task 3459). */
+function needNoteFor(input: CreateSeat, needs: PlatformNeed, skip: DefaultSkip | undefined): string {
+  if (input.needs !== undefined) return '';
+  if (needs !== 'any') return `needs ${needs} (machines.defaultPlacement): `;
+  return `${skipNoteFor(skip)}needs omitted (${skip ? '' : 'default any; '}decision #12591): `;
+}
+
+/** The unprobed journal reason: the lead's stated need, a resolved default, or the omitted text
+ * whose tail says why the seat stays on this Mac (task 3459). */
+function unprobedReason(input: CreateSeat, needs: PlatformNeed, needNote: string, probing: boolean): string {
+  if (input.needs !== undefined) return macPinNote(input.needsReason);
+  if (needs !== 'any') return macPinNote('machines.defaultPlacement');
+  return `${needNote}${probing ? 'no registered hosts; this Mac' : `${input.family === 'claude' ? 'claude' : input.standArm !== undefined ? 'standArm' : 'native harness'} stays on this Mac`}, not probed`;
+}
+
 export async function createSeat(self: SeatManager, input: CreateSeat, choose: Choose & { replaces?: string }, skillMap?: string, images?: boolean, onCoderChain = false): Promise<Seat> {
     const createStart = Date.now();
     if (!Object.hasOwn(ROLE_POLICY, input.role)) throw new Error(`role must be one of ${Object.keys(ROLE_POLICY).join(', ')}`);
     const role = input.role as SeatRole;
+    const filesForPlacement = placementFiles(self, input);
+    const writeScope = extraWriteScope(input.writeScope, writeScopeOf(role) !== undefined);
     if (input.family !== undefined && !(FAMILIES as readonly string[]).includes(input.family)) throw new Error(`family must be one of ${FAMILIES.join(', ')}`);
+    // The creator's handle resolves once here, from the session's live binding at create (task 3419).
+    const creatorHandle = await creatorLeadHandle(self, role, input, choose);
     if (input.harness !== undefined && input.harness !== 'pi' && input.harness !== 'native') throw new Error("harness must be 'pi' or 'native'");
     if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200) throw new Error('title must be 1..200 characters');
     for (const [name, value] of [['model', input.model], ['effort', input.effort]] as const) {
@@ -210,7 +373,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     if (critic && input.effort !== undefined) throw new Error("a critic's effort comes from the reviewer matrix (high); do not pass effort");
     if (critic && input.harness === 'native') throw new Error('a critic needs its reviewer-matrix model, which the native harness would drop; use the pi harness');
     // Refused at creation, not silently all-on: a mistyped arm would measure the wrong thing.
-    const instruments = effectiveInstruments(input.instruments);
+    const instruments = configuredInstruments(self.options.stateDir, input.instruments);
     if (input.standArm !== undefined && !isStandArm(input.standArm)) throw new Error(`unknown stand arm '${String(input.standArm)}'`);
     if (input.standArm === 'no-codegraph') {
       if ((input.instruments as Record<string, unknown> | undefined)?.codegraph === true) throw new Error('no-codegraph arm cannot enable codegraph');
@@ -218,7 +381,11 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     }
     const policy = ROLE_POLICY[role];
     if (input.needs !== undefined && !(PLATFORM_NEEDS as readonly unknown[]).includes(input.needs)) throw new Error(`needs must be one of ${PLATFORM_NEEDS.join(', ')}`);
-    const needs = (input.needs ?? 'any') as PlatformNeed;
+    const resolved = defaultPlacement(self, input, role, filesForPlacement);
+    let needs = (input.needs ?? resolved.need) as PlatformNeed;
+    let defaultSkip = resolved.skip;
+    // A directed need names a machine: the lead's, or the install default resolved through the explicit path.
+    let directed = input.needs !== undefined || needs !== 'any';
     if (input.host !== undefined && input.harness === 'native') throw new Error('remote seats require the pi harness; native is not supported');
     // A stand arm runs Pi with a Mac-local HOME and profile, which remote Pi refuses at its first turn.
     if (input.host !== undefined && input.standArm !== undefined) throw new Error('an A/B stand arm runs on this Mac only; host is not supported with standArm');
@@ -235,7 +402,6 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     let hostName = parentHost ?? input.host;
     let remoteHost = hostName === undefined ? null : readHost(hostName, self.options.stateDir);
     // An explicit host picks the machine, but never over a need it contradicts: mac is this Mac, win a win32 host (decision #12522).
-    const filesForPlacement = placementFiles(self, input);
     const desktopFile = filesForPlacement.find(touchesMacDesktop);
     if (remoteHost && desktopFile) throw new Error(`host ${hostName} contradicts ${desktopFile}: this Mac's desktop runtime requires this Mac`);
     if (remoteHost && input.needs === 'mac') throw new Error(`host ${hostName} contradicts needs mac: mac means this Mac (decision #12522); omit host or pass needs any`);
@@ -264,12 +430,19 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     if (reviewRights(role) && input.base === undefined && !input.snapshot) throw new Error(`a ${role} reviews the accumulated diff: give \`base\` (the commit that holds the whole change; name its diff range in the brief) or \`snapshot\` (your uncommitted work)`);
     const hosts = probing && !remoteHost ? readHosts(self.options.stateDir) : {};
     // Without hosts, the omitted need has no other machine to rank: preserve the local, unprobed path.
-    const shouldProbe = !remoteHost && probing && (input.needs !== undefined || Object.keys(hosts).length > 0);
+    const shouldProbe = !remoteHost && probing && (directed || Object.keys(hosts).length > 0);
     const commit = policy.worktree === 'none' && !remoteHost && !shouldProbe ? null : input.snapshot ? await snapshotCommit(top) : await resolveCommit(top, input.base ?? 'HEAD');
     const snapshotSize = input.snapshot && commit ? await snapshotBytes(top, commit) : null;
     const snapshotLimit = self.options.snapshotRemoteMaxBytes ?? SNAPSHOT_REMOTE_MAX_BYTES;
     const oversizedSnapshot = snapshotSize !== null && snapshotSize > snapshotLimit;
     const snapshotReason = oversizedSnapshot ? `snapshot ${snapshotSize} bytes exceeds remote limit ${snapshotLimit} bytes; stays on this Mac` : null;
+    // The install default never moves a snapshot too large for a host (task 3459): the seat keeps
+    // the omitted-needs path and the snapshot reason; only an explicit need may refuse it below.
+    if (oversizedSnapshot && input.needs === undefined && needs !== 'any') {
+      defaultSkip = { value: needs, cause: 'the snapshot is too large for a host' };
+      needs = 'any';
+      directed = false;
+    }
     if (oversizedSnapshot && (hostName !== undefined || needs === 'win')) {
       const directories = await largestUntrackedSnapshotDirs(top, commit!);
       throw new Error(`snapshot ${snapshotSize} bytes exceeds remote limit ${snapshotLimit} bytes; cannot use ${hostName !== undefined ? `host ${hostName}` : 'needs win'}. Largest untracked top-level directories: ${directories}; ignore or move them before creating a remote snapshot seat`);
@@ -301,7 +474,8 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     const avoid = new Set<Family>();
     const paused = new Set(readPaused(self.options.stateDir));
     const MODEL_RULE = 'a reviewer or critic never runs the model of the author, a coauthor or an earlier reviewer (model rule)';
-    const modelHolders: { seat: Seat; why: string }[] = [];
+    const independence = readInstallSetting(self.options.stateDir, critic ? 'logic.independence.planAuthorCritic' : 'logic.independence.authorReviewer');
+    const modelHolders: ModelHolder[] = [];
     const familyAside = new Set<Family>();
     const blockedModels = new Map<string, string>();
     const refreshAvoid = () => {
@@ -323,8 +497,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
           && typeof author.data.base === 'string' && commit === author.data.base) {
           throw new Error(`review commit ${commit} is the commit author ${author.id} started from; use repo: ${author.worktree ?? author.cwd}, snapshot: true, author: ${author.id}, or a base commit that holds the change`);
         }
-        avoid.add(author.family as Family);
-        modelHolders.push({ seat: author, why: `author ${author.id}` });
+        writerAside(avoid, modelHolders, author, `author ${author.id}`, independence);
         claudeMayReview = (reviewRights(role) || critic) && author.family !== 'claude';
         if (author.family === 'claude') claudeWriters.push(`author ${author.id}`);
       }
@@ -332,8 +505,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
         if (id === input.author) throw new Error(`coauthor: ${id} is the author; name it once, in author`);
         const coauthor = self.store.getSeat(id);
         if (!coauthor || !landable(coauthor.role)) throw new Error(`coauthor: ${id} must name an existing coder seat`);
-        avoid.add(coauthor.family as Family);
-        modelHolders.push({ seat: coauthor, why: `coauthor ${coauthor.id}` });
+        writerAside(avoid, modelHolders, coauthor, `coauthor ${coauthor.id}`, independence);
         if (coauthor.family === 'claude') {
           claudeMayReview = false;
           claudeWriters.push(`coauthor ${coauthor.id}`);
@@ -342,7 +514,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
       // Claude reviewers need a named non-Claude author and only non-Claude coauthors (#13728).
       // Critics may omit author, but no named author/coauthor may be Claude (#13875).
       // Both may share a Claude lead's family when these writer conditions hold.
-      if ((reviewRights(role) || critic) && !claudeMayReview) {
+      if ((reviewRights(role) || critic) && !claudeMayReview && independence === 'different-family') {
         avoid.add('claude');
         if (input.family === 'claude') throw new Error(critic
           ? `a claude plan critic requires a plan no claude seat wrote, even when family is named explicitly; claude wrote it as ${claudeWriters.join(', ')}`
@@ -352,7 +524,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
       }
       // Coders may share the lead's family (#11829). Eligible Claude reviewers and critics
       // may too (#13728, #13875); other lead families retain their step-asides.
-      if (reviewRights(role) || (input.family === undefined && role !== 'coder')) {
+      if (leadFamilyAside(role, independence, input.author) && (reviewRights(role) || (input.family === undefined && role !== 'coder'))) {
         for (const lead of choose.leadFamilies ?? []) {
           if (lead !== 'claude' || !claudeMayReview) avoid.add(lead);
         }
@@ -421,22 +593,14 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
           if (options === undefined && otherOptions === undefined) continue;
           if (!same) throw new Error(`every open debater of "${title}" must carry the identical options list (operator #19423); ${other.id} carries ${otherOptions === undefined ? 'none' : JSON.stringify(otherOptions)}`);
         }
-        const wanted = (family?: Family) => seatModel({ role, family, data: { model: input.model ?? null } });
-        for (const other of self.debaterSiblings(title, main)) {
-          const otherModel = seatModel(other);
-          if (otherModel === undefined) continue;
-          if (input.family !== undefined || input.model !== undefined) {
-            if (wanted(input.family as Family) === otherModel) throw new Error(`${other.id} already debates "${title}" on model ${otherModel}: the two debaters of one fork never run the same model (operator #16088); leave family and model out, or name a family with another model`);
-          } else {
-            for (const candidate of Object.keys(roleMatrix()[role]) as Family[]) if (wanted(candidate) === otherModel) avoid.add(candidate);
-          }
-        }
+        debaterAside(avoid, self.debaterSiblings(title, main), input, readInstallSetting(self.options.stateDir, 'logic.independence.debaterDebater'));
       }
     };
     refreshAvoid();
     // A win need never stays on the Mac, so its family must run remotely too.
     const remoteBound = remoteHost !== null || (placing && needs === 'win');
     const runnable = (candidate: Family) => (!remoteBound || candidate !== 'claude') && hasAdapter(candidate, (remoteBound ? 'pi' : input.harness ?? defaultHarness(candidate)) as Harness);
+    requireReviewAuthor(input, choose, independence, avoid, runnable, paused);
     // Image input is a prohibition in the same synchronous step as the model filter (task 2385):
     // rankFamilies drops avoided families before the emergency choice and the coder cap.
     const imageAside = new Map<Family, string>();
@@ -470,13 +634,14 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
     let picked: string | null = null;
       if (input.family !== undefined) {
         family = input.family as Family;
+        refuseUnsupportedFamily(family, self.options.stateDir);
         if (paused.has(family)) throw new Error(`${family} is paused; unpause it before creating a ${role} seat`);
         if (!roleMatrix()[role][family]) throw new Error(critic
           ? `${family} does not take a critic seat; a critic picks from the reviewer matrix: ${Object.keys(roleMatrix().reviewer).join(', ')}`
           : `${family} does not take a ${role} seat; ${role}: ${Object.keys(roleMatrix()[role]).join(', ')}`);
-        if (critic && (choose.leadFamilies ?? []).includes(family) && (family !== 'claude' || avoid.has('claude'))) throw new Error(`${family} is the lead's own family: only claude may take a plan critic seat under its own lead, when no named author or coauthor is claude, even when family is named explicitly`);
+        if (critic && leadFamilyAside(role, independence, input.author) && (choose.leadFamilies ?? []).includes(family) && (family !== 'claude' || avoid.has('claude'))) throw new Error(`${family} is the lead's own family: only claude may take a plan critic seat under its own lead, when no named author or coauthor is claude, even when family is named explicitly`);
         const { loads, reservations } = self.pickInputs(choose, role, input.model, accountingRole({ role, data: { critic } }));
-        const row = rankFamilies(role, loads, avoid, runnable, Date.now(), input.model, reservations).find((row) => row.family === family);
+        const row = rankFamilies(role, loads, avoid, runnable, Date.now(), input.model, reservations, new Map(), new Map(), self.options.stateDir).find((row) => row.family === family);
         if (row?.reserveHit) throw new Error(`${family} reserve ${row.reserve}% kept for hermes-agent; cannot create a ${role} seat`);
         if (input.model !== undefined) {
           const spent = spentModelWindow(family, input.model);
@@ -500,7 +665,7 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
           }
         }
         const { loads, reservations, workingCoders, workingSeats, tiers } = self.pickInputs(choose, role, input.model, accountingRole({ role, data: { critic } }));
-        const pace = pickFamily(role, loads, avoid, runnable, Date.now(), paused, input.model, reservations, workingCoders, workingSeats, tiers);
+        const pace = pickFamily(role, loads, avoid, runnable, Date.now(), paused, input.model, reservations, workingCoders, workingSeats, tiers, self.options.stateDir);
         ({ family, why: picked } = pace);
         // Operator #12590: an auto-picked Mac-only coder family steps aside when the probe already taken for placement
         // ranks a host lighter than this Mac, the same way a capped family steps aside. A named family, needs mac,
@@ -508,10 +673,10 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
         if (landable(role) && family === 'claude' && hostName === undefined && needs === 'any' && probed && Object.keys(hosts).length > 0) {
           const active = self.activeByTarget();
           const candidate = (target: Target, platform: NodeJS.Platform): Candidate => ({ platform, probe: probed.get(target)!, activeSeats: active.get(target) ?? 0 });
-          const lighter = lighterHost({ taskFiles: input.files ?? [], instruments, local: candidate('local', process.platform),
+          const lighter = lighterHost({ taskFiles: input.files ?? [], instruments, stateDir: self.options.stateDir, local: candidate('local', process.platform),
             hosts: Object.fromEntries(Object.entries(hosts).map(([name, host]) => [name, candidate(name, host.platform)])) });
           if (lighter) try {
-            const repick = pickFamily(role, loads, new Set([...avoid, 'claude' as Family]), runnable, Date.now(), paused, input.model, reservations, workingCoders, workingSeats, tiers);
+            const repick = pickFamily(role, loads, new Set([...avoid, 'claude' as Family]), runnable, Date.now(), paused, input.model, reservations, workingCoders, workingSeats, tiers, self.options.stateDir);
             family = repick.family;
             picked = `claude runs native on this Mac only and ${lighter} ranks lighter, so claude steps aside (operator #12590); ${repick.why}`;
           } catch { /* no Pi family left: claude stays */ }
@@ -519,25 +684,24 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
       }
       // The placement journal (decision #12522): the lead's need, where the seat runs and why.
       // needs is null only beside an explicit host with no need given: the host, not a default, chose the machine.
+      const needNote = needNoteFor(input, needs, defaultSkip);
       let placement: { needs: PlatformNeed | null; target: Target; reason: string };
-      if (snapshotReason) placement = { needs, target: 'local', reason: snapshotReason };
+      if (snapshotReason) placement = { needs, target: 'local', reason: `${skipNoteFor(defaultSkip)}${snapshotReason}` };
       else if (hostName !== undefined) placement = { needs: (input.needs as PlatformNeed | undefined) ?? null, target: hostName, reason: 'explicit host from the lead' };
-      else if (!probed) placement = { needs, target: 'local', reason: input.needs === undefined
-            ? `needs omitted (default any; decision #12591): ${probing ? 'no registered hosts; this Mac' : `${input.family === 'claude' ? 'claude' : input.standArm !== undefined ? 'standArm' : 'native harness'} stays on this Mac`}, not probed`
-            : macPinNote(input.needsReason) };
+      else if (!probed) placement = { needs, target: 'local', reason: unprobedReason(input, needs, needNote, probing) };
       else {
         const active = self.activeByTarget();
         const candidate = (target: Target, platform: NodeJS.Platform): Candidate => ({ platform, probe: probed.get(target)!, activeSeats: active.get(target) ?? 0 });
-        // Only the omitted need may fall back when every load probe failed. An explicit any/win still refuses.
-        const allFailed = input.needs === undefined && probed.get('local')?.ok === false &&
+        // Only the omitted or default-skipped need may fall back when every load probe failed. An explicit any/win, and a default resolved through the explicit path, still refuses.
+        const allFailed = !directed && probed.get('local')?.ok === false &&
           Object.keys(hosts).every((name) => probed.get(name)?.ok === false);
         if (allFailed) {
           const failures = [...probed].map(([target, probe]) => `${target} probe failed: ${probe.ok === false ? probe.error : ''}`).join('; ');
-          placement = { needs, target: 'local', reason: `needs omitted (default any; decision #12591): no probe succeeded; this Mac is the fallback; ${failures}` };
+          placement = { needs, target: 'local', reason: `${needNote}no probe succeeded; this Mac is the fallback; ${failures}` };
         } else {
-          const placed = placeSeat({ role, family, taskFiles: filesForPlacement, need: needs, instruments, local: candidate('local', process.platform),
+          const placed = placeSeat({ role, family, taskFiles: filesForPlacement, need: needs, instruments, stateDir: self.options.stateDir, local: candidate('local', process.platform),
             hosts: Object.fromEntries(Object.entries(hosts).map(([name, host]) => [name, candidate(name, host.platform)])) });
-          placement = { needs, ...placed, reason: `${input.needs === undefined ? 'needs omitted (default any; decision #12591): ' : ''}${placed.reason}` };
+          placement = { needs, ...placed, reason: `${needNote}${placed.reason}` };
           if (placed.target !== 'local') { hostName = placed.target; remoteHost = hosts[placed.target]; }
         }
       }
@@ -557,13 +721,14 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
       const profile = roleMatrix()[role][family]!;
       const model = input.model ?? (harness === 'pi' || family === 'claude' ? profile.model : undefined);
       const effort = input.effort ?? profile.effort ?? undefined;
+      const independenceWarning = createIndependenceWarning(role, independence, self.options.stateDir);
       if (needsImages && typeof model === 'string' && imageInput(model) === null) {
         const note = `image input of ${model} is unknown`;
         picked = picked ? `${picked}; ${note}` : note;
       }
       // Decision #17805 D2: when no creating session resolved, the step-aside still covers every
       // active lead family; `picked` says so, so the lead knows to pass `session` and narrow it.
-      if ((reviewRights(role) || (input.family === undefined && role !== 'coder')) && typeof choose.leadAsideNote === 'string') {
+      if (leadFamilyAside(role, independence, input.author) && (reviewRights(role) || (input.family === undefined && role !== 'coder')) && typeof choose.leadAsideNote === 'string') {
         picked = picked ? `${picked}; ${choose.leadAsideNote}` : choose.leadAsideNote;
       }
       const id = `${role}-${family}-${randomBytes(3).toString('hex')}`;
@@ -593,13 +758,15 @@ export async function createSeat(self: SeatManager, input: CreateSeat, choose: C
         tableId = typeof inherited === 'string' && inherited ? inherited : randomBytes(6).toString('hex');
       }
       const provisionHeld = self.draining && role !== 'scout' && role !== 'critic' && !borrowedRemote && Boolean(worktree || remoteDir);
+      // No await between this count and insertSeat: simultaneous creates cannot both take the last slot.
+      enforceMaxOpen(self);
       const seat = self.store.insertSeat({
         id, role, family, title,
         status: borrowedRemote ? 'ready' : worktree || remoteDir ? 'provisioning' : 'ready',
         cwd: remoteDir ?? worktree ?? top,
         worktree,
-        data: { ...(provisionHeld ? { provisionHeld: true } : {}), harness, access: policy.access, model: model ?? null, matrixModel: profile.model, effort: effort ?? null, picked, placement, repo: top, main, base: remoteHost || policy.worktree !== 'none' ? commit : null, snapshot: input.snapshot === true, branch, author: input.author ?? null, ...(coauthors !== undefined ? { coauthors } : {}),
-          ...(taskFiles.length ? { taskFiles } : {}), ...(choose.leadFamily ? { leadFamily: choose.leadFamily } : {}), sessionId: null, providerModel: null, instruments, ...(remoteDir ? { host: hostName, remoteDir, ...(borrowedRemote ? { borrowedRemote: true, remoteMcpConfig: remotePiMcpPath(remoteHost!, remoteDir) } : { remoteCheckoutOwned: false }) } : {}), ...(mirror ? { mirror } : {}), ...(input.request_id !== undefined ? { requestId: input.request_id } : {}), ...(input.standArm !== undefined ? { standArm: input.standArm } : {}), ...(input.parent !== undefined ? { parent: input.parent } : {}), ...(needsImages ? { images: true } : {}), ...(options !== undefined ? { options } : {}), ...(tableId !== undefined ? { tableId } : {}), ...(input.leadHandle !== undefined ? { leadHandle: input.leadHandle } : {}) },
+        data: { independenceWarning, leadSession: choose.leadSession, ...(provisionHeld ? { provisionHeld: true } : {}), harness, access: policy.access, model: model ?? null, matrixModel: profile.model, effort: effort ?? null, picked, placement, repo: top, main, base: remoteHost || policy.worktree !== 'none' ? commit : null, snapshot: input.snapshot === true, branch, author: input.author ?? null, ...(coauthors !== undefined ? { coauthors } : {}),
+          writeScope, ...(taskFiles.length ? { taskFiles } : {}), ...(choose.leadFamily ? { leadFamily: choose.leadFamily } : {}), sessionId: null, providerModel: null, instruments, ...(remoteDir ? { host: hostName, remoteDir, ...(borrowedRemote ? { borrowedRemote: true, remoteMcpConfig: remotePiMcpPath(remoteHost!, remoteDir) } : { remoteCheckoutOwned: false }) } : {}), ...(mirror ? { mirror } : {}), ...(input.request_id !== undefined ? { requestId: input.request_id } : {}), ...(input.standArm !== undefined ? { standArm: input.standArm } : {}), ...(input.parent !== undefined ? { parent: input.parent } : {}), ...(needsImages ? { images: true } : {}), ...(options !== undefined ? { options } : {}), ...(tableId !== undefined ? { tableId } : {}), leadHandle: creatorHandle },
       });
       if (seat.status === 'provisioning' && !provisionHeld) self.queueProvision(seat);
       self.options.log('info', 'seat.created', { seat: id, target: placement.target, probeMs, createMs: Date.now() - createStart });

@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { harnessPaths, readHarnessConfig } from '../../scripts/lib/harness-config.mjs';
+import { installJevThreshold, JEV_THRESHOLD_KEYS, orchStateDir } from '../../scripts/lib/harness-settings.mjs';
 import { renderLessons } from '../../scripts/memory/lesson-lib.mjs';
 import { ask as askJev, jevFailureReason, JEV_MODEL } from './jev-client.mjs';
 import { extractTask, redact } from './jev-gate.mjs';
@@ -31,6 +32,10 @@ function priority(item, file, task) {
   }
   // File-wide, glob and numeric anchors retain full delivery when Jev is unavailable.
   return item.match === 'glob' || anchor === file || symbol ? 2 : 0;
+}
+
+function scoredAtLeast(score, admission) {
+  return score !== null && score >= admission;
 }
 
 // Keep the original admission cap even when some admitted scores are paired.
@@ -70,10 +75,16 @@ function applyScores(queried, scores, scoreCache) {
 export async function renderLessonContext({ sources, brief, role, ask = askJev, timeoutMs,
   repoRoot = fileURLToPath(new URL('../..', import.meta.url)),
   cacheDir = join(harnessPaths({ home: homedir(), prefix: readHarnessConfig({ repoRoot }).names.prefix }).cacheDir, 'lesson-router'),
-  budget = LESSON_CONTEXT_BYTES, scoreCache, rescoreIds,
+  settingsDir = orchStateDir(),
+  budget = LESSON_CONTEXT_BYTES, scoreCache, rescoreIds, maxLessons = null,
 } = {}) {
   if (!Number.isSafeInteger(budget) || budget < 1024) throw new RangeError('lesson budget must be at least 1024 bytes');
+  validateLessonCount(maxLessons);
   const task = extractTask(brief);
+  // The delivery threshold is install scope. A corrupt file or an invalid stored value throws
+  // naming it (the default never hides a broken store); callers report that throw the way they
+  // report every other router fault (context.ts marks the board; the lessons hook allows).
+  const admission = installJevThreshold(settingsDir, JEV_THRESHOLD_KEYS.lessonDelivery);
   const candidates = new Map();
   const notices = [];
   for (const { file, envelope } of sources) {
@@ -150,11 +161,11 @@ export async function renderLessonContext({ sources, brief, role, ask = askJev, 
   const selected = new Set();
   for (const entry of entries) {
     // Symbol matches bypass Jev; broad anchors bypass only when no score is available.
-    if (entry.priority !== 3 && !(entry.score >= 0.6)
+    if (entry.priority !== 3 && !scoredAtLeast(entry.score, admission)
       && !(entry.priority === 2 && entry.score === null)) continue;
     const block = `## Lessons: ${entry.file}\n${entry.id ? `Memory ID: ${entry.id}\n` : ''}`
       + renderLessons(JSON.stringify({ items: [entry.item] })) + '\n';
-    if (bytes(bodies + block) > bodyBudget) continue;
+    if (!lessonFits(selected.size, maxLessons, bodies + block, bodyBudget)) continue;
     bodies += block;
     selected.add(entry);
   }
@@ -174,4 +185,12 @@ export async function renderLessonContext({ sources, brief, role, ask = askJev, 
     + (hidden ? `${hidden} more indexed lesson(s) did not fit; retrieve by task file.\n` : '');
   if (bytes(text) > budget) throw new Error('lesson context exceeded its byte budget');
   return { text, source, ...(reason ? { reason } : {}), bytes: bytes(text), selectedIds: [...selected].map((entry) => entry.id), indexedIds, deferred: deferred.length };
+}
+
+function validateLessonCount(count) {
+  if (count !== null && (!Number.isSafeInteger(count) || count < 0)) throw new RangeError('maxLessons must be null or a nonnegative integer');
+}
+
+function lessonFits(count, maximum, text, budget) {
+  return (maximum === null || count < maximum) && bytes(text) <= budget;
 }

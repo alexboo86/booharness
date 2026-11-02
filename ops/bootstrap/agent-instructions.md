@@ -18,6 +18,13 @@ subject's files (claude: `CLAUDE.md` + `.claude/skills`; codex/grok/kimi:
 A terse output style does not silence status: before a long run of tool
 calls, write one short status line (the desktop app flags a silent run).
 <!-- /runtime:claude -->
+<!-- runtime:codex -->
+**Context limit (operator order #21159, decision #21166).** When the
+lead-context hook reports the handover limit, that order is the operator's
+explicit request for a new thread: finish the step in hand, run the `next`
+skill's Codex new-chat route (`create_thread`) unasked, then do no further task
+work in this thread. Automatic compaction is not a handover.
+<!-- /runtime:codex -->
 
 ## Memory
 

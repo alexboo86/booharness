@@ -15,7 +15,7 @@ import { cachedBrightdataBalance } from './brightdata.ts';
 import { CODEX_DEFAULT } from './providers/codex.ts';
 import { TERMINAL_TURN, type TurnWatchRecord } from './store.ts';
 import { INSTRUMENTS } from './toolkinds.ts';
-import { codexEditEligible, codexEditWanted } from './codex-edit.ts';
+import { codexEditWanted } from './codex-edit.ts';
 import { hashlineEditWanted } from './hashline-edit.ts';
 import { budgetReading } from './profiles.ts';
 import { landable } from './seats-defs.ts';
@@ -25,12 +25,14 @@ import { formatPause, readPauseRecords } from './paused-families.ts';
 import { idleDays } from './prune.ts';
 import { RESERVED_HANDLE } from './chat.ts';
 import { FAMILY_LOGOS } from './family-logos.ts';
+import { PULT_FONTS, PULT_STYLES, pultHeader } from './pult-shell.ts';
 
 export type BoardSeat = {
   id: string;
   role: string;
   family: string;
   title: string;
+  writeScope?: import('./shared.entry.ts').ExtraWriteScope;
   status: string;
   /** Named remote host, or mac for this Mac. */
   host: string;
@@ -79,7 +81,7 @@ export const ACTIVE_LEAD_MINUTES = 10;
  * so the next poll scans again (task 2622 review: per-poll scans reached 93.5 ms).
  */
 const LEADS_TTL_MS = 10_000;
-export function leadsReader(store: Pick<Runtime['store'], 'listSeats'>): () => Promise<LeadRow[]> {
+export function leadsReader(store: Pick<Runtime['store'], 'listSeats' | 'supersededChatSessions'>): () => Promise<LeadRow[]> {
   let cache: { at: number; rows: Promise<LeadRow[]> } | null = null;
   return () => {
     const now = Date.now();
@@ -90,7 +92,13 @@ export function leadsReader(store: Pick<Runtime['store'], 'listSeats'>): () => P
       cache = entry;
       rows.catch(() => { if (cache === entry) cache = null; });
     }
-    return cache.rows;
+    // Bindings can change while the transcript scan is cached. Both board pages
+    // apply the current takeover evidence without waiting for another walk.
+    return cache.rows.then((rows) => {
+      if (!rows.length) return rows;
+      const hidden = store.supersededChatSessions(rows);
+      return hidden.size ? rows.filter((lead) => !hidden.has(lead.session)) : rows;
+    });
   };
 }
 const boardLeads = new WeakMap<Runtime['store'], () => Promise<LeadRow[]>>();
@@ -124,11 +132,11 @@ function scopeOf(role: string, turns: ReturnType<Runtime['store']['listTurns']>)
   return scope ? { scope } : {};
 }
 
-/** Only what orch passes to Pi and verifies at start: its own guard, the pinned edit extensions (never codex-edit on a win32 host, task 1956), the stand arm's profile. */
-function piExtensions(role: string, family: string, data: Record<string, any>, stateDir?: string): string[] {
+/** Only what orch passes to Pi and verifies at start: its own guard, the pinned edit extensions, the stand arm's profile. */
+function piExtensions(role: string, family: string, data: Record<string, any>): string[] {
   if (data.harness !== 'pi') return [];
   const seat = { role, family, access: data.access, harness: data.harness, standArm: data.standArm };
-  const codexEdit = codexEditWanted(seat) && codexEditEligible(typeof data.host === 'string' ? data.host : undefined, stateDir);
+  const codexEdit = codexEditWanted(seat);
   return ['orch-guard', ...(codexEdit ? ['codex-edit'] : []), ...(hashlineEditWanted(seat) ? ['hashline-edit'] : []), ...(typeof data.standArm === 'string' ? [`arm:${data.standArm}`] : [])];
 }
 
@@ -228,8 +236,9 @@ async function buildBoard(rt: Runtime, leads: () => LeadRow[] | Promise<LeadRow[
       effort: typeof data.effort === 'string' ? data.effort : seat.family === 'codex' ? CODEX_DEFAULT.effort : null,
       skills: data.skills && Array.isArray(data.skills.required) && Array.isArray(data.skills.listed) ? { required: data.skills.required, listed: data.skills.listed, router: data.skills.router && typeof data.skills.router.skills === 'string' && typeof data.skills.router.lessons === 'string' ? data.skills.router : null } : null,
       lessons,
-      extensions: piExtensions(seat.role, seat.family, data, rt.stateDir),
+      extensions: piExtensions(seat.role, seat.family, data),
       ...scopeOf(seat.role, turns),
+      writeScope: data.writeScope,
       parent: typeof data.parent === 'string' ? data.parent : null,
       scouts: scoutsOf.get(seat.id) ?? [],
     };
@@ -276,18 +285,8 @@ export const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>orch board</title>
+${PULT_FONTS}
 <style>
-:root {
-  --bg: #f4f4f2; --surface: #fcfcfb; --raised: #ffffff; --ink: #1c1c1a; --ink-2: #4a4a45; --muted: #85847d;
-  --line: #e4e3de; --track: #ebeae5; --accent: #465e80; --accent-soft: #e9edf3; --badge-ink: #304760; --badge-muted: #67665f;
-  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #bc3030; --critical-soft: #fbeaea; --on-critical: #ffffff; --warning-soft: #fdf4e1;
-  --shadow: 0 1px 2px rgba(0,0,0,.05);
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #121211; --surface: #1a1a19; --raised: #1f1f1d; --ink: #edece7; --ink-2: #c3c2bb; --muted: #8d8c85;
-    --line: #2d2c29; --track: #2a2926; --accent: #aabbd5; --accent-soft: #28313d; --badge-ink: #d9e3f1; --badge-muted: #aaa9a0; --critical: #ec8c8c; --critical-soft: #3a1f1f; --on-critical: #121211; --warning-soft: #3a3120;
-    --shadow: none; }
-}
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
 main { max-width: 1180px; margin: 0 auto; padding: 18px 16px 40px; }
@@ -320,7 +319,7 @@ h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: v
 .family-label > :last-child { display: inline-flex; align-items: center; }
 .family-label > .chip { min-height: 1.125rem; }
 .family-text { display: block; line-height: 1; }
-.family-logo { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; flex: none; }
+.family-logo { display: inline-flex; align-items: center; justify-content: center; width: 1.625rem; height: 1.625rem; flex: none; }
 .family-logo > svg { display: block; width: 100%; height: 100%; }
 .host { font-size: 11px; line-height: 16px; padding: 0 7px; border-radius: 999px; white-space: nowrap; font-weight: 700; flex: none; border: 1px solid; }
 .host.local { border-color: var(--accent); color: var(--accent); background: var(--raised); }
@@ -332,15 +331,21 @@ h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: v
 .state.error::before, .state.failed::before, .state.interrupted::before { background: var(--critical); }
 @keyframes pulse { 50% { opacity: .25; } }
 .meta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); margin-top: 8px; font-variant-numeric: tabular-nums; }
+.meta.scope-note { display: block; overflow-wrap: anywhere; text-transform: none; }
 .badges { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
 .badges.flat, .sect { display: flex; flex-direction: row; gap: 5px; flex-wrap: wrap; align-items: center; }
-.sect-label { font-size: 10px; line-height: 20px; width: 40px; flex: none; text-transform: uppercase; letter-spacing: .05em; color: var(--badge-muted); }
-.badge { font-size: 11px; line-height: 20px; padding: 0 8px; border-radius: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; border: 1px solid transparent; }
+.sect-label { font-size: 10px; line-height: var(--badge-line-height); width: var(--skills-label-width); flex: none; text-transform: uppercase; letter-spacing: .05em; color: var(--badge-muted); }
+.badge { font-size: 11px; line-height: var(--badge-line-height); padding: 0 8px; border-radius: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; border: var(--badge-border-width) solid transparent; }
+.sect.skills { display: grid; grid-template-columns: var(--skills-label-width) minmax(0, 1fr); align-items: start; width: 100%; }
+.skills > .sect-label { display: flex; justify-content: space-between; align-items: center; }
+.skills-badges { display: flex; flex-wrap: wrap; gap: inherit; min-width: 0; overflow: hidden; max-height: var(--skills-line-height, calc(var(--badge-line-height) + var(--badge-border-width) + var(--badge-border-width))); }
+.skills.open > .skills-badges { max-height: none; }
+.skills-toggle { background: none; border: 0; padding: 0; cursor: pointer; }
 .badge b { font-weight: 700; margin-left: 5px; }
 .badge.used, .badge.mcp { background: var(--accent-soft); color: var(--badge-ink); }
 .badge.unused { border: 1px dashed var(--line); color: var(--badge-muted); }
 .badge.missing { border: 1px solid var(--critical); color: var(--critical); background: var(--critical-soft); }
-.badge.other { background: var(--track); color: var(--ink-2); }
+.badge.other { background: var(--neutral-fill); color: var(--ink-2); }
 .badge.skill { font-style: italic; }
 .flags { margin: 10px 0 0; padding: 8px 10px 8px 26px; background: var(--warning-soft); border-radius: 8px; color: var(--ink); }
 .flags li { margin: 2px 0; }
@@ -371,7 +376,7 @@ details { margin-top: 22px; }
 details.sec[open] > summary { margin-bottom: 10px; }
 summary { cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
 .done-row { display: grid; grid-template-columns: minmax(0, 2fr) auto auto minmax(0, 3fr); gap: 12px; align-items: center; padding: 8px 2px; border-bottom: 1px solid var(--line); }
-.done-row .badges { margin-top: 0; flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+.done-row .badges { margin-top: 0; flex-direction: column; gap: .375rem; }
 .done-row .sect-label { width: auto; }
 #chatPosts { height: 18rem; overflow-y: auto; overflow-anchor: none; scrollbar-color: var(--muted) var(--surface); min-width: 0; }
 /* Stacked transcript (operator decision 14892): the message gets the row; time and author sit above it.
@@ -406,25 +411,183 @@ summary { cursor: pointer; font-size: 11px; text-transform: uppercase; letter-sp
 #chatForm :focus-visible, #chatPosts:focus-visible { outline: thin solid var(--accent); outline-offset: .15em; }
 #chatForm :disabled { opacity: .6; cursor: not-allowed; }
 #chat ::selection { background: var(--accent-soft); color: var(--ink); }
-/* A seat card's folded live turn (task 2883): text as paragraphs, thought muted, tool one monospace line. */
-.turnlog { margin-top: 10px; border-top: 1px solid var(--line); }
-.turnlog > summary { margin-top: 6px; }
-.turnlog-body { max-height: 16rem; overflow-y: auto; min-width: 0; margin-top: 4px; scrollbar-color: var(--muted) var(--surface); }
-.turnlog-body p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.turnlog-body .tool-line { margin: 3px 0; }
 @media (max-width: 640px) { .done-row { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; } }
+${PULT_STYLES}
+/* Solo Ledger components (operator 22285 and its amendment: take the reference's elements, not only colours). */
+/* The footer always sits at the bottom of the window. */
+body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; }
+main { flex: 1 0 auto; width: 100%; max-width: 90rem; padding: .5rem 2rem 2.5rem; min-height: 0; }
+header { display: block; margin: 0; }
+.muted { color: var(--muted); }
+.accent { color: var(--teal-ink); }
+.mono { font-family: var(--font-mono); font-size: .6875rem; font-variant-numeric: tabular-nums; }
+/* Light slate status strip under the top bar. */
+.pult-summary { display: flex; align-items: center; gap: .75rem 1.5rem; flex-wrap: wrap; padding: .75rem 2rem; background: var(--strip); color: var(--on-strip); border-bottom: var(--stroke) solid var(--outline); font: 600 .6875rem/1.4 var(--font-display); letter-spacing: .12em; text-transform: uppercase; }
+.pult-summary .summary { gap: .75rem 1.5rem; }
+.pult-summary .stat { background: none; border: 0; border-radius: 0; padding: 0; color: color-mix(in srgb, var(--on-strip) 60%, transparent); }
+.pult-summary .stat b { color: var(--on-strip); font-weight: 600; }
+.pult-summary .stat:first-child, .pult-summary .stat:first-child b { color: var(--teal-ink); }
+.pult-summary .stat:first-child::before, .gauge .lbl::before, .mix .lbl::before, .fam .name::before { content: ""; display: inline-block; width: .375rem; height: .375rem; border-radius: 50%; background: currentColor; margin-right: .5rem; vertical-align: middle; }
+.pult-summary .stat.alert, .pult-summary .stat.alert b { background: var(--mark); color: var(--on-mark); padding: .125rem .5rem; border-radius: .375rem; }
+.pult-summary #status { margin-left: auto; color: var(--on-strip); }
+.pult-summary #paused { color: var(--serious); }
+/* Section titles: outlined fold box, display heading, faint slash subtitle. */
+details.sec { margin-top: 0; padding-top: 2rem; border: 0; }
+details.sec > summary { display: flex; align-items: baseline; gap: .75rem; margin-bottom: 1.25rem; list-style: none; font: 700 1.375rem/1.2 var(--font-display); letter-spacing: -.01em; text-transform: none; color: var(--ink); }
+details.sec > summary::-webkit-details-marker { display: none; }
+/* One fold marker for the whole board: the glyph, its type and its open state come from these shared rules; only the box scale is per line (heading 1.5rem, skills badge 1.125rem, task 3433). */
+details.sec > summary::before, .skills-toggle::before { content: "+"; flex: none; align-self: center; display: inline-flex; align-items: center; justify-content: center; font: 700 .875rem/1 var(--font-mono); }
+details.sec > summary::before { width: 1.5rem; height: 1.5rem; border: var(--stroke) solid var(--outline); border-radius: .5rem; }
+.skills-toggle::before { box-sizing: border-box; width: 1.125rem; height: 1.125rem; border: var(--stroke) solid var(--outline); border-radius: .375rem; }
+details.sec[open] > summary::before, .skills-toggle[aria-expanded="true"]::before { content: "−"; background: var(--peach); }
+details.sec > summary::after { color: var(--faint); }
+#secLeads > summary::after { content: "/ Context"; }
+#secChat > summary::after { content: "/ Leads"; }
+#secMachines > summary::after { content: "/ Hosts"; }
+#secSeats > summary::after { content: "/ Live"; }
+#secLimits > summary::after { content: "/ Budget"; }
+#finishedBox > summary::after { content: "/ Ledger"; }
+/* Cells: 2px ink outline, 12px radius, inset highlight, tint per section. */
+.grid { gap: var(--pult-gap); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+.card { background: var(--raised); border: var(--stroke) solid var(--outline); border-radius: var(--pult-radius); padding: 1.25rem; box-shadow: var(--cell-shadow); min-width: 0; }
+.card.alert { background: var(--tint-clay); border-color: var(--outline); box-shadow: var(--cell-shadow); }
+#leads { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#leads .card { background: var(--tint-mint); padding: 1.5rem; }
+#leads .card.alert { background: var(--tint-clay); }
+#machines .card { background: var(--tint-slate); }
+#seats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#seats > .card { display: flex; flex-direction: column; gap: .75rem; }
+#seats > .card > .title { margin: 0; }
+#seats > .card > .row { flex-wrap: wrap; }
+#seats > .card > .meta, #seats > .card > .badges, #seats > .card > .flags { margin-top: 0; }
+#seats > .card > .badges:not(.flat) { display: flex; flex-direction: column; gap: .5rem; border-top: var(--stroke) dashed var(--line); padding-top: .75rem; }
+#seats .sect.skills { grid-column: 1 / -1; }
+#limits { grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); }
+#limits .card { background: var(--tint-sand); }
+#limits .fam { align-items: flex-start; text-align: left; gap: .375rem; }
+#chat .card { max-width: 65rem; margin: 0 auto; }
+/* Type: display titles, Inter body, JetBrains Mono figures. */
+.title { font: 600 .9375rem/1.35 var(--font-display); letter-spacing: -.01em; }
+.card > .title, .done-row .title { font: 500 .875rem/1.45 var(--font-body); }
+.big { font: 700 1.875rem/1 var(--font-mono); letter-spacing: -.025em; font-variant-numeric: tabular-nums; }
+#leads .big { margin: .75rem 0 .5rem; }
+.meta { gap: .75rem; color: var(--muted); font: .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+.sect-label { font: 600 .625rem/var(--badge-line-height) var(--font-display); letter-spacing: .12em; color: var(--muted); }
+/* One group per line; wrapped badges line up under the first badge, never under the label. */
+.badges { gap: .5rem; }
+.sect:not(.skills) { position: relative; padding-left: calc(var(--skills-label-width) + .5rem); gap: .375rem; }
+.sect:not(.skills) > .sect-label { position: absolute; left: 0; top: 0; width: var(--skills-label-width); }
+.sect.skills { column-gap: .5rem; row-gap: .375rem; }
+.skills-badges { gap: .375rem; }
+.skills > .sect-label { gap: .25rem; }
+/* The skills fold marker comes from the shared rules above; the button is only its bare container. */
+.skills-toggle { display: inline-flex; align-items: center; flex: none; color: var(--ink); }
+.skills-toggle:hover::before { background: var(--peach); }
+/* Filled badge (role · family), outlined category chips (host, instruments, receipts), status pills. */
+.chip { display: inline-flex; align-items: center; padding: .125rem .625rem; border: var(--stroke) solid var(--teal-ink); border-radius: .5rem; background: transparent; color: var(--teal-ink); font: 600 .6875rem/1.4 var(--font-mono); }
+.family-label > .chip { min-height: 0; }
+.host { padding: 0 .5rem; border: var(--stroke) solid; border-radius: 999px; font: 600 .625rem/1.4rem var(--font-mono); text-transform: uppercase; background: transparent; }
+.host.local { border-color: var(--teal-ink); color: var(--teal-ink); background: transparent; }
+.host.remote { border-color: var(--ochre); color: var(--ochre-ink); background: transparent; }
+.badge { padding: 0 .5rem; border: var(--badge-border-width) solid var(--line); border-radius: 999px; background: transparent; color: var(--ink-2); font: 600 .625rem/var(--badge-line-height) var(--font-mono); text-transform: uppercase; }
+.badge b { margin-left: .375rem; font-weight: 700; color: var(--ink); }
+.badge.used { border-color: var(--green); color: var(--green-ink); background: transparent; }
+.badge.mcp, .badge.other { border-color: var(--teal-ink); color: var(--teal-ink); background: transparent; }
+.badge.unused { border: var(--badge-border-width) dashed var(--line); color: var(--muted); }
+.badge.missing { border-color: var(--critical); color: var(--critical); background: transparent; }
+.badge.skill { font-style: normal; }
+.state, .verdict { display: inline-flex; align-items: center; gap: .375rem; width: fit-content; padding: 0 .5rem; border: var(--stroke) solid currentColor; border-radius: 999px; background: color-mix(in srgb, currentColor 10%, transparent); color: var(--muted); font: 700 .625rem/1.4rem var(--font-mono); letter-spacing: 0; text-transform: uppercase; }
+.state::before, .state.running::before, .state.queued::before, .state.provisioning::before, .state.done::before, .state.error::before, .state.failed::before, .state.interrupted::before { width: .375rem; height: .375rem; background: currentColor; }
+.state.running, .state.queued, .state.provisioning { color: var(--teal-ink); }
+.state.done, .verdict.APPROVE { color: var(--green-ink); }
+.state.error, .state.failed, .state.interrupted, .verdict.REQUEST_CHANGES { color: var(--critical); }
+/* Highlighted due row (seat flags) and warning cell (drain, config). */
+.flags { margin: 0; padding: .5rem .75rem .5rem 1.75rem; list-style: "⚠  "; background: color-mix(in srgb, var(--ochre) 20%, transparent); border-bottom: var(--stroke) solid var(--outline); border-radius: .375rem; color: var(--ochre-ink); font: 600 .6875rem/1.5 var(--font-mono); }
+.drain-banner { display: inline-flex; gap: .5rem; margin: 1.5rem 0 0; padding: .5rem .75rem; border: var(--stroke) solid var(--outline); border-radius: .625rem; background: var(--tint-sand); color: var(--ochre-ink); font: 600 .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+.drain-banner::before { content: "⚠"; }
+.next { margin-top: 1rem; padding: .5rem .75rem; border-radius: .375rem; background: var(--band); color: var(--mark); font: 700 .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+/* Ring gauges with ink edges; labels with a dot; values in mono. */
+.ringbox { display: flex; gap: 1.5rem; align-items: center; }
+.ring .track { stroke: var(--bg); }
+.ring .edge { stroke: var(--outline); }
+.ring text { font: 700 .8125rem var(--font-mono); fill: var(--ink); }
+.gauges { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+.gauge { display: flex; flex-direction: column; align-items: center; gap: .25rem; flex: 1 1 0; min-width: 5.5rem; text-align: center; }
+.gauge .lbl, .mix .lbl { font: 600 .6875rem/1.4 var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--teal-ink); }
+.gauge .val { justify-self: auto; color: var(--muted); font: .625rem/1.4 var(--font-mono); text-transform: uppercase; white-space: normal; }
+.context-meter { flex: none; display: block; margin: 0; }
+.context-meter .gauge { min-width: 0; }
+/* Area sparkline of readings since the page opened. */
+.spark-box { margin-top: 1rem; }
+.spark { display: block; width: 100%; height: 3rem; }
+.spark .line { stroke: var(--green-ink); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
+.spark .area { fill: var(--green-ink); opacity: .12; }
+.spark-cap { display: flex; justify-content: space-between; color: var(--muted); font: .625rem/1.4 var(--font-mono); text-transform: uppercase; }
+/* Stacked mix bar with swatch legend (disk used / free). */
+.mix { display: grid; gap: .5rem; margin-top: 1rem; padding-top: .75rem; border-top: var(--stroke) dashed var(--line); }
+.mix-head { display: flex; justify-content: space-between; align-items: center; }
+.mix-head .mono { color: var(--muted); text-transform: uppercase; font-size: .625rem; }
+.mix-bar { display: flex; height: .75rem; border: var(--stroke) solid var(--outline); border-radius: .375rem; overflow: hidden; background: var(--bg); }
+.mix-bar i { display: block; height: 100%; }
+.mix-bar i + i { border-left: var(--stroke) solid var(--outline); }
+.mix-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; font: .625rem/1.4 var(--font-mono); }
+.mix-legend span { display: flex; align-items: center; gap: .375rem; color: var(--muted); text-transform: uppercase; }
+.mix-legend b { display: block; margin-top: .125rem; font-size: .875rem; color: var(--ink); }
+.swatch { width: .5rem; height: .5rem; border: 1px solid var(--outline); }
+.machine .errline { color: var(--critical); font: 600 .6875rem/1.5 var(--font-mono); }
+/* Family load cells. */
+.fam .name { font: 600 .875rem/1.3 var(--font-display); color: var(--ochre-ink); text-transform: capitalize; }
+.fam .mono, .fam .muted { font: .625rem/1.5 var(--font-mono); text-transform: uppercase; }
+/* Ledger rows: finished seats and chat posts. */
+.done-head, .done-row { display: grid; grid-template-columns: minmax(0, 2fr) 8rem 8rem minmax(0, 3fr); gap: 1rem; align-items: center; padding: 1rem .5rem; border-bottom: 1px solid var(--line); }
+.done-head { padding: .75rem .5rem; border-top: var(--stroke) solid var(--outline); border-bottom: var(--stroke) solid var(--outline); font: 600 .6875rem/1.4 var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+#finished { border-bottom: var(--stroke) solid var(--outline); }
+.done-row:last-child { border-bottom: 0; }
+.done-row:hover, .chat-post:hover { background: color-mix(in srgb, var(--peach) 30%, transparent); }
+.done-row > .muted { font: .75rem/1.4 var(--font-mono); }
+.done-row .row .muted { font: .625rem/1.4 var(--font-mono); text-transform: uppercase; }
+#chatHandles, #chatReadStatus { font: .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+#chatPosts { margin-top: 1rem; border-top: var(--stroke) solid var(--outline); border-bottom: var(--stroke) solid var(--outline); }
+.chat-post { padding: 1rem .5rem; }
+.chat-time { color: var(--ink); font: .75rem/1.4 var(--font-mono); text-transform: uppercase; }
+.chat-nick { font: 600 .875rem/1.4 var(--font-display); }
+.chat-to { font: .6875rem/1.5 var(--font-mono); text-transform: uppercase; }
+.chat-rc { padding: 0 .5rem; border: var(--stroke) solid var(--teal-ink); border-radius: 999px; background: transparent; color: var(--teal-ink); font: 600 .625rem/1.25rem var(--font-mono); text-transform: uppercase; }
+#chat label { font: 600 .6875rem/1.4 var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+#chatBody, #chatTo, #chatReleaseHandle { font: .8125rem/1.5 var(--font-body); color: var(--ink); background: var(--bg); border: var(--stroke) solid var(--outline); border-radius: .5rem; padding: .5rem .625rem; }
+#chatSend, #chatRelease { padding: .5rem 1rem; border: var(--stroke) solid var(--outline); border-radius: .625rem; font: 600 .75rem/1 var(--font-display); letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+#chatSend { background: var(--ink); color: var(--bg); }
+#chatRelease { background: var(--bg); color: var(--ink); }
+#chatSend:hover:not(:disabled), #chatRelease:hover { background: var(--peach); color: var(--ink); }
+#chatWake { appearance: none; position: relative; width: 2.25rem; height: 1.25rem; margin: 0 .5rem 0 0; vertical-align: middle; border: var(--stroke) solid var(--outline); border-radius: 999px; background: var(--bg); cursor: pointer; }
+#chatWake::before { content: ""; position: absolute; top: .125rem; left: .125rem; width: .75rem; height: .75rem; border-radius: 50%; background: var(--ink); transition: left .15s; }
+#chatWake:checked { background: var(--green); }
+#chatWake:checked::before { left: calc(100% - .875rem); background: var(--on-teal); }
+.pult-footer .stat { border: 0; background: transparent; padding: 0; color: var(--muted); }
+.pult-footer .stat b { color: var(--on-band); }
+.pult-footer .stat.alert, .pult-footer .stat.alert b { color: var(--critical); }
+#rtk { margin-left: 0; }
+@media (max-width: 45rem) {
+  main { padding: .5rem 1rem 2rem; }
+  .pult-summary { padding: .75rem 1rem; }
+  #leads, #seats { grid-template-columns: minmax(0, 1fr); }
+  #seats > .card > .badges:not(.flat) { grid-template-columns: minmax(0, 1fr); }
+  .ringbox { flex-direction: column; align-items: flex-start; }
+}
 </style>
 </head>
 <body>
+<header>
+${pultHeader('Board')}
+<div class="pult-summary">
+  <div class="summary" id="summary"></div>
+  <span class="muted" id="status">loading…</span>
+  <span class="stat" id="paused" hidden></span>
+</div>
+</header>
 <main>
 <div id="drain" role="status" class="stat drain-banner" hidden></div>
 <div id="config-health" role="status" class="stat drain-banner" hidden></div>
-<header>
-  <span class="dot" id="dot"></span><span class="brand">orch</span><nav aria-label="Main" style="display:inline-flex;border:thin solid var(--line);border-radius:.5rem;overflow:hidden;flex:none;font-weight:600"><a href="/" aria-current="page" style="padding:.375rem .875rem;text-decoration:none;background:var(--accent-soft);color:var(--accent)">Board</a><a href="/tasks" style="padding:.375rem .875rem;text-decoration:none;color:var(--ink-2)">Tasks</a></nav>
-  <div class="summary" id="summary"></div>
-  <span class="muted" id="status">loading…</span>
-  <span class="stat" id="paused" hidden></span><span class="stat" id="rtk" hidden></span><span class="stat" id="jev" hidden></span><span class="stat" id="brightdata" hidden></span>
-</header>
 <details class="sec" id="secLeads" open><summary>Lead</summary><div class="grid" id="leads"></div></details>
 <section id="chat" aria-labelledby="chatTitle">
 <details class="sec" id="secChat" open><summary id="chatTitle">Chat</summary>
@@ -438,7 +601,7 @@ summary { cursor: pointer; font-size: 11px; text-transform: uppercase; letter-sp
       <div class="row">
         <span id="chatCount" class="muted">0 / 600</span>
         <label for="chatTo">To (empty = all)</label><input id="chatTo" type="text" aria-label="To, comma-separated handles; empty means all">
-        <label><input id="chatWake" type="checkbox"> Wake · act now</label>
+        <label title="Wakes the addressed leads now. A Claude lead idle 40 minutes or more is compacted first, then the post is delivered (lead-wake, task 3428)."><input id="chatWake" type="checkbox"> Wake · act now</label>
         <button id="chatSend" type="submit" disabled>Send</button>
       </div>
       <div id="chatSendStatus" role="status" class="muted"></div>
@@ -456,6 +619,7 @@ summary { cursor: pointer; font-size: 11px; text-transform: uppercase; letter-sp
 <details class="sec" id="secLimits" open><summary>Family load · week and month</summary><div class="grid small" id="limits"></div></details>
 <details class="sec" id="finishedBox"><summary id="finishedTitle">Finished</summary><div id="finished"></div></details>
 </main>
+<footer class="pult-footer"><span>orch</span><span class="stat" id="rtk" hidden></span><span class="stat" id="jev" hidden></span><span class="stat" id="brightdata" hidden></span></footer>
 <script>
 const NS = 'http://www.w3.org/2000/svg';
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined && text !== null) n.textContent = String(text); return n; };
@@ -485,9 +649,33 @@ for (const sec of document.querySelectorAll('details.sec')) {
   if (saved !== null) sec.open = saved === '1';
   sec.addEventListener('toggle', () => { try { localStorage.setItem(key, sec.open ? '1' : '0'); } catch { /* not remembered */ } });
 }
+// Navigation reveals existing sections without changing their remembered fold state.
+const boardViews = { board: ['secLeads', 'secSeats', 'secMachines', 'secLimits', 'finishedBox'], machines: ['secMachines'], limits: ['secLimits'], chat: ['secChat'] };
+function showBoardView(view) {
+  if (!document.getElementById('secLeads')) return;
+  const selected = Object.hasOwn(boardViews, view) ? view : 'board';
+  const visible = boardViews[selected];
+  for (const id of ['secLeads', 'secMachines', 'secSeats', 'finishedBox', 'secLimits', 'secChat']) {
+    document.getElementById(id).hidden = !visible.includes(id);
+  }
+  document.querySelectorAll('.pult-nav [aria-current]').forEach((node) => node.removeAttribute('aria-current'));
+  const current = selected === 'board' ? document.querySelector('.pult-nav a[href="/"]') : document.querySelector('[data-board-view="' + selected + '"]');
+  if (current) current.setAttribute('aria-current', 'page');
+  measureSkillsRows();
+}
+document.querySelector('.pult-nav a[href="/"]')?.addEventListener('click', (event) => { event.preventDefault(); location.hash = 'board'; showBoardView('board'); });
+document.querySelectorAll('[data-board-view]').forEach((button) => button.addEventListener('click', () => { location.hash = button.dataset.boardView; showBoardView(button.dataset.boardView); }));
+window.addEventListener('hashchange', () => showBoardView(location.hash.slice(1)));
 // The transcript line's local HH:MM, and the stable nick tone: five palette classes, the operator accent (operator decision 14795).
 const hhmm = (iso) => { const at = new Date(iso); return String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0'); };
 const nickTone = (handle) => { let tone = 0; for (let index = 0; index < handle.length; index++) tone = (tone * 31 + handle.charCodeAt(index)) >>> 0; return 'c' + tone % 5; };
+async function boardResponse(response, label) {
+  let data;
+  try { data = await response.json(); }
+  catch { throw new Error(label + ' HTTP ' + response.status + ' (empty or non-JSON response)'); }
+  if (!response.ok) throw new Error(data && data.error || label + ' HTTP ' + response.status);
+  return data;
+}
 // Chat owns its polling and errors: neither feed waits for the other.
 function startChat() {
   const panel = document.getElementById('chat');
@@ -501,7 +689,7 @@ function startChat() {
   const to = document.getElementById('chatTo');
   const wake = document.getElementById('chatWake');
   const send = document.getElementById('chatSend');
-  let stopped = false, reading = false, sending = false, refreshPending = false, readOnly = false;
+  let stopped = false, reading = false, sending = false, refreshPending = false, readOnly = false, canRelease = false;
   let timer;
   const counter = () => {
     const chars = Array.from(body.value);
@@ -523,10 +711,11 @@ function startChat() {
         panel.hidden = true;
         return;
       }
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Chat HTTP ' + response.status);
+      const data = await boardResponse(response, 'Chat');
       readOnly = data.readOnly === true;
-      form.hidden = releaseForm.hidden = readOnly;
+      canRelease = !readOnly && data.canRelease !== false;
+      form.hidden = readOnly;
+      releaseForm.hidden = !canRelease;
       const handles = data.handles.map((binding) => binding.handle);
       // The daemon's liveness fact for the panel: how many /chat/wake polls it holds right now.
       handlesLine.textContent = 'Live handles: ' + (handles.join(', ') || 'none')
@@ -608,8 +797,7 @@ function startChat() {
       const response = await fetch('/chat/post', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Orch-Chat': '1' }, body: JSON.stringify(input),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Chat HTTP ' + response.status);
+      await boardResponse(response, 'Chat');
       body.value = '';
       sendStatus.textContent = 'Sent';
       // A successful send must refresh even if an older snapshot is still in flight.
@@ -631,15 +819,14 @@ function startChat() {
   releaseForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const handle = releaseHandle.value.trim();
-    if (stopped || readOnly || releasing || !handle) return;
+    if (stopped || !canRelease || releasing || !handle) return;
     releasing = true;
     releaseHandle.disabled = releaseButton.disabled = true;
     releaseStatus.textContent = 'Checking live session…';
     try {
       // Fetch at confirmation time, not from the last background snapshot.
       const snapshot = await fetch('/api/chat', { cache: 'no-store' });
-      const feed = await snapshot.json();
-      if (!snapshot.ok) throw new Error(feed.error || 'Chat HTTP ' + snapshot.status);
+      const feed = await boardResponse(snapshot, 'Chat');
       const binding = feed.handles.find((entry) => entry.handle === handle);
       if (!window.confirm('Release handle "' + handle + '" (' + (binding ? 'live session: ' + binding.session : 'no live session') + ')?')) {
         releaseStatus.textContent = '';
@@ -649,8 +836,7 @@ function startChat() {
       const response = await fetch('/chat/release', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Orch-Chat': '1' }, body: JSON.stringify({ handle }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Chat HTTP ' + response.status);
+      const data = await boardResponse(response, 'Chat');
       releaseHandle.value = '';
       releaseStatus.textContent = 'Released ' + data.handle;
       refreshPending = true;
@@ -670,18 +856,66 @@ const dur = (s) => s == null ? '' : s < 60 ? s + 's' : s < 3600 ? Math.floor(s /
 const ago = (iso) => { if (!iso) return ''; const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return dur(s) + ' ago'; };
 const tone = (pct, cuts) => pct == null ? 'var(--muted)' : pct >= cuts[2] ? 'var(--critical)' : pct >= cuts[1] ? 'var(--serious)' : pct >= cuts[0] ? 'var(--warning)' : 'var(--good)';
 
-function gauge(label, pct, text) {
+// A round gauge: the ring carries the percent, the label and the detail sit under it.
+function gauge(label, pct, text, size) {
   const row = el('div', 'gauge');
-  row.append(el('span', 'lbl', label));
-  const bar = el('div', 'bar');
-  if (pct != null) { const i = el('i'); i.style.width = Math.min(Math.max(pct, 0), 100) + '%'; i.style.background = tone(pct, [60, 80, 90]); bar.append(i); }
-  row.append(bar, el('span', 'val', text));
+  row.append(ring(pct, size || 64, tone(pct, [60, 80, 90]), pct == null ? '?' : pct + '%', label + ' ' + (pct == null ? '?' : pct + '%') + ' · ' + text));
+  row.append(el('span', 'lbl', label), el('span', 'val', text));
   return row;
 }
 
 const gb = (n) => n >= 100 ? Math.round(n) : n.toFixed(1);
 
-// One panel per machine (decision #12680): CPU, memory and disk bars; a machine with no reading yet says probing, a failed probe is an error line, never 0%.
+// CPU readings this page has seen per machine; the sparkline draws only real readings, two or more.
+const cpuSeen = new Map();
+function cpuHistory(m) {
+  const list = cpuSeen.get(m.name) || [];
+  if (m.load && m.load.ok && m.at && (!list.length || list[list.length - 1].at !== m.at)) list.push({ at: m.at, pct: m.load.load.cpuBusyPct });
+  if (list.length > 60) list.splice(0, list.length - 60);
+  cpuSeen.set(m.name, list);
+  return list;
+}
+
+function sparkline(list) {
+  const box = el('div', 'spark-box');
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'spark'); svg.setAttribute('viewBox', '0 0 300 60'); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'CPU busy, last ' + list.length + ' readings');
+  const pts = list.map((p, i) => (i * 300 / (list.length - 1)).toFixed(1) + ',' + (58 - Math.min(Math.max(p.pct, 0), 100) * 0.56).toFixed(1));
+  const line = document.createElementNS(NS, 'path'); line.setAttribute('class', 'line'); line.setAttribute('d', 'M' + pts.join(' L'));
+  const area = document.createElementNS(NS, 'path'); area.setAttribute('class', 'area'); area.setAttribute('d', 'M' + pts.join(' L') + ' L300,60 L0,60 Z');
+  svg.append(area, line);
+  const cap = el('div', 'spark-cap');
+  cap.append(el('span', '', 'CPU · ' + list.length + ' readings'), el('span', '', 'since ' + new Date(list[0].at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+  box.append(svg, cap);
+  return box;
+}
+
+// Disk as a stacked mix bar: used and free segments with a swatch legend.
+function diskMix(d, age) {
+  const used = d.totalGb - d.freeGb, usedPct = d.totalGb > 0 ? 100 * used / d.totalGb : 0;
+  const box = el('div', 'mix disk-capacity');
+  const head = el('div', 'mix-head');
+  head.append(el('span', 'lbl', 'Disk ' + Math.round(usedPct) + '%'), el('span', 'mono', gb(d.totalGb) + ' GB total' + (age ? ' · ' + age : '')));
+  const bar = el('div', 'mix-bar');
+  bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', 'Disk · ' + gb(used) + ' / ' + gb(d.totalGb) + ' GB used / total');
+  const u = el('i'); u.style.width = usedPct + '%'; u.style.background = tone(Math.round(usedPct), [60, 80, 90]);
+  const f = el('i'); f.style.flex = '1';
+  bar.append(u, f);
+  const legend = el('div', 'mix-legend');
+  for (const [name, value, fillColor] of [['Used', used, u.style.background], ['Free', d.freeGb, 'var(--bg)']]) {
+    const item = el('div');
+    const key = el('span');
+    const sw = el('i', 'swatch'); sw.style.background = fillColor;
+    key.append(sw, document.createTextNode(name));
+    item.append(key, el('b', '', gb(value) + ' GB'));
+    legend.append(item);
+  }
+  box.append(head, bar, legend);
+  return box;
+}
+
+// One panel per machine (decision #12680): CPU and memory rings, a CPU sparkline, the disk mix bar; a machine with no reading yet says probing, a failed probe is an error line, never 0%.
 function machine(m, seats) {
   const probing = !m.load;
   const failed = !probing && !m.load.ok;
@@ -702,15 +936,14 @@ function machine(m, seats) {
   const rows = el('div', 'gauges');
   if (!probing && !failed) {
     const l = m.load.load;
-    rows.append(gauge('CPU', Math.round(l.cpuBusyPct), Math.round(l.cpuBusyPct) + '% · ' + l.cpus + ' cpus'));
+    rows.append(gauge('CPU', Math.round(l.cpuBusyPct), l.cpus + ' cpus'));
     const memUsed = l.totalMemGb - l.freeMemGb, memPct = l.totalMemGb > 0 ? 100 * memUsed / l.totalMemGb : null;
-    rows.append(gauge('MEM', memPct == null ? null : Math.round(memPct), (memPct == null ? '?' : Math.round(memPct)) + '% · ' + gb(memUsed) + ' of ' + gb(l.totalMemGb) + ' GB' + (m.memAt && m.memAt !== m.at ? ' · ' + ago(m.memAt) : '')));
-  }
-  if (m.disk && m.disk.ok) {
-    const d = m.disk.disk, usedPct = d.totalGb > 0 ? 100 * (d.totalGb - d.freeGb) / d.totalGb : null;
-    rows.append(gauge('DISK', usedPct == null ? null : Math.round(usedPct), (usedPct == null ? '?' : Math.round(usedPct)) + '% · ' + gb(d.freeGb) + ' GB free' + (m.diskAt && m.diskAt !== m.at ? ' · ' + ago(m.diskAt) : '')));
+    rows.append(gauge('MEM', memPct == null ? null : Math.round(memPct), gb(memUsed) + ' of ' + gb(l.totalMemGb) + ' GB' + (m.memAt && m.memAt !== m.at ? ' · ' + ago(m.memAt) : '')));
   }
   if (rows.firstChild) c.append(rows);
+  const seen = cpuHistory(m);
+  if (seen.length >= 2) c.append(sparkline(seen));
+  if (m.disk && m.disk.ok) c.append(diskMix(m.disk.disk, m.diskAt && m.diskAt !== m.at ? ago(m.diskAt) : ''));
   if (m.disk && !m.disk.ok) {
     c.append(el('div', 'errline', 'disk unreadable: ' + m.disk.error));
   }
@@ -718,20 +951,22 @@ function machine(m, seats) {
 }
 
 function ring(pct, size, color, label, tip) {
-  const stroke = Math.max(5, Math.round(size / 9)), r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  // Ledger ring: a band between two ink edges; the arc fills the band from twelve o'clock.
+  const edge = 2, band = Math.max(8, Math.round(size / 6)), outer = size / 2 - edge / 2, inner = outer - band, r = (outer + inner) / 2, c = 2 * Math.PI * r;
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('class', 'ring'); svg.setAttribute('width', size); svg.setAttribute('height', size); svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);
   svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', tip || label);
-  const circle = (cls) => { const e = document.createElementNS(NS, 'circle'); e.setAttribute('cx', size / 2); e.setAttribute('cy', size / 2); e.setAttribute('r', r); e.setAttribute('fill', 'none'); e.setAttribute('stroke-width', stroke); if (cls) e.setAttribute('class', cls); return e; };
-  svg.append(circle('track'));
+  const circle = (cls, radius, width) => { const e = document.createElementNS(NS, 'circle'); e.setAttribute('cx', size / 2); e.setAttribute('cy', size / 2); e.setAttribute('r', radius); e.setAttribute('fill', 'none'); e.setAttribute('stroke-width', width); if (cls) e.setAttribute('class', cls); return e; };
+  svg.append(circle('track', r, band));
   if (pct != null) {
-    const arc = circle(); arc.setAttribute('stroke', color); arc.setAttribute('stroke-linecap', 'round');
+    const arc = circle(null, r, band); arc.setAttribute('stroke', color);
     arc.setAttribute('stroke-dasharray', (c * Math.min(Math.max(pct, 0), 100) / 100) + ' ' + c);
     arc.setAttribute('transform', 'rotate(-90 ' + size / 2 + ' ' + size / 2 + ')');
     svg.append(arc);
   }
+  svg.append(circle('edge', outer, edge), circle('edge', inner, edge));
   const t = document.createElementNS(NS, 'text'); t.setAttribute('x', '50%'); t.setAttribute('y', '50%'); t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central');
-  if (size >= 80) t.style.fontSize = '18px';
+  if (size >= 96) t.style.fontSize = '18px';
   t.textContent = label; svg.append(t);
   if (tip) { const title = document.createElementNS(NS, 'title'); title.textContent = tip; svg.append(title); }
   return svg;
@@ -742,14 +977,20 @@ const fill = (id, nodes, empty) => document.getElementById(id).replaceChildren(.
 function lead(l, instruments) {
   const c = el('div', 'card' + (l.over ? ' alert' : ''));
   const box = el('div', 'ringbox');
-  box.append(ring(l.percent, 88, tone(l.percent, [70, 85, 100]), l.percent + '%', k(l.tokens) + ' of the ' + k(l.limit) + ' /next limit'));
   const col = el('div', 'col');
   const top = el('div', 'row');
   top.append(familyLabel('span', 'chip', l.family, l.family === 'codex' ? 'Codex' : l.family === 'claude' ? 'Claude' : l.family), el('span', 'title', (l.cwd || '').split(/[\\\\/]/).filter(Boolean).slice(-2).join('/') || l.session));
   col.append(top, el('div', 'big', k(l.tokens) + ' / ' + k(l.limit)));
+  const meter = el('div', 'context-meter');
+  meter.append(gauge('Context', l.percent, '/next limit', 96));
+  meter.setAttribute('role', 'meter');
+  meter.setAttribute('aria-label', 'Lead context · ' + l.session);
+  meter.setAttribute('aria-valuemin', '0');
+  meter.setAttribute('aria-valuemax', '100');
+  meter.setAttribute('aria-valuenow', String(Math.min(100, Math.max(0, l.percent))));
   col.append(el('div', 'muted', [l.model, l.window ? 'window ' + k(l.window) : null, 'active ' + ago(l.updated)].filter(Boolean).join(' · ')));
   col.append(el('div', 'muted mono', l.session));
-  box.append(col); c.append(box);
+  box.append(meter, col); c.append(box);
   c.append(badges(l, instruments));
   if (l.over) c.append(el('div', 'next', 'Context past the limit: finish the step, write the handoff, run /next'));
   return c;
@@ -767,6 +1008,45 @@ function hostChip(s) {
 const MCP_INSTRUMENTS = ['codegraph', 'memoryctl'];
 // The tools a pinned edit extension registers; their calls count toward the extension's badge, not the tool row.
 const EXTENSION_TOOLS = { 'hashline-edit': ['tool:replace', 'tool:insert', 'tool:undo_last_change', 'tool:replace_within', 'tool:copy', 'tool:move', 'tool:anchor_grep'], 'codex-edit': ['edit'] };
+
+const openSkills = new Set();
+function skillsDisclosureState(row, button, seatId) {
+  const open = openSkills.has(seatId);
+  row.classList.toggle('open', open);
+  button.setAttribute('aria-expanded', String(open));
+  button.setAttribute('aria-label', open ? 'hide skills' : 'show all skills');
+}
+
+function skillsDisclosure(row, seatId) {
+  if (!seatId || row.children.length < 2) return;
+  row.classList.add('skills');
+  row.dataset.seatId = seatId;
+  const content = el('div', 'skills-badges');
+  content.append(...Array.from(row.children).slice(1));
+  const button = el('button', 'skills-toggle');
+  button.type = 'button';
+  button.hidden = true;
+  button.addEventListener('click', () => {
+    if (openSkills.has(seatId)) openSkills.delete(seatId);
+    else openSkills.add(seatId);
+    skillsDisclosureState(row, button, seatId);
+  });
+  row.firstElementChild.append(button);
+  row.append(content);
+  skillsDisclosureState(row, button, seatId);
+}
+
+function measureSkillsRows() {
+  for (const row of document.querySelectorAll('.sect.skills')) {
+    const content = row.querySelector('.skills-badges');
+    const lineHeight = content.firstElementChild.getBoundingClientRect().height;
+    if (!lineHeight) continue; // A folded board section is measured when it opens.
+    content.style.setProperty('--skills-line-height', lineHeight + 'px');
+    row.querySelector('button').hidden = content.scrollHeight <= Math.ceil(lineHeight);
+  }
+}
+window.addEventListener('resize', measureSkillsRows);
+document.addEventListener('toggle', measureSkillsRows, true);
 
 function badges(s, instruments) {
   const kinds = s.kinds || {};
@@ -807,6 +1087,7 @@ function badges(s, instruments) {
     b.title = 'full = whole text in the brief; on demand = title line, the seat reads it if needed';
     wrap.append(b);
   }
+  skillsDisclosure(wrap, s.id);
   close(wrap);
 
   // Tools: our shell instruments that were used, the provider's own tools, and one shell badge.
@@ -883,100 +1164,9 @@ function lineage(s) {
   return wrap;
 }
 
-// A seat's running turn as a folded chat (task 2883): one panel element per seat id, reattached to
-// each rebuilt card, so its open state survives replaceChildren. A browser drops a moved element's
-// scroll offset, so the panel keeps its own (follow the newest entry, or the reader's place) and
-// restores it after each rebuild and each read. It fetches only while
-// open; one request at a time — the next 3 s poll is scheduled after the earlier one ends, and a
-// request is aborted after 20 s. Everything renders through textContent (el), never as markup.
-const turnPanels = new Map();
-function turnPanel(s) {
-  if (!s.turn) return null;
-  let kept = turnPanels.get(s.id);
-  if (!kept) {
-    const panel = el('details', 'turnlog');
-    panel.append(el('summary', '', 'turn'));
-    const trimmedLine = el('div', 'muted mono');
-    trimmedLine.hidden = true;
-    const body = el('div', 'turnlog-body');
-    body.tabIndex = 0;
-    body.setAttribute('aria-label', 'Live turn log');
-    const status = el('div', 'muted');
-    panel.append(trimmedLine, body, status);
-    const state = { turn: null, cursor: 0, timer: null, reading: false, nodes: new Map(), follow: true, top: 0 };
-    body.addEventListener('scroll', () => {
-      state.follow = body.scrollHeight - body.clientHeight - body.scrollTop <= 1;
-      state.top = body.scrollTop;
-    });
-    const restore = () => { if (panel.open && panel.isConnected) body.scrollTop = state.follow ? body.scrollHeight : state.top; };
-    const render = (data) => {
-      // The panel holds only what the server still holds: entries it trimmed leave the DOM too.
-      if (data.trimmed) {
-        for (const [seq, node] of state.nodes) if (seq <= data.trimmed) { node.remove(); state.nodes.delete(seq); }
-      }
-      for (const item of data.entries) {
-        let node = state.nodes.get(item.seq);
-        if (!node) {
-          node = item.kind === 'tool' ? el('div', 'mono tool-line') : el('p', item.kind === 'thought' ? 'muted' : undefined);
-          state.nodes.set(item.seq, node);
-          body.append(node);
-        }
-        node.textContent = item.kind === 'tool'
-          ? item.name + ' · ' + item.status + (item.args === undefined ? '' : ' · ' + item.args)
-          : item.text;
-      }
-      trimmedLine.hidden = !data.trimmed;
-      if (data.trimmed) trimmedLine.textContent = data.trimmed + ' oldest entries trimmed';
-      status.textContent = data.running ? '' : (state.nodes.size ? 'turn ended' : 'no live log: the turn has not started or the daemon restarted');
-      restore();
-    };
-    const poll = async () => {
-      clearTimeout(state.timer);
-      if (!panel.open || state.reading) return;
-      state.reading = true;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
-      const turn = state.turn;
-      let again = false;
-      try {
-        const response = await fetch('/api/turn-live?turn=' + encodeURIComponent(turn) + '&after=' + state.cursor, { cache: 'no-store', signal: controller.signal });
-        if (state.turn !== turn) { again = panel.open; return; } // stale: the seat moved on — restart for the current turn
-        if (response.status === 404) {
-          const gone = await response.json();
-          status.textContent = 'live turn unavailable: ' + (gone && gone.error ? gone.error : 'not found');
-          return;
-        }
-        const data = await response.json();
-        if (state.turn !== turn) { again = panel.open; return; } // stale: the seat moved on — restart for the current turn
-        state.cursor = data.next;
-        render(data);
-        again = data.running;
-      } catch (error) {
-        status.textContent = 'live read failed: ' + error.message;
-        again = true;
-      } finally {
-        clearTimeout(timeout);
-        state.reading = false;
-        if (again && panel.open) state.timer = setTimeout(poll, 3000);
-      }
-    };
-    panel.addEventListener('toggle', () => { if (panel.open) { restore(); void poll(); } else clearTimeout(state.timer); });
-    kept = { panel, state, body, trimmedLine, status, poll, restore };
-    turnPanels.set(s.id, kept);
-  }
-  if (kept.state.turn !== s.turn) {
-    clearTimeout(kept.state.timer);
-    kept.state.turn = s.turn;
-    kept.state.cursor = 0;
-    kept.state.nodes.clear();
-    kept.state.follow = true;
-    kept.state.top = 0;
-    kept.body.replaceChildren();
-    kept.trimmedLine.hidden = true;
-    kept.status.textContent = '';
-    if (kept.panel.open) void kept.poll();
-  }
-  return kept.panel;
+function writeScopeNote(s) {
+  if (!s.writeScope) return null;
+  return el('div', 'meta mono scope-note', 'Extra write scope: ' + s.writeScope.globs.join(', ') + ' · ' + s.writeScope.reason);
 }
 
 function seat(s, instruments) {
@@ -993,9 +1183,9 @@ function seat(s, instruments) {
   meta.append(el('span', 'mono', (s.model || 'default model') + ' · effort ' + (s.effort || 'default')), el('span', '', dur(s.seconds)));
   if (s.worktree && s.worktree.files) meta.append(el('span', 'mono', s.worktree.files + ' files · ' + (s.worktree.stat || '')));
   c.append(meta, badges(s, instruments));
+  const extraScope = writeScopeNote(s);
+  if (extraScope) c.append(extraScope);
   if (s.flags.length) { const ul = el('ul', 'flags'); for (const f of s.flags) ul.append(el('li', '', f)); c.append(ul); }
-  const liveTurn = turnPanel(s);
-  if (liveTurn) c.append(liveTurn);
   return c;
 }
 
@@ -1005,6 +1195,8 @@ function finishedRow(s, instruments) {
   const line = el('div', 'row');
   line.append(...[familyLabel('span', 'muted', s.family, s.family, s.role + ' · '), hostChip(s), el('span', 'muted', [s.parent ? 'for ' + s.parent : null, s.scouts.length ? 'scouts ' + s.scouts.map((x) => x.family).join(', ') : null, s.model || 'default model', s.effort || 'default', ago(s.ended)].filter(Boolean).join(' · '))].filter(Boolean));
   name.append(el('span', 'title', s.title), line);
+  const extraScope = writeScopeNote(s);
+  if (extraScope) name.append(extraScope);
   r.append(name, el('span', 'verdict ' + (s.verdict || ''), s.verdict || s.turnStatus || s.status), el('span', 'muted', (s.findings != null ? s.findings + ' findings · ' : '') + s.tools + ' calls'), badges(s, instruments));
   return r;
 }
@@ -1025,7 +1217,7 @@ function family(l) {
   const worst = driving ? driving.used : null;
   const c = el('div', 'card fam');
   const tip = windows.map((w) => w.window + ' ' + Math.round(w.used) + '%' + (w.resetsAt ? ', resets ' + new Date(w.resetsAt).toLocaleString() : '')).join('\\n') || l.unknown || l.stale || '';
-  c.append(ring(worst == null ? null : Math.round(worst), 64, tone(worst, [50, 70, 90]), worst == null ? '?' : Math.round(worst) + '%', tip));
+  c.append(ring(worst == null ? null : Math.round(worst), 56, tone(worst, [50, 70, 90]), worst == null ? '?' : Math.round(worst) + '%', tip));
   c.append(el('div', 'name', l.family));
   if (l.resets === null) {
     const unknown = el('div', 'muted', 'resets: unknown');
@@ -1041,8 +1233,19 @@ function family(l) {
   if (l.quotaError) c.append(el('div', 'verdict REQUEST_CHANGES', 'quota ran out'));
   if (l.outageError) c.append(el('div', 'verdict REQUEST_CHANGES', 'provider outage · back off 20 min'));
   if (l.authError) c.append(el('div', 'verdict REQUEST_CHANGES', 'auth failure · ranked last 60 min'));
+  // Task 3432: an expired limits login is a signal, not a muted line; the sign-in stays text, never markup.
+  if (l.reauth) {
+    const signIn = l.reauth.opened ? 'sign-in window opened' : 'sign in: ' + (l.reauth.command || l.reauth.url || 'see orch log');
+    const expired = el('div', 'verdict REQUEST_CHANGES', 'login expired · ' + signIn);
+    expired.title = 'since ' + l.reauth.since + (l.stale ? '\\n' + l.stale : '');
+    c.append(expired);
+  }
   if (l.ageMinutes != null) c.append(el('div', 'muted', 'read ' + l.ageMinutes + ' min ago'));
-  if (l.stale) c.append(el('div', 'muted', 'last good reading'));
+  if (l.stale) {
+    const stale = el('div', 'muted', 'last good reading');
+    stale.title = l.stale;
+    c.append(stale);
+  }
   return c;
 }
 
@@ -1051,7 +1254,7 @@ async function tick() {
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const r = await fetch('/api/dashboard', { cache: 'no-store', signal: controller.signal });
-    const d = await r.json();
+    const d = await boardResponse(r, 'Board');
     const drain = document.getElementById('drain');
     drain.hidden = !d.draining;
     // A compact badge; the detail is its tooltip (operator 2026-09-29).
@@ -1103,10 +1306,6 @@ async function tick() {
     }
     fill('leads', d.leads.map((l) => lead(l, d.instruments)), 'no lead active in the last 10 minutes');
     fill('seats', working.map((s) => seat(s, d.instruments)), 'no seat at work');
-    for (const kept of turnPanels.values()) kept.restore();
-    // A panel outlives its card only while its seat is still on the board.
-    const boardSeatIds = new Set(d.seats.map((s) => s.id));
-    for (const seatId of turnPanels.keys()) if (!boardSeatIds.has(seatId)) turnPanels.delete(seatId);
     fill('machines', (d.machines || []).map((m) => machine(m, d.seats)), 'no machines');
     const paused = document.getElementById('paused');
     paused.hidden = !(d.paused || []).length && !d.pausedError;
@@ -1114,8 +1313,13 @@ async function tick() {
     paused.textContent = d.pausedError ? 'pause error: ' + d.pausedError : (d.paused || []).length ? 'paused: ' + d.paused.join(', ') : '';
     fill('limits', (d.limits || []).map(family), 'no load readings');
     document.getElementById('finishedTitle').textContent = 'Finished · ' + finished.length;
-    document.getElementById('finished').replaceChildren(...finished.map((s) => finishedRow(s, d.instruments)));
+    const doneHead = el('div', 'done-head');
+    for (const name of ['Seat', 'Verdict', 'Calls', 'Instruments']) doneHead.append(el('span', '', name));
+    document.getElementById('finished').replaceChildren(doneHead, ...finished.map((s) => finishedRow(s, d.instruments)));
     document.getElementById('finishedBox').style.display = finished.length ? '' : 'none';
+    const seatIds = new Set(d.seats.map((s) => s.id));
+    for (const id of openSkills) if (!seatIds.has(id)) openSkills.delete(id);
+    measureSkillsRows();
     document.getElementById('dot').className = 'dot';
     const age = Date.now() - Date.parse(d.at);
     document.getElementById('status').textContent = 'v' + d.version + ' · ' + new Date(d.at).toLocaleTimeString()
@@ -1130,6 +1334,7 @@ async function tick() {
 }
 tick();
 startChat();
+showBoardView(location.hash.slice(1));
 </script>
 </body>
 </html>

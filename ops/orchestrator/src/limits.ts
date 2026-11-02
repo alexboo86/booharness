@@ -17,6 +17,7 @@ import { appliesToModel, lenientMatrix, paceReading, type AccountingRole } from 
 import { hasQuotaRates } from './quota-rates.ts';
 import type { DoneUsage, DoneUsageOptions, TurnEnd } from './store.ts';
 import { TokenKick } from './token-kick.ts';
+import { createLimitsReauth, type LimitsReauth, type ReauthOptions, type ReauthState } from './limits-reauth.ts';
 
 export const FRESH_MS = 5 * 60_000;
 /** How long a snapshot's reset inventory outlives FRESH_MS: one refresh cycle
@@ -61,6 +62,16 @@ export const OUTAGE_ERROR_MS = 20 * 60_000;
  */
 export const AUTH_ERROR = /\bno api key (?:for|found|provided)\b|\bno (?:oauth )?credentials? (?:for|found|configured|available)\b|\boauth refresh failed\b(?! to reach)|\binvalid (?:x-)?api[ _-]?key\b|\binvalid_api_key\b|\bincorrect api key provided\b|\binvalid (?:authorization grant|access token|bearer token)\b|\bauthentication(?:_error| failed| required)\b|\bnot (?:logged in|authenticated)\b|\b(?:oauth|access|auth) token (?:has )?expired\b|\b401 unauthorized\b|\b403 forbidden\b|\b(?:status(?: code)?|error code|api error)\s*[:=]?\s*\(?40[13]\b|\bhttp\s*40[13]\s*(?::|\)|$)/i;
 export const AUTH_ERROR_MS = 60 * 60_000;
+/** Reader-owned expiry wording, excluding transport failures and spent plans. */
+function loginExpired(message: string): boolean {
+  if (QUOTA_ERROR.test(message) || OUTAGE_ERROR.test(message)
+    || /timeout|timed out|network|fetch failed|ECONN|ENOTFOUND|HTTP 5\d\d/i.test(message)) return false;
+  return AUTH_ERROR.test(message) || /^(?:token expired\b|console session expired\b|mimo cookie expired or rejected$|HTTP 401(?:\D|$))/.test(message);
+}
+function authWarning(family: Family, error: { at: string; message: string }, reading: { stale: string | null; ageMinutes: number | null }): string {
+  const stale = reading.stale ? ` (read ${reading.ageMinutes} min ago, not newer: ${reading.stale})` : '';
+  return `${family} auth failure at ${error.at} (ranked last for 60 min or until a turn of it completes): ${error.message}${stale}`;
+}
 /**
  * Turn errors orch writes itself (seats.ts turn end, providers/turn.ts TurnTimeout). They say nothing about the
  * provider and can quote a seat's own tool arguments: a loop interrupt over `rg "401 unauthorized"` is not an auth failure.
@@ -80,6 +91,19 @@ export function providerError(end: Pick<TurnEnd, 'status' | 'error' | 'watch'>):
  * got grok's raw HTTP 401 for its load while the plan sat at 89%.
  */
 export const LAST_GOOD_MS = 24 * 3600_000;
+/**
+ * How old a stand-in last good reading may be and still rank a family pick (task 3446). The board keeps
+ * showing it up to LAST_GOOD_MS; the pick does not: on 2026-10-30 qwen's console session had expired
+ * 750 min before, its month used stood frozen at 25% while elapsed grew, and it won every pick.
+ */
+export const PICK_STALE_MS = 60 * 60_000;
+
+/** What a family pick ranks: a stand-in reading older than PICK_STALE_MS becomes unreadable (ranked last). */
+export function pickLoads(loads: FamilyLoad[]): FamilyLoad[] {
+  return loads.map((load) => load.stale && load.ageMinutes !== null && load.ageMinutes * 60_000 > PICK_STALE_MS
+    ? { ...load, worst: null, windows: null, readings: null, unknown: `last good reading ${load.ageMinutes} min old, over the pick's ${PICK_STALE_MS / 60_000} min: ${load.stale}`, stale: null }
+    : load);
+}
 
 /** The snapshot's row per orch family. codex's subscription is the one the snapshot calls astra. */
 const ROW: Record<Family, string | null> = {
@@ -124,6 +148,7 @@ export type FamilyLoad = {
   outageError: { at: string; message: string } | null;
   /** The last credential failure of this family, within AUTH_ERROR_MS and until a turn of it completes. */
   authError: { at: string; message: string } | null;
+  reauth?: ReauthState | null;
   warning: string | null;
 };
 
@@ -157,6 +182,7 @@ export class Limits {
   private quotaErrors = new Map<Family, { at: number; message: string }>();
   private outageErrors = new Map<Family, { at: number; message: string }>();
   private authErrors = new Map<Family, { at: number; message: string }>();
+  private reauth: LimitsReauth | null;
   /** Per snapshot row: the last reading that had numbers, with when it was taken. */
   private lastGood = new Map<string, { row: Row; takenAt: string }>();
 
@@ -168,11 +194,12 @@ export class Limits {
   private pending = new Map<string, { used: number; tokens: number; since: number; u?: number }>();
   private doneUsage: ((family: Family, options?: DoneUsageOptions) => DoneUsage[]) | null;
 
-  constructor(options: { take?: () => Promise<Snapshot>; seed?: Snapshot | null; now?: () => number; off?: string; lastGoodFile?: string; doneUsage?: (family: Family, options?: DoneUsageOptions) => DoneUsage[]; kick?: TokenKick | null } = {}) {
+  constructor(options: { take?: () => Promise<Snapshot>; seed?: Snapshot | null; now?: () => number; off?: string; lastGoodFile?: string; doneUsage?: (family: Family, options?: DoneUsageOptions) => DoneUsage[]; kick?: TokenKick | null; reauth?: true | ReauthOptions } = {}) {
     this.off = options.off ?? null;
     this.take = options.take ?? (takeSnapshot as () => Promise<Snapshot>);
     this.now = options.now ?? Date.now;
     this.lastGoodFile = this.off ? null : options.lastGoodFile ?? null;
+    this.reauth = createLimitsReauth(options.reauth, this.now, this.off, AUTH_ERROR_MS, this.lastGoodFile);
     this.kick = this.off ? null : options.kick === undefined ? (options.take ? null : new TokenKick(undefined, undefined, this.now, undefined, this.lastGoodFile)) : options.kick;
     this.doneUsage = options.doneUsage ?? null;
     this.loadFactors();
@@ -196,7 +223,7 @@ export class Limits {
       return; // none yet, or unreadable: the next good reading rewrites it
     }
     for (const [family, entry] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
-      if (family === '__burn' || family === '__burnPending' || family === '__kick') continue;
+      if (['__burn', '__burnPending', '__kick', '__reauth'].includes(family)) continue;
       const { row, takenAt } = (entry ?? {}) as { row?: Row; takenAt?: string };
       const taken = typeof takenAt === 'string' ? Date.parse(takenAt) : NaN;
       const readings = Array.isArray(row?.readings) && row!.readings.every((reading) => typeof reading?.window === 'string' && typeof reading.used === 'number' && Number.isFinite(reading.used));
@@ -332,9 +359,12 @@ export class Limits {
       try {
         mkdirSync(path.dirname(this.lastGoodFile), { recursive: true });
         // A kick may have reserved its cooldown since the previous snapshot; never erase it.
-        let kick: unknown;
-        try { kick = (JSON.parse(readFileSync(this.lastGoodFile, 'utf8')) as { __kick?: unknown }).__kick; } catch { /* No cooldown yet. */ }
-        writeFileSync(`${this.lastGoodFile}.tmp`, `${JSON.stringify({ ...Object.fromEntries(this.lastGood), __burn: Object.fromEntries(this.factors), __burnPending: Object.fromEntries(this.pending), ...(kick ? { __kick: kick } : {}) })}\n`, 'utf8');
+        let cooldowns: { __kick?: unknown; __reauth?: unknown } = {};
+        try {
+          const saved = JSON.parse(readFileSync(this.lastGoodFile, 'utf8')) as typeof cooldowns;
+          cooldowns = { __kick: saved.__kick, __reauth: saved.__reauth };
+        } catch { /* No cooldown yet. */ }
+        writeFileSync(`${this.lastGoodFile}.tmp`, `${JSON.stringify({ ...Object.fromEntries(this.lastGood), __burn: Object.fromEntries(this.factors), __burnPending: Object.fromEntries(this.pending), ...cooldowns })}\n`, 'utf8');
         renameSync(`${this.lastGoodFile}.tmp`, this.lastGoodFile);
       } catch {
         // ignored on purpose, see above
@@ -350,28 +380,46 @@ export class Limits {
     this.refreshing = this.take()
       // A run that read no family at all (network down) keeps the last good reading, which carries its age.
       .then(async (first) => {
+        let latest = first;
         if (first.rows.some((row) => typeof row.worst === 'number') || !this.snapshot) this.snapshot = first;
         if (first.rows.some((row) => typeof row.worst === 'number')) this.cacheUnavailable = first.cacheError ?? null;
         this.remember(first);
         if (this.kick && await this.kick.kick(first.rows)) {
           const retry = await this.take();
+          latest = retry;
           if (retry.rows.some((row) => typeof row.worst === 'number')) {
             this.snapshot = retry;
             this.cacheUnavailable = retry.cacheError ?? null;
           }
           this.remember(retry, false);
         }
+        await this.observeLogins(latest);
       })
       .catch(() => undefined)
       .finally(() => { this.refreshing = null; });
     return this.refreshing;
   }
 
+  private async observeLogins(snapshot: Snapshot): Promise<void> {
+    for (const row of snapshot.rows) {
+      const family = (Object.keys(ROW) as Family[]).find((key) => ROW[key] === row.family);
+      if (!family) continue;
+      // Usage credentials do not prove inference health; only turns own authErrors.
+      if (typeof row.worst === 'number' && Number.isFinite(row.worst)) {
+        this.reauth?.clear(family);
+      } else if (row.error && loginExpired(row.error)) {
+        await this.reauth?.request(family);
+      }
+    }
+  }
+
   /** Remember only explicit subscription exhaustion, credential failure or provider outage evidence. */
   noteError(family: Family, message: string): void {
     // Quota evidence wins: a spent plan can also report itself as unavailable.
     if (QUOTA_ERROR.test(message)) this.quotaErrors.set(family, { at: this.now(), message: message.slice(0, 200) });
-    else if (AUTH_ERROR.test(message)) this.authErrors.set(family, { at: this.now(), message: message.slice(0, 200) });
+    else if (AUTH_ERROR.test(message)) {
+      this.authErrors.set(family, { at: this.now(), message: message.slice(0, 200) });
+    }
     else if (OUTAGE_ERROR.test(message)) this.outageErrors.set(family, { at: this.now(), message: message.slice(0, 200) });
   }
 
@@ -385,6 +433,10 @@ export class Limits {
   private authError(family: Family): FamilyLoad['authError'] {
     const seen = this.authErrors.get(family);
     return seen && this.now() - seen.at < AUTH_ERROR_MS ? { at: new Date(seen.at).toISOString(), message: seen.message } : null;
+  }
+
+  private reauthState(family: Family): ReauthState | null {
+    return this.reauth?.get(family) ?? null;
   }
 
   private quotaError(family: Family): FamilyLoad['quotaError'] {
@@ -415,7 +467,7 @@ export class Limits {
     const authError = this.authError(family);
     let warning: string | null = null;
     if (authError) {
-      warning = `${family} auth failure at ${authError.at} (ranked last for 60 min or until a turn of it completes): ${authError.message}`;
+      warning = authWarning(family, authError, base);
     } else if (outageError) {
       warning = `${family} provider outage at ${outageError.at} (back off 20 min): ${outageError.message}`;
     } else if (quotaError) {
@@ -425,7 +477,7 @@ export class Limits {
       warning = `${family} has used ${Math.round(base.worst)}% of a window (${base.windows}; ${base.ageMinutes === null ? 'reading age unknown' : `read ${base.ageMinutes} min ago`}${base.stale ? `, not newer: ${base.stale}` : ''}); ${lighter.length ? `less loaded: ${lighter.join(', ')}` : `no family with a reading is below ${HIGH_LOAD}%`}`;
     }
     warning ??= this.snapshot?.cacheError ?? this.cacheUnavailable;
-    return { ...base, ...this.inventory(family), quotaError, outageError, authError, warning };
+    return { ...base, ...this.inventory(family), quotaError, outageError, authError, reauth: this.reauthState(family), warning };
   }
 
   private inventory(family: Family): Pick<FamilyLoad, 'resets' | 'resetsError'> {
@@ -499,8 +551,9 @@ export class Limits {
     // orch_status and the dashboard read only this: without the refresh the readings stood still
     // from the daemon's start (36 min old on 2026-09-23 while no seat was created).
     this.refresh();
-    const rows = (Object.keys(ROW) as Family[]).map((family) => ({ ...this.reading(family), ...this.inventory(family), quotaError: this.quotaError(family), outageError: this.outageError(family), authError: this.authError(family), warning: null }));
+    const rows = (Object.keys(ROW) as Family[]).map((family) => ({ ...this.reading(family), ...this.inventory(family), quotaError: this.quotaError(family), outageError: this.outageError(family), authError: this.authError(family), reauth: this.reauthState(family), warning: null }));
     const rank = (load: FamilyLoad) => (load.worst === null ? Number.MAX_SAFE_INTEGER : load.worst);
     return rows.sort((a, b) => rank(a) - rank(b) || a.family.localeCompare(b.family));
   }
+
 }

@@ -85,6 +85,7 @@ and `store.mjs`, with unchanged import paths.
 | `readLessons` | function | Read and filter live lesson entries. |
 | `readTasks` | function | Read the validated task list from memoryd. |
 | `readContradictions` | function | Find contradiction candidates from service search. |
+| `updateRegistry` | async function | Token-authenticated CAS registry update; false means HTTP 409, thrown write errors may have unknown outcome. |
 
 ### Handoff classification: `b1-handoff.mjs`
 
@@ -133,6 +134,71 @@ import the defining lower-module entry.
 | `auditLessonDomainRoutes` | function | Audit lesson rows against the routing map. |
 | `mismatchedLessonDomains` | function | Select rows whose filed domains disagree with routes. |
 
+## Additive knowledge search
+
+CLI and MCP search request `knowledge=1`: the HTTP response is `{results,knowledge}`.
+`results` is byte-equivalent to the original entry array; `knowledge` contains at
+most three distinct read-only sections with `kind:knowledge`, path, heading,
+section_key, title (`path#heading`), snippet and source_commit. Index errors add
+`knowledge_error` without losing entry results. Default HTTP search stays an array.
+Deep-search reranks only entry results and carries knowledge alongside unchanged;
+it retains array output when talking to an older array-only service.
+`store.mjs:knowledgeResults(file,query)` exposes the direct derived-index reader.
+No knowledge rows enter memory.db, vectors, hot, tasks, lessons or supersede chains.
+
+`node scripts/memory/bench-search.mjs --knowledge` (`scripts/memory/bench-search.mjs` not in this kit) builds a temporary index from
+committed master and runs the frozen 15 cases in `knowledge-bench.cases.json`.
+Pass requires the gold path#heading in knowledge top three for at least 12/15;
+every miss is printed and a failed threshold exits nonzero. Gold identity does
+not depend on a SQLite rowid, passage ordinal or source commit.
+
+## Native domain lead CLI: `domain-leads.mjs`
+
+Standalone CLI, no JavaScript exports. Commands print a first-line summary then
+JSON; errors use stderr and exit 1. `MEMORYCTL_URL`/service discovery and
+`MEMORYCTL_TOKEN_FILE` follow `service-client.mjs`; reads need no write token.
+
+```sh
+node scripts/memory/domain-leads.mjs list
+node scripts/memory/domain-leads.mjs resolve domain-harness --orch-url http://127.0.0.1:7760
+node scripts/memory/domain-leads.mjs assign domain-harness --handle harness-lead --native-client 'Native Workbench' --evidence 'Operator observed native application' --session observed-session --generation 1 --expected-version 0 --orch-url http://127.0.0.1:7760
+node scripts/memory/domain-leads.mjs unassign domain-harness --expected-version 1
+```
+
+Ports, session, generation and version above are examples, not discovered values.
+Mutations require an explicit expected version. Key `domain-native-leads-v1` stores
+`{schema:1,assignments:{[domain]:{handle,nativeClient,evidence,session,generation}}}`.
+Unknown fields refuse; maximum 128 assignments and 60,000 UTF-8 body bytes.
+Handles are 1–64 safe handle characters, client names 80 characters, evidence
+512, session 256, and domain names 96. Text is nonempty, trimmed and control-free;
+versions are nonnegative safe integers and generations positive safe integers
+(both below MAX_SAFE_INTEGER).
+
+Only compiled `byDomain` entries not in `retiredDomains` may be assigned.
+Stored retired/unknown names remain visible as `orphaned` and may be explicitly
+unassigned. Assignment names/evidence are operator declarations, never inferred
+from model family; Pi designation refuses. An explicit loopback HTTP origin
+(`127.0.0.1` or `[::1]`, no userinfo/query/fragment) is required to validate an
+assignment or resolve an existing one. URL parsing normalizes alternate numeric
+loopback spellings before checking the hostname; canonical-equivalent spellings
+are accepted, not an escape to nonloopback hosts. The only orch request is
+`GET /api/chat?after=9007199254740991&limit=1`; stripped LAN capability refuses,
+even for an empty handle list. There is no `chat_join` or validation mutation.
+
+Resolution returns `unassigned`, `offline` (absent/ended), `stale` (session or
+generation changed, or Pi desktop), or `bound`. `bound` proves only a matching
+binding snapshot, not a running client (`running: "unknown"`). Binding reads
+and CAS are not one transaction; a subsequent handover is detected on the next
+resolve. Registry CAS preserves other assignments; 409 conflicts never overwrite
+or retry. Write uncertainty is reported as `unknown`, never retried; read back
+before a deliberate subsequent mutation. No local DB fallback. Compact, wake,
+messages, launches and adapters remain unsupported; full routing is not complete.
+
+When this registry appears in memoryd's hot digest, `store.mjs:firstLine` renders
+only the first body line, capped at 200 Unicode code points including any
+truncation ellipsis. This is a bounded summary, not the complete assignment map;
+use this CLI's `list` command for the full stored assignments.
+
 ## Inputs
 
 - CLI/MCP/HTTP operations, lesson bodies/links, task/report records and optimistic versions.
@@ -148,7 +214,8 @@ import the defining lower-module entry.
 
 ## Invariants
 
-- memoryd is the single live writer; unavailable service reads never silently open local SQLite; source: `service-client.mjs`, [owner knowledge](../../.agents/domains/domain-harness/knowledge/memory-service-and-durable-records.md).
+- Native lead mutations use explicit-version registry CAS and preserve unrelated assignments; resolution is read-only, and a bound handle never asserts a running client.
+- memoryd is the single live writer; unavailable service reads never silently open local SQLite; source: `service-client.mjs`, [owner knowledge](../../.agents/domains/domain-memory/knowledge/memory-service-and-durable-records.md).
 - Direct DB access requires an explicit existing schema-validated path; a local-copy id cannot be mutated live through `--db` without dry mode; source: `lesson-lib.mjs`, `service-client.mjs`.
 - New lessons need committed anchors, routed domains, trigger/evidence, deterministic brevity checks and a server-checked gate stamp; the stamp is an accident guard, not authentication; source: `capture-gate.mjs`, [capture knowledge](../../.agents/domains/domain-harness/knowledge/lesson-capture-and-delivery.md).
 - Windows CLI arguments never pass through cmd.exe tokenization; unsafe executable/script discovery refuses; source: `spawnPlan` in `lesson-lib.mjs`, `test-spawn-plan.mjs`.
@@ -175,7 +242,9 @@ import the defining lower-module entry.
 - `scripts/memory/test-lesson-lib.mjs` — parser, anchor/link and maintenance helper contracts.
 - `scripts/memory/test-spawn-plan.mjs` — safe Windows argv transport.
 - `scripts/memory/test-service-client.mjs` — service discovery and no implicit DB substitution.
+- `scripts/memory/test-domain-leads.mjs` — isolated CLI persistence, stale/offline bindings, token-free reads, conflict/uncertain-write refusal and orphan removal.
 - `scripts/memory/test-capture-gate.mjs` — capture admission and routing.
+- `scripts/memory/test-knowledge-index.mjs` — committed splitting, atomic landing rebuilds, stale deletion, failed rebuild preservation and unchanged entry JSON.
 - `scripts/memory/test-store-entries.mjs` — entry storage/versioning behavior.
 - `scripts/memory/test-store-lessons.mjs` — lesson matching and delivery.
 - `scripts/memory/test-store-tasks.mjs` — durable task operations.

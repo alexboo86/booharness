@@ -6,6 +6,7 @@ paths:
   - "scripts/lib/bench.mjs"
   - "scripts/lib/check-kimi-hook-wiring.mjs"
   - "scripts/lib/check-lead-chat-wiring.mjs"
+  - "scripts/lib/check-seat-stash-topology.mjs"
   - "scripts/lib/domain-of.mjs"
   - "scripts/lib/expand-index-css.mjs"
   - "scripts/lib/import-embed-model.mjs"
@@ -29,7 +30,7 @@ Harness configuration and login helpers belong to `scripts-lib-harness`.
 
 ## Public API
 
-Consumers import individual helper files; `anchor-grammar.mjs` is the registry entry, not a barrel.
+`anchor-grammar.mjs` is the registry entry and also exposes the canonical `domainOf` resolver for cross-module consumers.
 `is-main.mjs` retains its path and API in `scripts-runtime-shared`.
 
 | Export | Kind | Defining file | Description |
@@ -38,6 +39,7 @@ Consumers import individual helper files; `anchor-grammar.mjs` is the registry e
 | `startAllocationSampling` | function | `scripts/lib/bench.mjs` | Start inspector sampling and return a function-name allocation collector. |
 | `checkKimiHookWiring` | function | `scripts/lib/check-kimi-hook-wiring.mjs` | Check configured Kimi hook wiring through supplied readers and checks. |
 | `checkLeadChatWiring` | function | `scripts/lib/check-lead-chat-wiring.mjs` | Probe installed lead-chat hook wiring. |
+| `auditSeatStash` | function | `scripts/lib/check-seat-stash-topology.mjs` | Run the seat-stash topology audit (section 3d moved out of `scripts/check-hook-topology.mjs`): installer wiring pins, hook behavior probes, the glm coverage claim and the live-wiring checks, through supplied check, read, readHome and notes deps. |
 | `globToRegExp` | function | `scripts/lib/domain-of.mjs` | Compile the domain-routing glob dialect to an anchored regexp. |
 | `domainOf` | function | `scripts/lib/domain-of.mjs` | Return the first matching domain from the ordered routing map, or null. |
 | `INDEX_CSS_REL` | constant | `scripts/lib/expand-index-css.mjs` | Repository-relative CSS facade path. |
@@ -51,6 +53,7 @@ Consumers import individual helper files; `anchor-grammar.mjs` is the registry e
 | `workerPlistPath` | function | `scripts/lib/memory-forward.mjs` | Locate a worker plist beside the daemon plist. |
 | `forwardSshArgs` | function | `scripts/lib/memory-forward.mjs` | Render loopback reverse-forward SSH arguments; caller validates ports. |
 | `memoryInstallerFor` | function | `scripts/lib/memory-installer.mjs` | Select the kit-local installer when present, otherwise the repository installer. |
+| `resolveServiceNodeBin` | function | `scripts/lib/memory-installer.mjs` | Resolve the interpreter a service unit should hold: a non-keg execPath passes through; a Homebrew Cellar execPath resolves to the first stable spell (`<prefix>/bin/<formula>`, then `<prefix>/opt/<formula>/bin/node`) that exists and imports node:sqlite within a bounded probe (a candidate that hangs is killed at the timeout and counts as failed), else returns a refusal naming MEMORYCTL_NODE_BIN and each candidate's own outcome (missing, timed out, or the exit code with its stderr head) instead of a path brew can delete. |
 | `createTsModuleLoader` | function | `scripts/lib/ts-module-loader.mjs` | Create a root-scoped TS/JS/JSON loader with resolution, cache and reset methods. |
 | `FILE_EXTENSIONS` | constant | `scripts/lib/ts-module-loader.mjs` | Loader resolution suffixes. |
 | `INDEX_FILES` | constant | `scripts/lib/ts-module-loader.mjs` | Loader directory-entry candidates. |
@@ -122,7 +125,7 @@ The kit overlay installer also consumes the pinned-model import helpers.
 - `scripts/test-is-main.mjs` (not in this kit) — symlink-safe entry detection and gate usage.
 - `scripts/test-ts-module-loader.mjs` (not in this kit) — TS resolution, import-meta handling and loader behavior.
 - `scripts/test-index-css-cascade-contract.mjs` (not in this kit) — facade expansion and cascade ordering.
-- `scripts/test-hook-topology.mjs` (not in this kit) — Kimi wiring checks.
+- `scripts/test-hook-topology.mjs` (not in this kit) — Kimi wiring checks and the seat-stash audit's settings-reading behaviour (note/invalid-JSON paths).
 - `scripts/test-lead-chat-topology.mjs` (not in this kit) — installed lead-chat probes.
 - `scripts/test-install-memory.mjs` (not in this kit) — installer integration with forward rendering.
 

@@ -176,7 +176,10 @@ export async function gateNewLesson({ title, body, links, long }, {
   const anchor = links?.anchor;
   const domain = routedLessonDomain(anchor, links.domain, routing(), mode);
   if (!exists(anchor)) throw new Error(`lesson refused: anchor ${anchor} exists in no HEAD, local branch or origin/* ref; correct the anchor or add its file`);
-  const fields = lessonFields(title, body);
+  // A moved body is unchanged by contract (gateMovedLesson), and a historical
+  // merge carries duplicate field sets, so a move parses them like the store
+  // does; a new capture still refuses a duplicated field.
+  const fields = lessonFields(title, body, { allowDuplicates: mode === 'move' });
   if (mode === 'capture') {
     try { checkCaptureFields(fields); }
     catch (error) { throw new Error(`lesson refused: ${error.message}`); }

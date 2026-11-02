@@ -25,7 +25,7 @@ if (!TASKS_HTML.includes(PAGE_END)) throw new Error('tasks page: no closing body
 const PAGE_SCRIPTS = `<script>${TASKS_ACTIONS_SCRIPT}</script>\n<script>${TASKS_BATCH_SCRIPT}</script>\n<script>${TASKS_DND_SCRIPT}</script>\n${PAGE_END}`;
 export const TASKS_PAGE = TASKS_HTML.replace(PAGE_END, () => PAGE_SCRIPTS);
 
-export type TasksRuntime = { store: Store; seats: SeatManager; port: () => number };
+export type TasksRuntime = { store: Store; seats: SeatManager; port: () => number; stateDir?: string };
 
 type Route = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
 
@@ -66,7 +66,7 @@ export function createTasksRoutes(rt: TasksRuntime, held: () => string[] = () =>
       chatPost: (input) => chatPostOperator(rt.store, input),
       liveBinding: (handle) => chatList(rt.store, {}).handles.find((binding) => binding.handle === handle) ?? null,
     }),
-    createTasksAgentRoutes({ seats: rt.seats, memory, guard, repo: REPO }),
+    createTasksAgentRoutes({ seats: rt.seats, memory, guard, repo: REPO, stateDir: rt.stateDir }),
   ];
   return async (req, res, url) => {
     if (url.pathname === '/tasks' && req.method === 'GET') {

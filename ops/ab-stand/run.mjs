@@ -38,9 +38,12 @@ export const PILOTS = {
   'hashline-edit': { families: ['kimi', 'mimo', 'qwen', 'grok'], arms: ['base', 'hashline-edit-451'], tasks: ['edit-1', 'edit-2'], turnMinutes: 5 },
   // Task 1883 (operator #13055): base (lessons injected) against no-lessons on five replayed
   // reviewer-reproduced mistakes; memory is off in every stand cell (matrixInstruments), so
-  // injection is the only lesson path. grok at --reps 5: 5 tasks x 2 arms x 5 = 50 runs.
-  'lesson-usefulness': { families: ['grok'], arms: ['base', 'no-lessons'],
-    tasks: ['lesson-12805', 'lesson-12713', 'lesson-12737', 'lesson-12562', 'lesson-12703'], turnMinutes: 15 },
+  // injection is the only lesson path. Operator 2026-10-29 (#21116, #21118): kimi, glm and codex,
+  // one pilot per family so the three invocations run side by side (cells inside one invocation
+  // run one at a time). --reps 3: 5 tasks x 2 arms x 3 = 30 runs per family, 90 in all.
+  ...Object.fromEntries(['kimi', 'glm', 'codex'].map((family) => [`lesson-usefulness-${family}`, {
+    families: [family], arms: ['base', 'no-lessons'],
+    tasks: ['lesson-12805', 'lesson-12713', 'lesson-12737', 'lesson-12562', 'lesson-12703'], turnMinutes: 15 }])),
   // Operator 2026-10-01 (#13149): glm was never in the hashline pilot; only glm runs now.
   'hashline-edit-glm': { families: ['glm'], arms: ['base', 'hashline-edit-451'], tasks: ['edit-1', 'edit-2'], turnMinutes: 5 },
   // Operator #13170: 5.0.0 against 4.5.1. Control is hashline-edit-451, not base.

@@ -17,6 +17,7 @@ paths:
   - ops/bootstrap/install-harness-args.mjs
   - ops/bootstrap/install-harness.mjs
   - ops/bootstrap/install-py-tools.mjs
+  - ops/bootstrap/install-native-tools.mjs
   - ops/bootstrap/install-lock.mjs
   - ops/bootstrap/install-memory.mjs
   - ops/bootstrap/json-context-wrap.mjs
@@ -83,9 +84,15 @@ Other production consumers import these helpers directly (paths below are within
 - `runTask` (`win-task.mjs`) — starts a scheduled task.
 - `deleteTask` (`win-task.mjs`) — deletes a scheduled task.
 - `secretBindings` (`secret-bindings.mjs`) — validates server secret declarations and returns environment bindings.
+- `loginCommand`, `LoginRefused` (`harness-login.mjs`) — one family's absolute login argv and env without opening a terminal, for the pult's embedded terminal; refuses key families, an unknown family, an absent CLI and (unless forced) an unproved Claude login, each by `LoginRefused.code`.
 
 Outside consumers include `ops/orchestrator/install.mjs`, `ops/harness-kit/build-kit.mjs` (not in this kit) and memory tooling.
 Operator CLI entrypoints include `install-harness.mjs`, `install-memory.mjs`, `doctor.mjs`, `harness-config.mjs`, `harness-login.mjs` and `harness-secret.mjs`.
+`install-native-tools.mjs` owns `maybeInstallCodeIntel(ctx)`, extracted from the
+installer: `--skip-code-intel` or install-scope `instruments.install: false`
+skips the entire code-intel step. The setting is read from the selected home's
+canonical state directory through the settings entry; absent overrides preserve
+installation. It neither uninstalls tools nor changes RTK.
 The `install-harness.mjs --only py-tools` step invokes the `ops-py-tools`
 installer CLI for the selected home; it must run on the target platform.
 Foreign-platform configuration runs and checkouts without that installer report
@@ -94,11 +101,27 @@ An attempted py-tools failure is included in the report with its remedy; other
 selected steps continue, and the installer exits nonzero.
 This ownership-only split preserves existing direct-helper imports; it adds no facade or importer rewrite.
 
+`install-harness.mjs --only playwright` runs the root lockfile's `playwright-core`
+CLI (`install chromium`) in the selected home, using Playwright's default
+per-user cache and its completed-revision checks to skip existing downloads.
+It never installs system dependencies or requires root. Foreign-platform runs
+skip it; missing dependencies or download failures report a failed step and
+remedy without failing the overall installation. Worktree provisioning does
+not download browsers.
+
 `node ops/bootstrap/ollama-setup.mjs setup` configures the macOS embedding service
 and proves embedding against the configured endpoint. It requires the pinned,
 agent-installed managed binary; it does not install prerequisite tools. It
 preserves answering servers, refuses unanswered remote replacements and foreign
 paths/units, and verifies pinned default GGUF size/hash before model creation.
+
+`install-memory.mjs --landed-map` remains master-only and nonblocking through
+its Git hooks. On the writer (no service.url), it also rebuilds
+`SERVICE_DIR/knowledge.sqlite` from committed master when its stored SHA differs.
+The existing hook is used instead of query-time Git work; readers need no checkout.
+An absent corpus with no old index needs no artifact; removing all pages replaces
+an existing index with an empty corpus. Rebuild failure logs one line and retains
+the old file, independently of routing-map publication. No memory.db schema change.
 
 ## Inputs
 
@@ -119,6 +142,7 @@ paths/units, and verifies pinned default GGUF size/hash before model creation.
 - Keep-mode ownership is tracked by canonical target path; a failed target write must not orphan previously installed entries. Source: `.agents/domains/domain-harness/knowledge/contract-ownership-and-installer.md`; `scripts/test-install-owned-entries.mjs` (not in this kit).
 - Invalid config/target JSON refuses before settings or ownership writes; MCP batch publication restores committed configs and ownership on failure. Source: `.agents/domains/domain-harness/knowledge/contract-ownership-and-installer.md`; `scripts/test-install-permissions-keep.mjs` (not in this kit) and `scripts/test-install-mcp-keep.mjs` (not in this kit).
 - Hook migration removes/repoints only recognized harness command forms, preserving composed or otherwise user-owned commands. Source: `.agents/domains/domain-harness/knowledge/contract-ownership-and-installer.md` hooks ownership section.
+- provision-worktree.sh never writes tracked files. Its optional background codegraph init honors machines.autoCodegraphInit: orch supplies its validated value as ORCH_AUTO_CODEGRAPH_INIT, otherwise SessionStart reads the boolean through the plain-JS install-settings entry using ORCH_STATE_DIR or the canonical user state directory. Absent overrides keep initialization on. Invalid/unreadable settings skip only indexing with a fixed diagnostic, never block the session or the remaining provisioning.
 
 ## Dependencies
 

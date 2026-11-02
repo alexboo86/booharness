@@ -1,13 +1,14 @@
 // Land a coder's accumulated change with one 3-way patch; neither checkout's branch is committed.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Store } from './store.ts';
+import type { Seat, Store } from './store.ts';
 import { parseNumstat } from './review-plan.ts';
 import { copyIndex } from './worktrees.ts';
 import { landable, pathInWriteScope, remoteCheckoutGone, TEST_FILE_GLOBS, writeScopeOf } from './seats-defs.ts';
+import { landDomainScope } from './land-domain.ts';
 
 const exec = promisify(execFile);
 const git = async (cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<Buffer> => {
@@ -196,6 +197,139 @@ async function locked<T>(target: string, action: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The one accumulated-index snapshot used by both landing and the read-only diff view. */
+async function stageAccumulated(source: string, prefix: string): Promise<{ scratch: string; env: NodeJS.ProcessEnv }> {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    const index = path.join(scratch, 'index');
+    const ownIndex = path.resolve(source, text(await git(source, ['rev-parse', '--git-path', 'index'])));
+    if (existsSync(ownIndex)) await copyIndex(ownIndex, index);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+    if (!existsSync(index)) await git(source, ['read-tree', 'HEAD'], env);
+    await git(source, ['add', '-A'], env);
+    return { scratch, env };
+  } catch (error) {
+    rmSync(scratch, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export type SeatDiffFile = {
+  path: string;
+  oldPath?: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+  patch: string;
+  truncated: boolean;
+};
+export type SeatDiff = { available: false; reason: string } | { available: true; base: string; files: SeatDiffFile[]; truncated: boolean };
+type DiffMetadata = Omit<SeatDiffFile, 'patch' | 'truncated'>;
+
+function diffStatus(code: string): DiffMetadata['status'] {
+  if (code.startsWith('R')) return 'renamed';
+  if (code === 'A') return 'added';
+  if (code === 'D') return 'deleted';
+  return 'modified';
+}
+
+function statusRows(statuses: string[]): DiffMetadata[] {
+  const rows: DiffMetadata[] = [];
+  for (let i = 0; i < statuses.length;) {
+    const code = statuses[i++];
+    const renamed = code.startsWith('R');
+    const oldPath = renamed ? statuses[i++] : undefined;
+    const file = statuses[i++];
+    if (!file || (renamed && !oldPath)) throw new Error('invalid seat diff name-status row');
+    rows.push({ path: file, ...(oldPath ? { oldPath } : {}), status: diffStatus(code), insertions: 0, deletions: 0, binary: false });
+  }
+  return rows;
+}
+
+function applyNumstat(rows: DiffMetadata[], counts: string[]): void {
+  const byPath = new Map(rows.map((row) => [row.path, row]));
+  for (let i = 0; i < counts.length;) {
+    const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(counts[i++]);
+    if (!match) throw new Error('invalid seat diff numstat row');
+    let file = match[3];
+    if (!file) {
+      i++; // A rename's empty path field is followed by old and new path.
+      file = counts[i++];
+    }
+    const row = byPath.get(file);
+    if (!row) throw new Error(`seat diff numstat has no status row for: ${file}`);
+    row.insertions = match[1] === '-' ? 0 : Number(match[1]);
+    row.deletions = match[2] === '-' ? 0 : Number(match[2]);
+    row.binary = match[1] === '-' || match[2] === '-';
+  }
+}
+
+/** Rename-aware presentation of the same staged tree; land continues to emit its no-renames patch. */
+async function diffMetadata(source: string, base: string, env: NodeJS.ProcessEnv): Promise<DiffMetadata[]> {
+  const rows = statusRows(names(await git(source, ['diff', '--cached', '--find-renames', '--name-status', '-z', base, '--'], env)));
+  applyNumstat(rows, names(await git(source, ['diff', '--cached', '--find-renames', '--numstat', '-z', base, '--'], env)));
+  return rows;
+}
+
+/** Read no more than the remaining response budget; truncation keeps whole patch lines. */
+function patchBytes(file: string, limit: number, truncated: boolean): Buffer {
+  const fd = openSync(file, 'r');
+  try {
+    const buffer = Buffer.alloc(limit);
+    const length = readSync(fd, buffer, 0, limit, 0);
+    const bytes = buffer.subarray(0, length);
+    return truncated ? bytes.subarray(0, bytes.lastIndexOf(10) + 1) : bytes;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export const SEAT_DIFF_PATCH_CAP = 1024 * 1024;
+
+function unavailableReason(seat: Seat): string | null {
+  if (!landable(seat.role)) return `seat '${seat.id}' has no landable worktree`;
+  if (!seat.worktree || seat.data.worktreeRemoved === true || !existsSync(seat.worktree)) return `seat '${seat.id}' has no checkout`;
+  const base = seat.data.base;
+  if (typeof base !== 'string' || !/^[0-9a-f]{40,64}$/.test(base)) return `seat '${seat.id}' has no resolved base commit`;
+  return null;
+}
+
+async function diffFiles(source: string, base: string, env: NodeJS.ProcessEnv, scratch: string, metadata: DiffMetadata[], maxBytes: number): Promise<SeatDiffFile[]> {
+  const files: SeatDiffFile[] = [];
+  let remaining = maxBytes;
+  for (const row of metadata) {
+    const patchFile = path.join(scratch, 'patch');
+    let size = 0;
+    if (remaining > 0) {
+      const paths = row.oldPath ? [row.oldPath, row.path] : [row.path];
+      await git(source, ['--literal-pathspecs', 'diff', '--cached', '--find-renames', '--binary', `--output=${patchFile}`, base, '--', ...paths], env);
+      size = statSync(patchFile).size;
+    }
+    const truncated = size > remaining || remaining === 0;
+    const bytes = remaining > 0 ? patchBytes(patchFile, Math.min(size, remaining), truncated) : Buffer.alloc(0);
+    remaining -= bytes.length;
+    files.push({ ...row, patch: bytes.toString('utf8'), truncated });
+  }
+  return files;
+}
+
+/** A read-only view of the exact accumulated tree that seat_land stages, including untracked files. */
+export async function readSeatDiff(seat: Seat, maxBytes = SEAT_DIFF_PATCH_CAP): Promise<SeatDiff> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > SEAT_DIFF_PATCH_CAP) throw new Error(`maxBytes must be an integer from 1 to ${SEAT_DIFF_PATCH_CAP}`);
+  const unavailable = unavailableReason(seat);
+  if (unavailable) return { available: false, reason: unavailable };
+  const base = seat.data.base as string;
+  const source = await checkout(seat.worktree!);
+  const { scratch, env } = await stageAccumulated(source, 'orch-seat-diff-');
+  try {
+    const files = await diffFiles(source, base, env, scratch, await diffMetadata(source, base, env), maxBytes);
+    return { available: true, base, files, truncated: files.some((file) => file.truncated) };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 /** Land code only. The retired lesson-options slot stays reserved for existing callers. */
 export async function land(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSeat'> & Partial<Store>, seatId: string, into?: string, _lessonOptions: unknown = {}, overrideReason?: string) {
   return landPatch(store, seatId, into, overrideReason);
@@ -247,14 +381,8 @@ async function landPatch(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSea
   const result = await locked(target, async () => {
     if (store.getSeat(seatId)?.data.closePending === true) throw new Error(`seat '${seatId}' has a pending close; wait before landing`);
     if (seat.status === 'provisioning' || store.listTurns(seatId).some((turn) => turn.status === 'running' || turn.status === 'queued')) throw new Error(`seat '${seatId}' has an active turn; wait before landing`);
-    const scratch = mkdtempSync(path.join(os.tmpdir(), 'orch-land-'));
+    const { scratch, env } = await stageAccumulated(source, 'orch-land-');
     try {
-      const index = path.join(scratch, 'index');
-      const ownIndex = path.resolve(source, text(await git(source, ['rev-parse', '--git-path', 'index'])));
-      if (existsSync(ownIndex)) await copyIndex(ownIndex, index);
-      const env = { ...process.env, GIT_INDEX_FILE: index };
-      if (!existsSync(index)) await git(source, ['read-tree', 'HEAD'], env);
-      await git(source, ['add', '-A'], env);
       if (recorded) {
         let parent: string, snapshotTree: string;
         try {
@@ -274,17 +402,19 @@ async function landPatch(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSea
       const fields = names(await git(source, ['diff', '--cached', '--no-renames', '--name-status', '-z', base, '--'], env));
       const patchFiles = new Map<string, string>();
       for (let i = 0; i < fields.length; i += 2) patchFiles.set(fields[i + 1], fields[i]);
-      if (!patchFiles.size) return { status: 'clean', files: [] as Change[], skippedIgnored, recovery: { commands: [] } };
+      const domain = await landDomainScope(store, seat.data, [...patchFiles.keys()], overrideReason);
+      const domainNote = domain.note;
+      if (!patchFiles.size) return { status: 'clean', files: [] as Change[], skippedIgnored, ...domainNote, recovery: { commands: [] } };
       const patchPaths = [...patchFiles.keys()];
       const patchPathSet = new Set(patchPaths);
-      const scope = writeScopeOf(seat.role);
+      const scope = writeScopeOf(seat.role, seat.data.writeScope);
       const outside = scope === undefined ? [] : patchPaths.filter((file) => !pathInWriteScope(file, scope));
       const scopeReason = overrideReason?.trim() || undefined;
       if (outside.length && !scopeReason) {
         throw new Error(`seat '${seatId}' patch paths are outside its write scope (${scope.join(', ')}): ${outside.join(', ')}; pass override_reason to land anyway`);
       }
       const modifiedTrackedTests = scope === undefined ? [] : patchPaths.filter((file) => patchFiles.get(file) === 'M' && pathInWriteScope(file, TEST_FILE_GLOBS));
-      const trackedNote = modifiedTrackedTests.length ? { modifiedTrackedTests } : {};
+      const trackedNote = { ...domainNote, ...(modifiedTrackedTests.length ? { modifiedTrackedTests } : {}) };
       // status, ls-files and diff do not accept --pathspec-from-file (including Git 2.54).
       // Bound argv by filtering their NUL-delimited output instead.
       // A tracked patch path left dirty or staged by an earlier slice of the same task is landable
@@ -464,7 +594,7 @@ async function landPatch(store: Pick<Store, 'getSeat' | 'listTurns' | 'updateSea
       // known resolution. The record must not turn a landed change into a reported failure.
       const landed = { at: new Date().toISOString(), into: target, paths, snapshot, ...(scopeReason ? { overrideReason: scopeReason } : {}) };
       try {
-        store.updateSeat(seatId, { data: { landed, ...(scopeReason ? { writeScopeOverride: { reason: scopeReason, at: landed.at, paths: outside } } : {}) } }, 'seat.updated', { landed: { ...landed, paths: paths.length } });
+        store.updateSeat(seatId, { data: { landed, ...(scopeReason ? { writeScopeOverride: { reason: scopeReason, at: landed.at, paths: [...new Set([...outside, ...domain.outside])] } } : {}) } }, 'seat.updated', { landed: { ...landed, paths: paths.length } });
       } catch (error) {
         console.warn(`seat_land record failed for ${seatId}: ${(error as Error).message}`);
       }

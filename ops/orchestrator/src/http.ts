@@ -1,26 +1,31 @@
 // Loopback HTTP surface includes health, dashboard, MCP and seat endpoints; the separate LAN surface serves the dashboard only.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import type { Socket } from 'node:net';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { VERSION } from './config.ts';
-import { board, DASHBOARD_HTML } from './dashboard.ts';
+import { chatRequests, heldWakes, serveBoardAndFiles, serveOperatorPost } from './http-board.ts';
+export { createLanBoardServer } from './http-board.ts';
 import { formatDigest } from './digest-text.ts';
+import { serveLessons } from './http-lessons.ts';
+import { serveRoleRecommendations } from './role-recommendations.ts';
 import { applyMemory, confirmLessonDuplicate } from './memory-proposals.ts';
 import { handoffDraft } from './handoff-draft.ts';
 import type { Logger } from './log.ts';
-import { span, type LoopDelay } from './shared.entry.ts';
+import { section, span, type LoopDelay } from './shared.entry.ts';
 import { NO_FILES_WARNING, type Choose, type SeatManager } from './seats.ts';
-import { hasWorktree, landable, roleHint, pickRole, wordCount, BRIEF_WORDS, WIDE_BRIEF_P, AUTO_ROLE_TEST0, AUTO_ROLE_UNJUDGED, type ScopeDecision, type SeatData } from './seats-defs.ts';
+import { hasWorktree, landable, roleHint, pickRole, scopeWarnings, wordCount, AUTO_ROLE_TEST0, AUTO_ROLE_UNJUDGED, type ScopeDecision, type SeatData } from './seats-defs.ts';
 import { jevText } from './watch.ts';
 import { repoOf } from './worktrees.ts';
-import { drainWarning, TERMINAL_TURN, type Seat, type Store, type ScopeFeatures } from './store.ts';
-import type { Limits } from './limits.ts';
+import { drainWarning, type Seat, type Store, type ScopeFeatures, type StoreEvent } from './store.ts';
+import { pickLoads, type Limits } from './limits.ts';
 import type { Family } from './providers/types.ts';
 import { activeLeads, windowSeatSessions } from './leads.ts';
 import { land } from './land.ts';
+import { withDomainScopeNote } from './land-domain.ts';
 import { hostRuntimeStates } from './remote-repo.ts';
 import { assertCheckHolder, prepareCheckOn, snapshotForCheck } from './check-on.ts';
 import { ALL_ON, seatInstruments } from './shared.entry.ts';
@@ -30,39 +35,76 @@ import { STAND_ARMS } from './stand.ts';
 import { reviewPlan } from './review-plan.ts';
 import { ScoutGate } from './scout-request.ts';
 import { SCOUT_TOOL, SEAT_MCP_PATH, SEAT_SCOUT_PATH } from './shared.entry.ts';
-import { chatJoin, chatRelease, chatList, chatPost, chatAddressees, chatPostOperator, chatPostCommitMiss, chatPostDocsNote, chatLiveHandle, chatRead, chatPending, chatWakePending, chatDelivered, chatConfirmed, type ChatAddress } from './chat.ts';
+import { chatJoin, chatRelease, chatList, chatPost, chatAddressees, chatPostCommitMiss, chatPostDocsNote, chatLiveHandle, chatRead, chatPending, chatWakePending, chatDelivered, chatConfirmed, onChatPost, type ChatAddress } from './chat.ts';
 import { createTasksRoutes } from './tasks-routes.ts';
+import { createStorageRoutes } from './storage.ts';
 import { steSummary, type LanguageSummary } from './ste.ts';
 import { readLanguageMode } from './shared.entry.ts';
+import { EventStream, TurnEventPublisher } from './event-stream.ts';
+import { ROLE_CATALOGUE } from './role-policy.ts';
+import { LeadDriver, LEAD_ID_PATTERN } from './lead-driver.ts';
+import { leadAutomation } from './lead-automation.ts';
+import { hostOf, str, readJson, sendJson, parseTaskFiles, leadArgList, serveLeadRoutes, buildLeadMcpServer } from './http-leads.ts';
+import { pultFeed, pultLeadHandle, pultRoster } from './pult-chat.ts';
+import { createRoleSettingsRoutes } from './role-settings.ts';
+import { readInstallSetting } from './settings/index.ts';
+import { withQualityRoutes } from './http-quality.ts';
+import { createSettingsRoutes, settingsFor, SETTINGS_TOOLS, callSettingsTool, unknownToolArguments } from './http-settings.ts';
+import { createHostsRoutes, type HostsService } from './http-hosts.ts';
+import { withPiClientRoutes } from './http-pi-client.ts';
 
 /** The absolute `node … wait <turn>` command a lead runs in the background. */
 const WAIT_COMMAND = `node ${JSON.stringify(fileURLToPath(new URL('./main.ts', import.meta.url)))} wait`;
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
-/** One trust boundary for both MCP file lists: reject absolute/escaping paths before using them for routing. */
-export function parseTaskFiles(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error('files must be an array of repo-relative paths');
-  if (value.length > 200) throw new Error('files may contain at most 200 paths');
-  return value.map((file: unknown) => {
-    if (typeof file !== 'string' || !file.trim() || file.length > 512) throw new Error('files must be repo-relative paths of at most 512 characters');
-    const normalized = file.replaceAll('\\', '/');
-    if (path.posix.isAbsolute(file) || path.win32.isAbsolute(file) || file.startsWith('\\') || /^[A-Za-z]:/.test(file) || normalized.split('/').includes('..')) {
-      throw new Error('files must be an array of repo-relative paths');
-    }
-    return normalized;
-  });
+/** lead.permissionMode (task 3459 C9), read once per daemon start (apply restart): a set mode
+ *  reaches a claude child's argv; a broken settings document refuses lead starts (fault) rather
+ *  than guessing a permission level, and keeps the daemon itself booting. */
+function leadPermissionOptions(stateDir: string): { permissionMode?: 'plan' | 'bypassPermissions'; permissionModeFault?: string } {
+  try {
+    const stored = readInstallSetting(stateDir, 'lead.permissionMode');
+    return stored === 'plan' || stored === 'bypassPermissions' ? { permissionMode: stored } : {};
+  } catch (error) {
+    return { permissionModeFault: (error as Error).message };
+  }
 }
+
+/** lead.restartWhenIdle (task 3459 C9): off refuses the when-idle restart before any notice post
+ *  or drain flag — the operator restarts by hand. A document the reader refuses fails closed the
+ *  same way; cancel is not a when-idle restart and never passes through here. */
+function restartAutomationRefusal(stateDir: string): string | null {
+  try {
+    return readInstallSetting(stateDir, 'lead.restartWhenIdle') === false
+      ? 'lead.restartWhenIdle is off: the operator restarts the daemon by hand; no drain was started'
+      : null;
+  } catch (error) {
+    return `lead.restartWhenIdle could not be read, so no drain was started: ${(error as Error).message}`;
+  }
+}
+
+/** The optional when-idle notice: refuses while closing/draining (409), else posts one lead
+ *  broadcast whose commit precedes the drain flag arming. True when it answered the request. */
+function postRestartNotice(rt: Runtime, closing: boolean, body: Record<string, unknown>, res: ServerResponse): boolean {
+  if (closing || rt.store.draining()) {
+    sendJson(res, 409, { error: closing ? 'daemon is closing' : 'daemon is draining' });
+    return true;
+  }
+  const note = str(body.note, 'note');
+  // chatPost checks the live binding and the length of the WHOLE post.
+  // No await between its commit and arming: idle drain may begin exit immediately.
+  chatPost(rt.store, {
+    as: str(body.as, 'as'), session: str(body.session, 'session'), to: 'all',
+    body: `Orch pid ${process.pid} will exit when idle. The restart is over when node ops/orchestrator/src/main.ts status prints a different pid with draining null. ${note}`,
+  });
+  return false;
+}
+
+/** One trust boundary for both MCP file lists and the lesson promote anchor: reject absolute/escaping paths before using them for routing. The body lives in http-leads.ts so the lessons routes share it without an import cycle; it stays exported here for the surface's callers. */
+export { parseTaskFiles };
 
 /** `code` is the fingerprint of the code this daemon started with (ops/orchestrator/code-hash.mjs). */
-export type Runtime = { store: Store; seats: SeatManager; log: Logger; loop?: LoopDelay; startedAt: number; stateDir: string; port: () => number; code: string; limits: Limits; configHealth?: import('./config-health.ts').ConfigHealth };
-
-/** The hostname of a Host header value, without its port. */
-function hostOf(value: string): string {
-  if (value.startsWith('[')) return value.slice(0, value.indexOf(']') + 1);
-  return value.split(':')[0];
-}
+export type Runtime = { store: Store; seats: SeatManager; log: Logger; loop?: LoopDelay; startedAt: number; stateDir: string; port: () => number; code: string; limits: Limits; configHealth?: import('./config-health.ts').ConfigHealth; leadArgs?: string[]; hosts?: HostsService };
 
 /**
  * DNS-rebinding guard. A browser page on evil.example resolved to 127.0.0.1
@@ -92,6 +134,11 @@ function lean({ readings: _readings, ...row }: ReturnType<Limits['load']>) {
 }
 
 /** Project the stored seat for the lead; the board and store retain the full record. */
+function createWriteScope(args: Record<string, unknown>): import('./shared.entry.ts').ExtraWriteScope | undefined {
+  if (args.role === 'auto' && args.writeScope !== undefined) throw new Error('writeScope requires an explicit restricted specialist role');
+  return args.writeScope as import('./shared.entry.ts').ExtraWriteScope | undefined;
+}
+
 function leanSeat(seat: Seat, warning?: string | null) {
   const data = seat.data;
   return {
@@ -103,12 +150,38 @@ function leanSeat(seat: Seat, warning?: string | null) {
     ...(data.placement ? { placement: data.placement } : {}),
     // The instruments the seat effectively runs with (task 1452): the A/B row records this.
     instruments: seatInstruments(data),
+    writeScope: data.writeScope,
     ...(warning ? { warning } : {}),
     ...(hasWorktree(seat.role)
       ? { worktree: seat.worktree, branch: data.branch ?? null, base: data.base ?? null }
       : {}),
     ...(typeof data.failure === 'string' ? { failure: data.failure } : {}),
   };
+}
+
+// Only profiles.ts's complete, plain numeric rows may disappear. New vocabulary stays visible.
+const PICK_NUMBER = String.raw`-?\d+(?:\.\d+)?(?:e[+-]?\d+)?`;
+const PICK_WINDOW = String.raw`(?:[1-9]\d*(?:m|h|d|month)|month|week)(?:·[A-Za-z0-9][A-Za-z0-9._-]*)?`;
+const PLAIN_PICK_ROW = new RegExp(
+  String.raw`^(claude|glm|codex|grok|kimi|opencode|qwen|mimo) budget ${PICK_WINDOW}: elapsed ${PICK_NUMBER}%, used ${PICK_NUMBER}%, headroom ${PICK_NUMBER}% \(${PICK_NUMBER} d\), need ${PICK_NUMBER}x`
+  + String.raw`(?: on ${PICK_WINDOW})?(?: \(reserved ${PICK_NUMBER}% for (?:1 seat|(?:[2-9]|[1-9]\d+) seats)\))?(?:, burn ${PICK_NUMBER}%/turn)?$`,
+);
+
+/** Manual create response only; the store, lists and auto-role responses keep their full evidence. */
+function compactPicked(picked: unknown, family: string, id: string): unknown {
+  if (typeof picked !== 'string') return picked;
+  // Non-greedy boundaries keep the complete prefix and the first cap/spread suffix verbatim.
+  const parts = /^([\s\S]*?; ranking: )([\s\S]*?)(; coder cap[\s\S]*|; pick spread:[\s\S]*)$/.exec(picked);
+  if (!parts || picked.indexOf('; ranking: ') !== picked.lastIndexOf('; ranking: ')) return picked;
+  const rows = parts[2].split('; ');
+  // A missing/duplicate chosen row or an empty row makes this structure unsafe to shorten.
+  if (rows.some((row) => !row) || rows.filter((row) => row.startsWith(`${family} `)).length !== 1) return picked;
+  const kept = rows.filter((row) => {
+    const plain = PLAIN_PICK_ROW.exec(row);
+    return !plain || plain[0] !== row || plain[1] === family;
+  });
+  const compact = `${parts[1]}${kept.join('; ')}${parts[3]}; full details: seats_list ${JSON.stringify({ seat: id })}`;
+  return compact.length < picked.length ? compact : picked;
 }
 
 /** Specialist-role hints not yet shown on this seat, persisted once on seat data (task 2953). */
@@ -130,6 +203,7 @@ function closedSeat(seat: Seat, store: Store) {
     id: seat.id, role: seat.role, family: seat.family, title: seat.title, status: seat.status, host: seatHost(seat.data),
     turn: last?.id ?? null, turnStatus: last?.status ?? null, ended: last?.ended_at ?? seat.updated_at,
     ...(seat.data.placement ? { placement: seat.data.placement } : {}),
+    ...(seat.data.writeScope ? { writeScope: seat.data.writeScope } : {}),
     ...(typeof seat.data.failure === 'string' ? { failure: seat.data.failure } : {}),
   };
 }
@@ -158,6 +232,11 @@ async function leadAside(store: Store, home: string, session?: string): Promise<
   }
 }
 
+/** The host-agent listener's slice of health/orch_status; a bare test runtime answers null. */
+function agentListenerOf(rt: Runtime) {
+  return rt.hosts === undefined ? null : rt.hosts.status();
+}
+
 function health(rt: Runtime) {
   const hosts = hostRuntimeStates();
   // Reuse the board's non-blocking combined load/tool probe and its timestamp.
@@ -181,6 +260,8 @@ function health(rt: Runtime) {
     checkout: path.resolve(fileURLToPath(new URL('../../..', import.meta.url))),
     busy: rt.store.activeTurns(),
     draining: rt.store.drainStatus(),
+    // The host-agent listener of Add machine (task 3459 R10 S6a): off until demand.
+    agentListener: agentListenerOf(rt),
     // Each registered host's runtime checkout against this daemon's commit (task 1784).
     ...(hosts.length ? { hostRuntimes: hosts } : {}),
     ...(hostInstruments.length ? { hostInstruments } : {}),
@@ -188,6 +269,7 @@ function health(rt: Runtime) {
 }
 
 const TOOLS = [
+  ...SETTINGS_TOOLS,
   {
     name: 'chat_join',
     description: 'Bind your lead-chat handle to a session, superseding its previous live binding; optional desktop is get_session "self" field sessionId (at most 80 characters, no whitespace), and rejoining updates only desktop. Use the session id SessionStart prints; no acknowledgement post is wanted.',
@@ -204,7 +286,7 @@ const TOOLS = [
   },
   {
     name: 'chat_post',
-    description: 'Post under your live handle to named handles or all, or omit to for a log line; refuses any never-bound named handle and lists live handles, while known handles with no live binding are accepted and returned in `notLive` only when non-empty; a post reaches its addressee at that lead\'s next own turn, and only `wake` wakes an idle lead: set it when the addressee must act now and the sender cannot continue without that act; pass `class: \'fyi\'` to mark a post that must not wake an idle lead, even in reply to a wake post; your first post back to a lead whose wake post reached you in the last 24 h counts as a wake and names that post in `replyWake`; a wake reply lists live addressees with state (watcher, in turn, no watcher), lastSeen and desktop. Use the session id SessionStart prints; no acknowledgement post is wanted.',
+    description: 'Post under your live handle to named handles or all, or omit to for a non-waking log line; refuses never-bound named handles and lists live handles, while known inactive handles are accepted and returned in `notLive`; every addressed lead post wakes every live recipient holding a wake poll, regardless of holder or `wake`, except `class: \'fyi\'`: a FYI post never wakes and reaches its addressee at that lead\'s next own turn; compaction belongs to the recipient path: idle under 40 minutes wakes immediately, idle 40 minutes or more compacts first, never gated by the daemon; explicit wake, first-reply `replyWake` metadata and receipt behavior are unchanged; a wake reply lists live addressees with state (watcher, in turn, no watcher), lastSeen and desktop. Use the session id SessionStart prints; no acknowledgement post is wanted.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -257,18 +339,19 @@ const TOOLS = [
   {
     name: 'seat_create',
     description:
-      'Create a worker seat. coder: own worktree on branch orch/<seat> from `base` (kept after close for you to land); tester: own branch worktree, same landing as a coder, outside the coder cap and without coder rechecks; designer: own branch worktree like a coder that may only write src/**/*.tsx, src/**/*.css and web/apps/**, on this Mac or a host with the Bright Data key, reading images by default; copywriter: own branch worktree that may only write web/apps/** and src/locales/**, on this Mac or a host with the Bright Data key; motion: own branch worktree like a coder that may only write web/apps/landing/public/media/** and web/apps/landing/_drafts/motion/**, on this Mac only (the Higgsfield session and ffmpeg-full exist only here), reading images by default; legal: disposable detached worktree with reviewer rights (`base` or `snapshot`, author and coauthors step aside, nothing lands), on this Mac or a host with the Bright Data key; security: disposable detached worktree with reviewer rights, max effort where the route supports it (kimi, mimo: high); reviewer: disposable detached worktree at `base` or a `snapshot`, reviewing the ACCUMULATED diff once per task, at most 2 per task (same title), a recheck is a turn of one of them (a closed reviewer without a valid report does not count, nor one a recheck superseded, whose family stays out); bughunter: hunts reproduced defects in existing code at max effort (kimi: high), disposable worktree; scout/researcher: read the repo in place and answer ONE question; a scout reports facts only, never a design or a how-to (#17974). debater: read the repo in place, answer one question, then one rebuttal of the other side\'s done first turn (`seat_prompt` `rebut`); give the two debaters of a fork ONE title, and orch keeps them on different models. ' +
+      `Create a worker seat. ${ROLE_CATALOGUE.map((entry) => `${entry.name}: ${entry.description}`).join(' ')} ` +
       'Leave `family` out: orch picks a family at or behind pace first, by need, then by pace headroom on the longest readable budget window; shorter windows throttle, equal-length model-scoped windows throttle only matching models, calibrated burn may veto, and unreadable usage ranks last. Paused families are excluded even from the emergency choice, and explicit requests for them are refused. Your own family (except for a coder seat or an eligible claude reviewer/plan critic), the author\'s and every coauthor\'s step aside. For a multi-slice task reviewed once, pass `author` and `coauthors` naming the other coder seats whose change is in the diff (reviewer or plan critic). The one reviewer exception is claude, which may review a named non-claude author only when every coauthor is also non-claude, even when claude is your family. Without `author`, or with a claude author or coauthor, claude never reviews, even when named explicitly. A claude plan critic may omit `author` and may share your family, but is excluded when any named author or coauthor is claude, even when named explicitly (#13875). Model and effort come from the role matrix. A family outside the role\'s matrix is refused. ' +
       'With `host`, Pi seats may run remotely: orch prepares a checkout on that host, refusing a SHA/tree mismatch; researcher, designer, copywriter and legal require the brightdata-web capability (BRIGHTDATA_API_KEY in the host environment or its prefixed secrets file); this Mac always offers it. Claude, motion, native harnesses and stand arms stay on this Mac. Local editing worktrees are provisioned like Paseo ones (npm ci, codegraph index, skills), so the seat is `provisioning` while setup runs; a prompt given meanwhile waits for it. Harness defaults to Pi for every family except claude, which runs native Claude Code (decision #11849: Pi\'s anthropic route bills the Max OAuth as extra usage); pass native for any family\'s own CLI, pi to opt claude into Pi explicitly. The answer carries `picked` (why this family), the seat\'s effective `instruments`, and, when load is high, a `warning`. A plan critic is `role: \'critic\'`. The `critic` flag is an alias kept for one release: `role: \'scout\'` with `critic: true` makes the same seat. ' +
       'Pass `images: true` when the seat must read images: each family whose model for this seat has no image input leaves the field before the pick, and neither the emergency choice nor the coder cap brings that family back. A role whose default skill requires image input is treated as `images: true` even when the flag is omitted. The effective value is stored on the seat; a `request_id` retry with a different value is refused. ' +
+      'For tester, designer, copywriter or motion only, writeScope {globs, reason} adds lead-declared repo-relative paths to the role scope at edit and landing time. The addition and reason are stored and shown on the board and seats_list; a request_id retry must match both. Absolute paths, parent traversal, unrestricted wildcards and .git paths are refused. ' +
       'A debater round table (operator #19423) passes `options` (2-4 strings): every open debater of the same title must carry the identical list, and orch stores the lead-chat handle your `session` holds so the table\'s one tally post reaches you. Omit `options` for the classic two-side fork, which behaves exactly as before. A coder created with `files` also gets a non-blocking `warning` when every file is a test, fixture or capture (a tester seat fits) or any file is under src/locales/ (a copywriter seat fits). ' +
-      'role \'auto\' (pass `brief` and non-empty `files`): orch picks the role itself — tester when every file is a test, fixture or capture, or when Jev reads a tests-only brief or a reported defect (a defect brief gains the Test 0 line: the tester writes the red test first, then a coder fixes it), else coder — creates exactly that one seat and queues the brief as its first turn. The answer adds `turn`, `wait` and `picked` {role, rule, jev: {wide, defect, tests_only, look, logic}, next}. Jev unavailable or a brief its gate would cut refuses with no seat created; a wide reading above 0.85 refuses like the coder scope gate and `wide_brief` bypasses it. After an orch restart your MCP client must reconnect before role \'auto\' reaches its cached copy of this schema.',
+      'role \'auto\' (pass `brief` and non-empty `files`): orch picks the role itself — tester when every file is a test, fixture or capture, or when Jev reads a tests-only brief or a reported defect (a defect brief gains the Test 0 line: the tester writes the red test first, then a coder fixes it), else coder — creates exactly that one seat and queues the brief as its first turn. The answer adds `turn`, `wait` and `picked` {role, rule, jev: {wide, defect, tests_only, look, logic}, next}. Jev unavailable or a brief its gate would cut refuses with no seat created; a wide reading above 0.85 through 0.95 queues with a non-blocking warning (score, threshold and sequential-seat advice), also in the turn digest; only above 0.95 refuses, and `wide_brief` bypasses it. After an orch restart your MCP client must reconnect before role \'auto\' reaches its cached copy of this schema.',
     inputSchema: {
       type: 'object',
       properties: {
-        role: { type: 'string', enum: ['coder', 'tester', 'designer', 'copywriter', 'motion', 'reviewer', 'legal', 'security', 'bughunter', 'scout', 'critic', 'researcher', 'debater', 'auto'] },
+        role: { type: 'string', enum: [...ROLE_CATALOGUE.map((entry) => entry.name), 'auto'] },
         brief: { type: 'string', description: "role 'auto' only: the brief orch reads to pick tester or coder; it is queued as the seat's first turn and the seat_prompt 300-word rule applies." },
-        wide_brief: { type: 'string', description: "role 'auto' only: why the work cannot be split when Jev reads the brief wider than 0.85; the same bypass as seat_prompt. At most 300 characters after trimming." },
+        wide_brief: { type: 'string', description: "role 'auto' only: why the work cannot be split when Jev reads the brief wider than 0.95; the same bypass as seat_prompt. At most 300 characters after trimming." },
         session: { type: 'string', description: 'Your hook session id, the same one the chat tools take. The own-family step-aside then covers only your family, and orch stores it on the seat so its own recheck reviewer steps aside from your family too (decision #17805 D2). Without it, or when it does not resolve, every lead active in the last 10 minutes steps aside and `picked` says so.' },
         family: { type: 'string', enum: ['claude', 'glm', 'codex', 'grok', 'kimi', 'opencode', 'qwen', 'mimo'], description: 'Omit to pick a family at or behind pace first, by need, then by pace headroom, among unpaused families; a paused explicit family is refused.' },
         author: { type: 'string', description: 'reviewer/plan critic: the primary coder seat whose change this reviews; its family never reviews it. Claude reviewers require a named non-claude author and only non-claude coauthors. Claude plan critics may omit author, but every named author/coauthor must be non-claude; both may share a claude lead family.' },
@@ -288,6 +371,14 @@ const TOOLS = [
         standArm: { type: 'string', enum: [...STAND_ARMS], description: 'A/B stand only: explicit isolated Pi profile. Omit for a stock seat; never pass a config path.' },
         critic: { type: 'boolean', description: '`role: \'critic\'` is a plan critic; this flag is an alias kept for one release (`role: \'scout\'` with `critic: true` makes the same seat) (#13286, #13875) — the scout lifecycle (one question, no worktree) on the whole reviewer matrix: its family pool, model and high effort. The plan author\'s seat may be named in `author`; its family and every coauthor\'s never take the seat. Your own family steps aside even when named explicitly, except claude may take the seat when no named author or coauthor is claude. `model`, `effort`, an explicit native harness and a family outside the reviewer matrix are refused; omitted harness runs claude natively with the matrix model.' },
         images: { type: 'boolean', description: 'True when this seat must read images. Each family whose model for this seat has no image input leaves the field before the pick, including the emergency choice and the coder cap. Omitted is false, except a role whose default skill requires image input, which is true either way. Stored on the seat; a request_id retry with a different value is refused.' },
+        writeScope: {
+          type: 'object', additionalProperties: false, required: ['globs', 'reason'],
+          description: 'Lead-declared extra write scope, only for tester, designer, copywriter and motion. Added to the role scope, not a replacement. Stored with its reason; retries must match. Refuses absolute paths, .., all-path globs (*, **), and .git paths.',
+          properties: {
+            globs: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'string', minLength: 1, maxLength: 512 } },
+            reason: { type: 'string', minLength: 1, maxLength: 300 },
+          },
+        },
         options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'string', maxLength: 60 }, uniqueItems: true, description: 'debater round table (operator #19423): the 2-4 option strings every member votes on; every open debater of the same title must carry the identical list. Omit for the classic two-side fork.' },
         instruments: {
           type: 'object',
@@ -321,16 +412,16 @@ const TOOLS = [
   {
     name: 'seat_prompt',
     description:
-      'Give a seat its task; returns with the queued turn id and its own wait command. A first coder, tester or bughunter brief with no files (in `files` or at seat_create) is refused: pass the repo-relative files of the area (decision #17906). A coder first brief is Jev-scored for scope bloat: only above 0.85 it is refused; pass wide_brief with why it cannot be split to bypass; the trimmed reason is stored on the seat. Jev unavailable or a cut brief passes labelled in the turn digest. After a coder correction turn finishes, its digest lists the automatic rechecks of reproduced reviewer blocker and major findings: kind `same` is a turn of that reviewer when every path the correction changes is named in those findings; kind `new` is a new reviewer of another family over the whole diff, replacing it, when the correction changes any other path (decision #12435); set recheck:false on that prompt to opt out. A follow-up to a busy seat queues FIFO behind its running turn (at most 5 queued); you can wait on either turn independently. Coder answers include overlap: [{seat, files, more}] and overlapUnchecked: [seat] for worktree observations that failed; both warn only. `prompt` is the brief: English, at most 300 words (task, owned files, evidence, acceptance; link larger artifacts). A debater\'s second turn requires `rebut`: the turn id of another debater\'s done first turn with a parsed report; that report\'s claims, evidence and forLead are appended verbatim to the stored brief, outside the 300-word count. `rebut` on any other role or on a first turn is refused, and so is one between two seats that run the same model: the two debaters of a fork share ONE title and orch keeps them apart. orch wraps a seat\'s first brief in its role context (knowledge pages and lessons for `files`, code-intel rules, routed skills) and every turn ends in the role\'s JSON report contract (one fenced block, aimed under 5500 characters with each claim under 300; size is never refused); a reply off the schema gets up to two repair turns naming every fault, and the digest carries only the parsed `report`. Then wait WITHOUT polling: in Claude Code run the returned `wait` command as a background Bash task (you are notified with the digest); elsewhere call seat_wait. A first coder brief also carries a non-blocking `warning` when a specialist seat fits: tester (every file a test, fixture or capture, or Jev reads a tests-only brief), designer (Jev reads a surface-look change over a UI file), copywriter (a src/locales/ file), and a reported defect without a reproducing test (a tester writes the red test first).',
+      'Give a seat its task; returns with the queued turn id and its own wait command. A first coder, tester or bughunter brief with no files (in `files` or at seat_create) is refused: pass the repo-relative files of the area (decision #17906). A coder first brief is Jev-scored for scope bloat: above 0.85 through 0.95 queues with a non-blocking warning (score, threshold and sequential-seat advice), also in the turn digest; only above 0.95 is refused; pass wide_brief with why it cannot be split to bypass; the trimmed reason is stored on the seat. Jev unavailable or a cut brief passes labelled in the turn digest. After a coder correction turn finishes, its digest lists the automatic rechecks of reproduced reviewer blocker and major findings: kind `same` is a turn of that reviewer when every path the correction changes is named in those findings; kind `new` is a new reviewer of another family over the whole diff, replacing it, when the correction changes any other path (decision #12435); set recheck:false on that prompt to opt out. A follow-up to a busy seat queues FIFO behind its running turn (at most 5 queued); you can wait on either turn independently. Coder answers include overlap: [{seat, files, more}] and overlapUnchecked: [seat] for worktree observations that failed; both warn only. `prompt` is the brief: English, within the configurable word limit (default 300 words; task, owned files, evidence, acceptance; link larger artifacts). A debater\'s second turn requires `rebut`: the turn id of another debater\'s done first turn with a parsed report; that report\'s claims, evidence and forLead are appended verbatim to the stored brief, outside the configured word count. `rebut` on any other role or on a first turn is refused, and so is one between two seats that run the same model: the two debaters of a fork share ONE title and orch keeps them apart. orch wraps a seat\'s first brief in its role context (knowledge pages and lessons for `files`, code-intel rules, routed skills) and every turn ends in the role\'s JSON report contract (one fenced block, aimed under 5500 characters with each claim under 300; size is never refused); a reply off the schema gets up to two repair turns naming every fault, and the digest carries only the parsed `report`. Then wait WITHOUT polling: in Claude Code run the returned `wait` command as a background Bash task (you are notified with the digest); elsewhere call seat_wait. A first coder brief also carries a non-blocking `warning` when a specialist seat fits: tester (every file a test, fixture or capture, or Jev reads a tests-only brief), designer (Jev reads a surface-look change over a UI file), copywriter (a src/locales/ file), and a reported defect without a reproducing test (a tester writes the red test first).',
     inputSchema: {
       type: 'object',
       properties: {
         seat: { type: 'string' },
-        prompt: { type: 'string', description: 'The brief, at most 300 words.' },
+        prompt: { type: 'string', description: 'The brief, within the configurable word limit (default 300 words).' },
         files: { type: 'array', maxItems: 200, items: { type: 'string', maxLength: 512 }, description: 'Repo-relative files the task is about; they select knowledge pages and lessons.' },
-        long_brief: { type: 'string', description: 'Only for a brief over 300 words: why it cannot be shorter.' },
+        long_brief: { type: 'string', description: 'Only for a brief over the configurable word limit (default 300 words): why it cannot be shorter.' },
         wide_brief: { type: 'string', description: 'Coder first brief only: why the work cannot be split into sequential seats (max 300 characters after trimming); bypasses the Jev scope gate.' },
-        timeout_minutes: { type: 'number', minimum: 1, maximum: 240, description: 'Turn limit, default 30.' },
+        timeout_minutes: { type: 'number', minimum: 1, maximum: 240, description: 'Turn limit in minutes. Omitted, the seat role\'s default from ROLE_TURN_LIMIT_MINUTES (profiles.ts): coder 90, designer 90, motion 90, bughunter 150, tester 60, copywriter 60, reviewer 60, security 60; every other role 45. An explicit 1..240 always wins.' },
         token_cap: { type: 'integer', minimum: 256, maximum: 1000000, description: 'Stand Pi seats only: abort after this many cumulative input+output+cacheRead tokens; a single response may overshoot.' },
         recheck: { type: 'boolean', description: 'Coder correction only: false suppresses automatic rechecks of reproduced reviewer blocker and major findings.' },
         rebut: { type: 'string', description: 'Debater second turn only: the turn id of another debater\'s done first turn, or `table` for a round-table member (created with `options`) to see every other member\'s anonymized round-1 report. Required on that turn; refused on any other role or on a first turn.' },
@@ -366,8 +457,8 @@ const TOOLS = [
   },
   {
     name: 'seat_land',
-    description: 'Apply a coder or tester seat\'s accumulated committed, staged, unstaged and untracked changes since its base to the lead checkout (or into). Refuses dirty overlapping paths. A role write scope refuses patch paths outside it and lists them; override_reason lands those paths and stores the reason on the seat. Leaves conflicts in the lead checkout for resolution or rollback; never commits.',
-    inputSchema: { type: 'object', properties: { seat: { type: 'string' }, into: { type: 'string', description: 'Optional absolute path to another checkout of the same repository; default the seat\'s original repo.' }, override_reason: { type: 'string', description: 'Land patch paths outside the seat role write scope and store this reason on the seat. Omitted: those paths are refused and listed.' } }, required: ['seat'], additionalProperties: false },
+    description: 'Apply a coder or tester seat\'s accumulated changes to the lead checkout (or into). Refuses dirty overlapping paths and role write-scope violations without override_reason. Registered domain leads may land only their domains; cross-domain overrides must cite an owning handle chat post addressed to this lead (post #ID). Registry unreadability or an unregistered lead is reported as ungated. Stores override reasons; never commits.',
+    inputSchema: { type: 'object', properties: { seat: { type: 'string' }, into: { type: 'string', description: 'Optional absolute path to another checkout of the same repository; default the seat\'s original repo.' }, override_reason: { type: 'string', description: 'Stored scope override reason. For cross-domain paths, cite post #ID from each registered owning handle addressed to this lead; arbitrary reasons cannot override domain scope.' } }, required: ['seat'], additionalProperties: false },
   },
   {
     name: 'seat_close',
@@ -376,10 +467,6 @@ const TOOLS = [
   },
 ];
 
-const str = (value: unknown, name: string): string => {
-  if (typeof value !== 'string' || !value) throw new Error(`${name} must be a non-empty string`);
-  return value;
-};
 const optStr = (value: unknown, name: string): string | undefined => (value === undefined ? undefined : str(value, name));
 const optBool = (value: unknown, name: string): boolean | undefined => {
   if (value !== undefined && typeof value !== 'boolean') throw new Error(`${name} must be true or false`);
@@ -437,8 +524,9 @@ async function createAutoRole(rt: Runtime, args: Record<string, unknown>, files:
   if (wideBrief !== undefined && wideBrief.length > 300) throw new Error('wide_brief must be at most 300 characters after trimming');
   // The prompt-time word limit lands before any seat exists or Jev is asked (reviewer-codex-b4865c).
   const words = wordCount(brief);
-  if (words > BRIEF_WORDS) {
-    throw new Error(`the brief is ${words} words; the limit is ${BRIEF_WORDS}. Cut it to the task, owned files, evidence and acceptance and link larger artifacts, or pass long_brief with the reason it cannot be shorter`);
+  const briefWords = readInstallSetting(rt.seats.options.stateDir, 'jev.brief.words') as number;
+  if (words > briefWords) {
+    throw new Error(`the brief is ${words} words; the limit is ${briefWords}. Cut it to the task, owned files, evidence and acceptance and link larger artifacts, or pass long_brief with the reason it cannot be shorter`);
   }
   const title = str(args.title, 'title');
   const requestId = optStr(args.request_id, 'request_id');
@@ -507,8 +595,8 @@ function macPinExempt(args: Record<string, unknown>, files: string[] | undefined
   return args.family === 'claude' || args.harness === 'native' || args.standArm !== undefined || files?.some(touchesMacDesktop) === true;
 }
 
-/** The pick, create and first-turn queue of a role 'auto' create whose validations already passed. */
-async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, files: string[], session: string | undefined, leadHandle: string | null, brief: string, wideBrief: string | undefined, title: string, requestId: string | undefined) {
+/** Pick a role and retain the one scope reading for creation and the first turn. */
+async function assessAutoRole(rt: Runtime, files: string[], brief: string, wideBrief: string | undefined) {
   let pick = pickRole(files, null);
   let decision: ScopeDecision | null = null;
   if (pick.rule !== 'files') {
@@ -516,12 +604,19 @@ async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, fi
     if (rt.seats.scopeDeclined(brief, text)) throw new Error(AUTO_ROLE_UNJUDGED);
     decision = await rt.seats.judgeScope(text);
     if (decision.status !== 'scored') throw new Error(AUTO_ROLE_UNJUDGED);
-    if (decision.score > WIDE_BRIEF_P && wideBrief === undefined) {
+    const refuse = readInstallSetting(rt.seats.options.stateDir, 'jev.scope.refuse') as number;
+    if (decision.score > refuse && wideBrief === undefined) {
       // The same refusal the first coder brief's scope gate gives.
-      throw new Error(`coder brief scope ${decision.score} above ${WIDE_BRIEF_P.toFixed(2)}: split the behaviors or new units across sequential seats, or pass wide_brief explaining why that cannot be done`);
+      throw new Error(`coder brief scope ${decision.score} above ${refuse.toFixed(2)}: split the behaviors or new units across sequential seats, or pass wide_brief explaining why that cannot be done`);
     }
     pick = pickRole(files, decision);
   }
+  return { pick, decision };
+}
+
+/** The pick, create and first-turn queue of a role 'auto' create whose validations already passed. */
+async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, files: string[], session: string | undefined, leadHandle: string | null, brief: string, wideBrief: string | undefined, title: string, requestId: string | undefined) {
+  const { pick, decision } = await assessAutoRole(rt, files, brief, wideBrief);
   const features = decision?.status === 'scored' ? decision.features : null;
   const jev = { wide: decision?.status === 'scored' ? decision.score : null, defect: features?.defect ?? null, tests_only: features?.tests_only ?? null, look: features?.look ?? null, logic: features?.logic ?? null };
   const seat = await rt.seats.create({
@@ -533,15 +628,15 @@ async function createAutoSeatWork(rt: Runtime, args: Record<string, unknown>, fi
   const stored = rt.store.updateSeat(seat.id, { data: { autoRole: { rule: pick.rule, jev, next: pick.next } } }, 'seat.auto_role', { role: pick.role, rule: pick.rule, ...jev, next: pick.next });
   const turn = await rt.seats.promptScoped(stored.id, brief, undefined, {
     files,
-    // A coder reuses the create-time reading, wide_brief bypass included: promptScoped records the
+    // Reuse the create-time reading, wide_brief bypass included: promptScoped records the
     // bypass and keeps THIS reading instead of judging again (reviewer-codex-b4865c, task 1943).
-    ...(pick.role === 'coder' && decision?.status === 'scored' ? { assessed: decision } : {}),
+    ...(decision?.status === 'scored' ? { assessed: decision } : {}),
     ...(pick.rule === 'defect' ? { briefSuffix: `\n\n${AUTO_ROLE_TEST0}` } : {}),
   }, wideBrief);
   // The task-2953 hints reuse the same reading; each kind still shows at most once per seat.
   const hinted = stored.role === 'coder' ? roleHintWarning(rt.store, stored, files, features) : { seat: stored, text: '' };
   const drain = rt.store.drainStatus();
-  const warning = [rt.limits.load(hinted.seat.family as Family).warning, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' ');
+  const warning = [...scopeWarnings(turn, rt.store.getSeat(stored.id)?.data ?? {}, rt.seats.options.stateDir), rt.limits.load(hinted.seat.family as Family).warning, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' ');
   return { ...leanSeat(hinted.seat, warning), turn: turn.id, wait: `${WAIT_COMMAND} ${turn.id}`, picked: { role: pick.role, rule: pick.rule, jev, next: pick.next } };
 }
 
@@ -552,18 +647,10 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     // One trust boundary for every tool: an argument outside the tool's own schema is refused,
     // not silently ignored (a `prompt` on seat_create lost a lead ~4 h, memory #12948).
-    const tool = TOOLS.find((candidate) => candidate.name === request.params.name);
-    if (tool) {
-      const known = Object.keys(tool.inputSchema.properties);
-      const unknown = Object.keys(args).filter((key) => !known.includes(key));
-      if (unknown.length) {
-        const fields = unknown.map((key) => `'${key}'`).join(', ');
-        const text = request.params.name === 'seat_create' && unknown.includes('prompt')
-          ? `seat_create takes no prompt: create the seat, then call seat_prompt with the brief${unknown.length > 1 ? `; also unknown: ${unknown.filter((key) => key !== 'prompt').map((key) => `'${key}'`).join(', ')}` : ''}`
-          : `${request.params.name} takes no ${fields}`;
-        return { isError: true, content: [{ type: 'text', text }] };
-      }
-    }
+    const unknownArguments = unknownToolArguments(request.params.name, args, TOOLS);
+    if (unknownArguments) return { isError: true, content: [{ type: 'text', text: unknownArguments }] };
+    const settingsReply = await callSettingsTool(rt, request.params.name, args, (session) => chatLiveHandle(rt.store, optStr(session, 'session')));
+    if (settingsReply) return settingsReply;
     let result: unknown;
     if (request.params.name === 'orch_status') {
       result = { ...health(rt), stateDir: rt.stateDir, port: rt.port(), seats: rt.store.seatCounts(), limits: rt.limits.all().map(lean) };
@@ -634,6 +721,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
             macNeedReason(args, files);
             const session = optStr(args.session, 'session');
             const leadHandle = chatLiveHandle(rt.store, session);
+            const writeScope = createWriteScope(args);
             if (args.role === 'auto') {
               if (!files || !files.length) throw new Error("role 'auto' needs files: the repo-relative files of the area");
               result = await createAutoRole(rt, args, files, session, leadHandle);
@@ -654,16 +742,17 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
             const seat = await rt.seats.create({
               role: str(args.role, 'role'), family: optStr(args.family, 'family'), author: optStr(args.author, 'author'), coauthors: args.coauthors as string[] | undefined, title: str(args.title, 'title'), repo: str(args.repo, 'repo'),
               base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot'), harness: optStr(args.harness, 'harness'), host: optStr(args.host, 'host'), needs: optStr(args.needs, 'needs'), needsReason: macNeedReason(args, files), files, model: optStr(args.model, 'model'), effort: optStr(args.effort, 'effort'),
-              instruments: args.instruments, standArm: args.standArm, request_id: optStr(args.request_id, 'request_id'), critic: optBool(args.critic, 'critic'), images: optBool(args.images, 'images'), options: args.options as string[] | undefined, leadHandle,
+              instruments: args.instruments, standArm: args.standArm, request_id: optStr(args.request_id, 'request_id'), critic: optBool(args.critic, 'critic'), images: optBool(args.images, 'images'), options: args.options as string[] | undefined, writeScope, leadHandle,
             }, await choose(rt, session));
             const drain = seat.role === 'scout' || seat.role === 'critic' ? null : rt.store.drainStatus();
             // Deterministic specialist-role hints (tester, locales) for a coder with files (task 2953).
             const hinted = seat.role === 'coder' && files && files.length ? roleHintWarning(rt.store, seat, files, null) : { seat, text: '' };
-            result = leanSeat(hinted.seat, [rt.limits.load(hinted.seat.family as Family).warning, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' '));
+            const response = leanSeat(hinted.seat, [hinted.seat.data.independenceWarning, rt.limits.load(hinted.seat.family as Family).warning, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' '));
+            result = { ...response, picked: compactPicked(response.picked, hinted.seat.family, hinted.seat.id) };
             break;
           }
           case 'review_plan': {
-            result = await reviewPlan(rt.store, { seat: optStr(args.seat, 'seat'), repo: optStr(args.repo, 'repo'), base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot') });
+            result = await reviewPlan(rt.store, { seat: optStr(args.seat, 'seat'), repo: optStr(args.repo, 'repo'), base: optStr(args.base, 'base'), snapshot: optBool(args.snapshot, 'snapshot') }, undefined, rt.seats.options.stateDir);
             break;
           }
           case 'seat_prompt': {
@@ -697,7 +786,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
               ? roleHintWarning(rt.store, seat, [...(Array.isArray(seat.data.taskFiles) ? seat.data.taskFiles as string[] : []), ...(files ?? [])], turn.watch?.scope?.features ?? null)
               : { seat, text: '' };
             seat = hinted.seat;
-            const warning = [seat.data.noFilesTurn === turn.id ? NO_FILES_WARNING : null, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' ');
+            const warning = [...scopeWarnings(turn, seat.data, rt.seats.options.stateDir), seat.data.noFilesTurn === turn.id ? NO_FILES_WARNING : null, drain && drainWarning(drain), rt.configHealth?.warning(), hinted.text].filter(Boolean).join(' ');
             const language = languageOf(brief, rt.stateDir);
             result = { turn: turn.id, status: turn.status, wait: `${WAIT_COMMAND} ${turn.id}`, ...(warning ? { warning } : {}), overlap: rt.seats.overlap(turn.seat_id), overlapUnchecked: rt.seats.overlapUnchecked(turn.seat_id), ...(language ? { language } : {}) };
             break;
@@ -726,7 +815,7 @@ function buildMcpServer(rt: Runtime, requests: ReadonlyMap<string, number>, held
             break;
           }
           case 'seat_land': {
-            result = await land(rt.store, str(args.seat, 'seat'), optStr(args.into, 'into'), {}, optStr(args.override_reason, 'override_reason'));
+            result = withDomainScopeNote(await land(rt.store, str(args.seat, 'seat'), optStr(args.into, 'into'), {}, optStr(args.override_reason, 'override_reason')));
             break;
           }
           case 'seat_close': {
@@ -774,17 +863,6 @@ function buildSeatMcpServer(scouts: ScoutGate, seatId: string): Server {
   return server;
 }
 
-async function readJson(req: IncomingMessage, limit: number): Promise<unknown> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > limit) throw new Error(`body over ${limit} bytes`);
-    chunks.push(chunk as Buffer);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
-
 async function serveMcp(server: Server, req: IncomingMessage, res: ServerResponse): Promise<void> {
   // Stateless: a fresh server and transport per request, so no session
   // state lives in memory that a restart would silently drop.
@@ -797,85 +875,34 @@ async function serveMcp(server: Server, req: IncomingMessage, res: ServerRespons
   await transport.handleRequest(req, res);
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
+/** The MCP route: a supervised lead child names its lead in the URL, so its permission tool is attributable. */
+async function serveOrchMcp(rt: Runtime, requests: ReadonlyMap<string, number>, held: () => string[], leads: LeadDriver, url: URL, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const lead = url.searchParams.get('lead');
+  if (lead !== null && !LEAD_ID_PATTERN.test(lead)) {
+    sendJson(res, 400, { error: 'lead must be a lead id' });
+    return;
+  }
+  // A runtime without a port (test servers) can still serve the plain MCP surface;
+  // the lead binding exists only where children were given a reachable URL.
+  if (lead !== null && typeof rt.port !== 'function') {
+    sendJson(res, 503, { error: 'lead MCP requires the daemon port' });
+    return;
+  }
+  rt.log('info', 'mcp.request', { lead, method: req.method });
+  await serveMcp(lead === null ? buildMcpServer(rt, requests, held) : buildLeadMcpServer(lead, leads, VERSION), req, res);
 }
 
 /** What an automatic family pick reads: the lead's seat_create (its `session` names the creating lead) and orch's own recheck reviewer (decision #11871, #17805 D2). */
 async function choose(rt: Runtime, session?: string): Promise<Choose> {
   const aside = await leadAside(rt.store, rt.seats.options.home, session);
   return {
-    loads: rt.limits.all(),
+    loads: pickLoads(rt.limits.all()),
     leadFamilies: aside.families,
     leadFamily: aside.leadFamily,
+    leadSession: session,
     ...(aside.note ? { leadAsideNote: aside.note } : {}),
     estimate: (load, role, model, window) => rt.limits.estimate(load.family, role, load, model, window),
   };
-}
-
-async function serveDashboard(rt: Runtime, req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
-  if (req.method !== 'GET') return false;
-  if (pathname === '/') {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(DASHBOARD_HTML);
-    return true;
-  }
-  if (pathname === '/api/dashboard') {
-    sendJson(res, 200, await board(rt));
-    return true;
-  }
-  return false;
-}
-
-// The sessions with a held /chat/wake poll, for each runtime. The loopback server owns the polls; the LAN
-// chat feed reads them through chatList, so a receipt state on the phone equals the one on the loopback
-// board (task 2286). The session ids stay inside chatList.
-const heldWakes = new WeakMap<Runtime, () => string[]>();
-const chatRequests = new WeakMap<Runtime, ReadonlyMap<string, number>>();
-
-/** The LAN server cannot reach the loopback router, MCP or seat code. */
-export function createLanBoardServer(rt: Runtime): HttpServer {
-  const serve = async (req: IncomingMessage, res: ServerResponse) => {
-    let url: URL;
-    try { url = new URL(req.url ?? '/', 'http://127.0.0.1'); }
-    catch { res.writeHead(404); res.end(); return; }
-    const pathname = url.pathname;
-    rt.loop?.mark(`lan ${req.method} ${pathname}`);
-    if (req.method !== 'GET' || !['/', '/api/dashboard', '/api/chat'].includes(pathname)) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    try {
-      if (pathname === '/api/chat') {
-        const numberParam = (name: string) => {
-          const value = url.searchParams.get(name);
-          return value === null ? undefined : value.trim() === '' ? NaN : Number(value);
-        };
-        try {
-          const { posts, handles, watchers } = chatList(rt.store, {
-            after: numberParam('after'), limit: numberParam('limit'), held: heldWakes.get(rt)?.() ?? [], requests: chatRequests.get(rt),
-          });
-          sendJson(res, 200, { posts, handles: handles.map(({ handle, bound_at }) => ({ handle, bound_at })), watchers, readOnly: true });
-        } catch (error) {
-          sendJson(res, 400, { error: (error as Error).message });
-        }
-        return;
-      }
-      await serveDashboard(rt, req, res, pathname);
-    } catch (error) {
-      rt.log('error', 'http.error', { url: req.url, message: (error as Error).message });
-      if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
-    }
-  };
-  // The span times the handler's synchronous prefix (the run until its first
-  // await); continuations after an await are later, unattributed windows.
-  const server = createServer((req, res) =>
-    span(`lan ${req.method} ${(req.url ?? '/').split('?')[0]}`, () => serve(req, res)));
-  server.keepAliveTimeout = 75_000;
-  server.headersTimeout = 80_000;
-  return server;
 }
 
 /** Whether one watcher's `since` predates another. ISO timestamps order by time; anything unparseable falls back to string order. */
@@ -883,6 +910,118 @@ function sinceOlder(since: string, newest: string): boolean {
   const a = Date.parse(since);
   const b = Date.parse(newest);
   return Number.isNaN(a) || Number.isNaN(b) ? since < newest : a < b;
+}
+
+/** Store event kinds that are seat status transitions: the only `updateSeat` calls that change `status`. */
+const SEAT_STATUS_KINDS = new Set(['seat.ready', 'seat.working', 'seat.idle', 'seat.closed', 'seat.provision_failed']);
+
+/** `turn.finished` carries the same Digest `seat_wait` returns; the awaited digest can land after later events' seq. */
+async function finishEvent(rt: Runtime, events: EventStream, row: StoreEvent): Promise<void> {
+  const fallback = { seat: row.seatId, turn: row.payload.turn ?? null, status: row.payload.status ?? null };
+  try {
+    const turn = rt.store.getTurn(String(row.payload.turn ?? ''));
+    events.emit('turn.finished', turn && typeof rt.seats.digest === 'function' ? await rt.seats.digest(turn) : fallback);
+  } catch (error) {
+    rt.log('warn', 'events.turn_digest_failed', { turn: row.payload.turn, message: (error as Error).message });
+    events.emit('turn.finished', fallback);
+  }
+}
+
+function createdEvent(rt: Runtime, events: EventStream, row: StoreEvent): void {
+  const seat = row.seatId === null ? null : rt.store.getSeat(row.seatId);
+  events.emit('seat.created', {
+    seat: row.seatId, role: row.payload.role ?? null, family: row.payload.family ?? null,
+    title: seat?.title ?? null, status: row.payload.status ?? null, lead: seat ? pultLeadHandle(rt.store, seat) : null,
+  });
+}
+
+function landedEvent(events: EventStream, row: StoreEvent): void {
+  if (!row.payload.landed || typeof row.payload.landed !== 'object' || Array.isArray(row.payload.landed)) return;
+  const landed = row.payload.landed as Record<string, unknown>;
+  events.emit('seat.landed', { seat: row.seatId, into: landed.into ?? null, paths: landed.paths ?? null });
+}
+
+/** Map one appended store row to a stream event; every kind not mapped here is not stream state. */
+function emitStoreEvent(rt: Runtime, events: EventStream, row: StoreEvent): void {
+  if (row.kind === 'seat.created') createdEvent(rt, events, row);
+  else if (row.kind === 'turn.started') events.emit('turn.started', { seat: row.seatId, turn: row.payload.turn ?? null });
+  else if (row.kind === 'turn.ended') void finishEvent(rt, events, row);
+  else if (SEAT_STATUS_KINDS.has(row.kind)) {
+    events.emit('seat.status', { seat: row.seatId, status: row.payload.status ?? null });
+    if (row.kind === 'seat.closed') events.emit('seat.closed', { seat: row.seatId, status: row.payload.status ?? 'closed' });
+  } else if (row.kind === 'seat.updated') landedEvent(events, row);
+}
+
+/** The /events push channel observes store, chat and live seat-turn writes where they already happen; beyond the per-turn coalescing window it holds no state of its own. */
+function wireEvents(rt: Runtime, events: EventStream): () => void {
+  // Live provider events of running turns (task 3465): the sessions' own callbacks feed the publisher.
+  const turns = new TurnEventPublisher(events);
+  const offStore = rt.store.onEvent?.((row) => {
+    // The turn's buffered live frames drain before its finished digest leaves.
+    if (row.kind === 'turn.ended') turns.flush(String(row.payload.turn ?? ''));
+    emitStoreEvent(rt, events, row);
+  });
+  const offTurns = rt.seats.onTurnEvent?.((seat, turn, event) => turns.observe(seat, turn, event));
+  const offChat = onChatPost((post) => events.emit('chat.post', { ...post }));
+  return () => { offStore?.(); offTurns?.(); offChat(); turns.close(); };
+}
+
+/** Loopback-only WebSocket upgrade: the same DNS-rebinding guard as every HTTP route, then /events only. */
+function serveUpgrade(rt: Runtime, events: EventStream, req: IncomingMessage, socket: Socket, head: Buffer): void {
+  rt.loop?.mark(`http upgrade ${(req.url ?? '/').split('?')[0]}`);
+  const refused = rejectReason(req);
+  if (refused) {
+    rt.log('warn', 'http.rejected', { reason: refused, url: req.url });
+    events.refuse(socket, 403, refused);
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  } catch {
+    events.refuse(socket, 400, 'malformed request target');
+    return;
+  }
+  if (url.pathname !== '/events') {
+    events.refuse(socket, 404, `no websocket at ${url.pathname}`);
+    return;
+  }
+  // The socket Node hands an upgrade listener is a TCP socket at runtime.
+  events.handleUpgrade(req, socket, head);
+}
+
+/** Read-only pult-chat routes; false lets the remaining loopback routes answer. */
+function servePultChat(rt: Runtime, events: EventStream, requests: Map<string, number>, req: IncomingMessage, res: ServerResponse, url: URL): boolean {
+  if (url.pathname === '/api/pult/leads' && req.method === 'GET') {
+    sendJson(res, 200, { ...pultRoster(rt.store, requests), streamSeq: events.currentSeq });
+    return true;
+  }
+  const match = /^\/api\/pult\/leads\/([^/]+)\/feed$/.exec(url.pathname);
+  if (!match || req.method !== 'GET') return false;
+  try {
+    const handle = decodeURIComponent(match[1]!);
+    const limit = url.searchParams.get('limit');
+    const feed = pultFeed(rt.store, {
+      handle, since: url.searchParams.get('since') ?? undefined,
+      limit: limit === null ? undefined : limit.trim() === '' ? NaN : Number(limit),
+    });
+    if (feed === null) sendJson(res, 404, { error: `unknown lead handle '${handle}'` });
+    else sendJson(res, 200, { ...feed, streamSeq: events.currentSeq });
+  } catch (error) {
+    sendJson(res, 400, { error: (error as Error).message });
+  }
+  return true;
+}
+
+type LoopbackRoute = (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
+
+function firstHandled(routes: readonly LoopbackRoute[]): LoopbackRoute {
+  return async (req, res, url) => {
+    for (const route of routes) {
+      if (await route(req, res, url)) return true;
+    }
+    return false;
+  };
 }
 
 export function createHttpServer(rt: Runtime): HttpServer {
@@ -914,7 +1053,29 @@ export function createHttpServer(rt: Runtime): HttpServer {
   heldWakes.set(rt, () => [...wakes.keys()]);
   const requests = new Map<string, number>();
   chatRequests.set(rt, requests);
+  // The push channel (/events): store and chat observers emit where those writes already happen.
+  const events = new EventStream({ log: rt.log, refuseUpgrade: rejectReason });
+  const stopEvents = wireEvents(rt, events);
+  // One supervised claude child per lead id; its permission cards come back over /mcp?lead=<id>.
+  // stateDir wires the leads.models install gate (task 3459 C6); without it the gate is off.
+  // R12 (task 3459 L1): the handover extension watches each lead's context through its usage
+  // tracker and hands the lead over by itself once a verified memoryctl handoff exists; the
+  // seams are closures over `leads` because the extension is middleware inside that driver.
+  const { leadUsage, leadWake, leadHandover, offLeadWake } = leadAutomation(rt, () => leads);
+  const leads = new LeadDriver({ events, log: rt.log, baseArgs: leadArgList(rt.leadArgs), stateDir: rt.stateDir, mcpUrlFor: (lead) => `http://127.0.0.1:${rt.port()}/mcp?lead=${lead}`, ...leadPermissionOptions(rt.stateDir), extensions: [leadUsage, leadWake, leadHandover] });
   const tasks = createTasksRoutes(rt, () => [...wakes.keys()]);
+  const roleSettings = createRoleSettingsRoutes({ getSettings: () => settingsFor(rt) });
+  const settings = createSettingsRoutes(() => settingsFor(rt));
+  // Add machine (task 3459 R10 S6a): pairing windows and host/credential state, loopback-only.
+  const hostsRoutes = createHostsRoutes(rt.hosts);
+  const storage = createStorageRoutes(rt, rt.log);
+  // The supervised-lead routes and the lead MCP binding ride the tasks seam (task 3466 slice 2).
+  const leadRoutes = (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => serveLeadRoutes(leads, req, res, url, rt.port, () => serveOrchMcp(rt, requests, () => [...wakes.keys()], leads, url, req, res), rt.stateDir);
+  // The lesson action seats get the same pick inputs orch's own scouts get (scout-request.ts); a promote body's session names the creating lead for the create gate (decision #22281), and without one decision #17805 D2's step-aside covers every active lead family.
+  const lessons = (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => serveLessons({ ...rt, choose: (session?: string) => choose(rt, session) }, req, res, url);
+  const modelsThenLeads = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => (await import('./models-status.ts')).serveModels(rt, req, res, url, leadRoutes);
+  // Read-only public-source aggregation for a role (task 3459): loopback-only with the rest of this chain, never on the LAN board.
+  const routes = withQualityRoutes(rt, withPiClientRoutes({ stateDir: rt.stateDir, port: rt.port }, firstHandled([roleSettings, tasks, storage, lessons, modelsThenLeads, settings, hostsRoutes, serveRoleRecommendations])));
   const preparingChecks = new Set<string>();
   let wakePoll: ReturnType<typeof setInterval> | undefined;
   let closing = false;
@@ -957,38 +1118,9 @@ export function createHttpServer(rt: Runtime): HttpServer {
         sendJson(res, 200, health(rt));
         return;
       }
-      if (await serveDashboard(rt, req, res, url.pathname)) return;
-      // The tasks board and chat are deliberately outside serveDashboard: the LAN board cannot reach them.
-      if (await tasks(req, res, url)) return;
-      // A turn's live log (task 2883), loopback only for the same reason: tool args can hold secrets,
-      // so this route is never added to the LAN allowlist in createLanBoardServer.
-      if (url.pathname === '/api/turn-live' && req.method === 'GET') {
-        try {
-          const turn = str(url.searchParams.get('turn'), 'turn');
-          const stored = rt.store.getTurn(turn);
-          if (!stored) {
-            sendJson(res, 404, { error: rt.store.noTurnError(turn) });
-            return;
-          }
-          const raw = url.searchParams.get('after') ?? '0';
-          const after = Number(raw);
-          if (!/^\d+$/.test(raw) || !Number.isSafeInteger(after)) throw new Error('after must be a non-negative integer');
-          const log = rt.seats.turnLiveLog(turn);
-          const read = log ? log.after(after) : { entries: [], next: 0 };
-          sendJson(res, 200, {
-            turn,
-            // A queued turn is live too: the board polls until a terminal status.
-            running: !TERMINAL_TURN.has(stored.status),
-            entries: read.entries,
-            next: read.next,
-            trimmed: log?.trimmed ?? 0,
-            note: 'in memory only: a daemon restart loses the live log',
-          });
-        } catch (error) {
-          sendJson(res, 400, { error: (error as Error).message });
-        }
-        return;
-      }
+      if (await serveBoardAndFiles(rt, req, res, url, () => servePultChat(rt, events, requests, req, res, url))) return;
+      // The tasks board stays outside serveDashboard: the LAN board cannot reach it.
+      if (await routes(req, res, url)) return;
       if (url.pathname === '/api/chat' && req.method === 'GET') {
         const numberParam = (name: string) => {
           const value = url.searchParams.get(name);
@@ -1021,7 +1153,7 @@ export function createHttpServer(rt: Runtime): HttpServer {
           // Validate before displacing the previous watcher; this also checks for a
           // wake already pending. The offer is read-only, just like /chat/unread.
           const pending = chatWakePending(rt.store, session, since);
-          // Task 2589: the orch-board mod holds the poll for an idle desktop lead with no
+          // Task 2589: the lead-wake mod holds the poll for an idle desktop lead with no
           // Stop watcher (that expires after 7100 s). The mod's hold outranks a late
           // watcher, which is told at once it is superseded; only a newer mod poll displaces it.
           const mod = url.searchParams.get('holder') === 'mod' || undefined;
@@ -1091,28 +1223,25 @@ export function createHttpServer(rt: Runtime): HttpServer {
         }
         return;
       }
-      if (['/chat/post', '/chat/release'].includes(url.pathname) && req.method === 'POST') {
+      if (url.pathname === '/chat/post' && req.method === 'POST') {
+        await serveOperatorPost(rt, req, res, new URL(`http://${hostOf(req.headers.host!)}:${rt.port()}`).origin);
+        return;
+      }
+      if (url.pathname === '/chat/release' && req.method === 'POST') {
         // Unlike other loopback callers, the board must supply its exact origin.
         // No CORS/preflight grant: a page on another localhost port cannot post.
         const ownOrigin = new URL(`http://${hostOf(req.headers.host!)}:${rt.port()}`).origin;
         if (req.headers.origin !== ownOrigin || req.headers['x-orch-chat'] !== '1') {
-          sendJson(res, 403, { error: `chat ${url.pathname === '/chat/release' ? 'release' : 'post'} requires the daemon origin and X-Orch-Chat: 1` });
+          sendJson(res, 403, { error: 'chat release requires the daemon origin and X-Orch-Chat: 1' });
           return;
         }
         try {
           const body = await readJson(req, 64 * 1024);
           if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('body must be a JSON object');
-          if (url.pathname === '/chat/release') {
-            for (const key of Object.keys(body)) {
-              if (key !== 'handle') throw new Error(`chat release takes no '${key}'`);
-            }
-            sendJson(res, 200, chatRelease(rt.store, { handle: str((body as Record<string, unknown>).handle, 'handle') }));
-            return;
-          }
           for (const key of Object.keys(body)) {
-            if (!['body', 'to', 'wake'].includes(key)) throw new Error(`chat post takes no '${key}'`);
+            if (key !== 'handle') throw new Error(`chat release takes no '${key}'`);
           }
-          sendJson(res, 200, chatPostOperator(rt.store, body as Parameters<typeof chatPostOperator>[1]));
+          sendJson(res, 200, chatRelease(rt.store, { handle: str((body as Record<string, unknown>).handle, 'handle') }));
         } catch (error) {
           sendJson(res, 400, { error: (error as Error).message });
         }
@@ -1165,19 +1294,14 @@ export function createHttpServer(rt: Runtime): HttpServer {
           if (body.whenIdle !== true || keys.some((key) => !(hasNote ? ['whenIdle', 'as', 'session', 'note'] : ['whenIdle']).includes(key))) {
             throw new Error('restart requires { whenIdle: true } with optional as, session and note, or { cancel: true }');
           }
-          if (hasNote) {
-            if (closing || rt.store.draining()) {
-              sendJson(res, 409, { error: closing ? 'daemon is closing' : 'daemon is draining' });
-              return;
-            }
-            const note = str(body.note, 'note');
-            // chatPost checks the live binding and the length of the WHOLE post.
-            // No await between its commit and arming: idle drain may begin exit immediately.
-            chatPost(rt.store, {
-              as: str(body.as, 'as'), session: str(body.session, 'session'), to: 'all',
-              body: `Orch pid ${process.pid} will exit when idle. The restart is over when node ops/orchestrator/src/main.ts status prints a different pid with draining null. ${note}`,
-            });
+          // lead.restartWhenIdle (task 3459 C9): off refuses the restart before any notice post
+          // or drain flag — the operator restarts by hand; a broken document fails closed too.
+          const restartRefusal = restartAutomationRefusal(rt.stateDir);
+          if (restartRefusal !== null) {
+            sendJson(res, 409, { error: restartRefusal });
+            return;
           }
+          if (hasNote && postRestartNotice(rt, closing, body, res)) return;
         } catch (error) {
           sendJson(res, 400, { error: (error as Error).message });
           return;
@@ -1283,10 +1407,6 @@ export function createHttpServer(rt: Runtime): HttpServer {
         sendJson(res, 200, await rt.seats.digest(await rt.seats.wait(turnPath[1], waitMs)));
         return;
       }
-      if (url.pathname === '/mcp') {
-        await serveMcp(buildMcpServer(rt, requests, () => [...wakes.keys()]), req, res);
-        return;
-      }
       // A worker seat's endpoint (scout-request.ts): its token names the seat; nothing else is served here.
       if (url.pathname === SEAT_MCP_PATH || url.pathname === SEAT_SCOUT_PATH) {
         const seatId = scouts.seatOf(req.headers.authorization);
@@ -1328,14 +1448,25 @@ export function createHttpServer(rt: Runtime): HttpServer {
     }
   };
   // The span times the handler's synchronous prefix (the run until its first
-  // await); continuations after an await are later, unattributed windows.
-  const httpServer = createServer((req, res) =>
-    span(`http ${req.method} ${(req.url ?? '/').split('?')[0]}`, () => serve(req, res)));
+  // await); the section spans the whole request, awaits included, so a stall
+  // records which requests were in flight (context, not the proven blocker).
+  const httpServer = createServer((req, res) => {
+    const label = `http ${req.method} ${(req.url ?? '/').split('?')[0]}`;
+    res.once('close', section(label));
+    span(label, () => serve(req, res));
+  });
+  // The one push endpoint: upgrades bypass `serve`, so its loopback guard runs in serveUpgrade.
+  httpServer.on('upgrade', (req, socket, head) => serveUpgrade(rt, events, req, socket as Socket, head));
   // 'close' fires only after active responses end; release watchers BEFORE
   // invoking close, for both signal shutdown and the idle-drain lifecycle.
   const close = httpServer.close.bind(httpServer);
   httpServer.close = (callback) => {
     closing = true;
+    stopEvents();
+    offLeadWake();
+    events.closeClients();
+    // No supervised child or pending permission card outlives the daemon.
+    leads.stop();
     for (const [session, held] of wakes) finishWake(session, held.res, 503, { error: 'daemon is closing' });
     return close(callback);
   };

@@ -10,19 +10,8 @@ import { stateDirFor } from './src/config.ts';
 import { resolveCommand, smallCargoTargetEnv } from './src/providers/spawn.ts';
 import { buildGateScript, gateEnv, writeBuildShims } from './src/build-gate.ts';
 
-export function parseHeader(line) {
-  const value = JSON.parse(line);
-  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).sort().join(',') !== 'args,command,cwd,env' ||
-      typeof value.cwd !== 'string' || !value.cwd ||
-      typeof value.command !== 'string' || !value.command ||
-      !Array.isArray(value.args) || !value.args.every((arg) => typeof arg === 'string') ||
-      value.env === null || typeof value.env !== 'object' || Array.isArray(value.env) ||
-      !Object.entries(value.env).every(([key, val]) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) && typeof val === 'string')) {
-    throw new Error('invalid remote execution header');
-  }
-  return value;
-}
+import { parseHeader } from '../host-agent/index.mjs';
+export { parseHeader };
 
 // Every seat on this host builds through the host's build-gate shims (task 1796), not only the
 // vcvars toolchain seats; on a toolchain seat the shim dir lands ahead of pathPrepend and the

@@ -83,7 +83,35 @@ fi
 # on 2026-09-19, but a session must not wait on it, and a missing index is a
 # slower answer rather than a wrong one - the tools that do not need it (rg,
 # ast-grep) are unaffected.
-if command -v codegraph >/dev/null 2>&1 && [ ! -d "$top/.codegraph" ]; then
+codegraph_init_enabled() {
+    # Orch passes its already-validated install value. SessionStart reads the same
+    # setting through the plain-JS entry, so a later session cannot undo an opt-out.
+    if [ -n "${ORCH_AUTO_CODEGRAPH_INIT:-}" ]; then
+        [ "$ORCH_AUTO_CODEGRAPH_INIT" = true ]
+        return
+    fi
+    local root enabled
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || return 1
+    enabled="$(node --input-type=module - "$root" <<'NODE'
+import path from 'node:path';
+import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+try {
+  const { readInstallSettings } = await import(pathToFileURL(path.join(process.argv[2], 'scripts/lib/harness-config.mjs')));
+  const { document } = readInstallSettings(process.env.ORCH_STATE_DIR || path.join(homedir(), '.local/state/orch'));
+  const key = 'machines.autoCodegraphInit';
+  const value = Object.hasOwn(document.values, key) ? document.values[key] : true;
+  if (typeof value !== 'boolean') throw new Error('invalid boolean');
+  process.stdout.write(String(value));
+} catch {
+  console.error('[provision-worktree] codegraph init skipped: cannot read machines.autoCodegraphInit');
+  process.exitCode = 1;
+}
+NODE
+)" || return 1
+    [ "$enabled" = true ]
+}
+if command -v codegraph >/dev/null 2>&1 && [ ! -d "$top/.codegraph" ] && codegraph_init_enabled; then
     ( cd "$top" && codegraph init --yes . >/dev/null 2>&1 ) &
     echo "[provision-worktree] codegraph index building in the background for this worktree"
 fi

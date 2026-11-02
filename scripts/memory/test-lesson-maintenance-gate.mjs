@@ -45,15 +45,15 @@ test('maintenance, retirement and capture honor the lesson write gate', async (t
     MEMORYCTL_TOKEN_FILE: token, MEMORYCTL_AUTOSTART: '0', TYPESAFE_API_KEY: '', PATH: `${bin}:${process.env.PATH}` };
   try {
     const cases = [
-      ['promote', 'domain-harness', '--id', '99'],
+      ['promote', 'domain-memory', '--id', '99'],
       ['reanchor', '--id', '99', '--to', 'scripts/memory/test-capture-lesson.mjs'],
       ['normalize'],
       ['retire', '--id', '99', '--reason', 'obsolete'],
     ];
     for (const [name, ...args] of cases) {
       const status = name === 'promote' ? 'inbox' : 'active';
-      const domain = name === 'normalize' ? 'harness' : 'domain-harness';
-      const links = { domain, status, anchor: 'scripts/memory/lesson-quality.mjs', globs: [] };
+      const domain = name === 'normalize' ? 'harness' : 'domain-memory';
+      const links = { domain, status, anchor: name === 'normalize' ? 'ops/bootstrap/session-start.mjs' : 'scripts/memory/lesson-quality.mjs', globs: [] };
       row = { id: 99, uuid: 'legacy-lesson', version: 1, ts: Date.now(), kind: 'lesson',
         title: 'Historical lesson', body: longBody, links: JSON.stringify(links), superseded_by: null,
         content_hash: createHash('sha256').update(longBody).digest('hex') };
@@ -90,7 +90,7 @@ test('maintenance, retirement and capture honor the lesson write gate', async (t
     assert.equal(posts.length, 1);
     assert.equal(posts[0].body, longBody, 'no --long marker when no field changed');
 
-    const links = { domain: 'domain-harness', anchor: 'scripts/memory/lesson-quality.mjs', status: 'active', globs: [] };
+    const links = { domain: 'domain-memory', anchor: 'scripts/memory/lesson-quality.mjs', status: 'active', globs: [] };
     for (const [trigger, evidence, message] of [
       ['', 'ABC1234', '--trigger is required'],
       ['?', 'ABC1234', '--trigger is required'],
@@ -159,9 +159,9 @@ test('maintenance, retirement and capture honor the lesson write gate', async (t
       '--trigger', 'When a lesson is captured', '--rule', 'Reject a bad route', '--why', 'Wrong domain',
       '--evidence', 'scripts/memory/lesson-quality.mjs'],
     { cwd: repo, env: { ...env, TYPESAFE_API_KEY: 'test-key', NODE_OPTIONS: `--import=${stub}` }, timeout: 15000 });
-    assert.match(corrected.stdout, /domain platform-shell -> domain-harness: routed for scripts\/memory\/lesson-quality\.mjs/);
+    assert.match(corrected.stdout, /domain platform-shell -> domain-memory: routed for scripts\/memory\/lesson-quality\.mjs/);
     assert.equal(posts.length, 1, 'new capture posts after routing correction');
-    assert.equal(posts[0].links.domain, 'domain-harness');
+    assert.equal(posts[0].links.domain, 'domain-memory');
 
     // A direct CLI append uses the same new-capture mode, never bypassing routing.
     posts.length = 0;
@@ -169,8 +169,8 @@ test('maintenance, retirement and capture honor the lesson write gate', async (t
       '--body', '- trigger: When writing\n- rule: Reject unverified writes\n- why: Prevents lost knowledge\n- evidence: #12333',
       '--links', JSON.stringify({ domain: 'domain-platform-shell', anchor: 'scripts/memory/lesson-quality.mjs', status: 'active', globs: [] })],
     { cwd: repo, env: { ...env, TYPESAFE_API_KEY: 'test-key', NODE_OPTIONS: `--import=${stub}` }, timeout: 15000 });
-    assert.match(direct.stderr, /domain domain-platform-shell -> domain-harness: routed for scripts\/memory\/lesson-quality\.mjs/);
+    assert.match(direct.stderr, /domain domain-platform-shell -> domain-memory: routed for scripts\/memory\/lesson-quality\.mjs/);
     assert.equal(posts.length, 1, 'direct CLI posts only the routed lesson');
-    assert.equal(posts[0].links.domain, 'domain-harness');
+    assert.equal(posts[0].links.domain, 'domain-memory');
   } finally { await new Promise(done => server.close(done)); rmSync(dir, { recursive: true, force: true }); }
 });

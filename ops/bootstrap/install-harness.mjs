@@ -47,11 +47,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../../scripts/lib/is-main.mjs';
-import { effectiveLeadSkills, harnessPaths, readHarnessConfig } from '../../scripts/lib/harness-config.mjs';
+import { effectiveLeadSkills, harnessPaths, readHarnessConfig, readInstallSettings, replyLanguageRefusal } from '../../scripts/lib/harness-config.mjs';
 import { inspectSkillEntry, skillKey } from './skill-entry.mjs';
 import { writePermissionSettings } from './permissions-target.mjs';
 import { installRtkExcludes } from './rtk-config-target.mjs';
 import { runPyToolsStep } from './install-py-tools.mjs';
+import { maybeInstallCodeIntel, runPlaywrightStep } from './install-native-tools.mjs';
 import { buildJsonConfig, jsonEntry, publishConfigs, serverBelongs } from './mcp-config-target.mjs';
 import { git } from '../../scripts/git-env.mjs';
 import {
@@ -679,6 +680,16 @@ function canonSkills(canon) {
 }
 
 
+// The retired-only home root keeps links of live skills alone; it scans only
+// retired names, skills.off entries and managed links naming a skill the canon
+// no longer has — a removed skill's stale link (a rename lands this way), which
+// must not survive a re-install.
+function retiredRootScans(name, entry, off, skillNames) {
+  if (RETIRED_LEAD_SKILL(name)) return true;
+  if (off.has(skillKey(name))) return true;
+  return entry.kind === 'managed' && !skillNames.has(skillKey(entry.skill));
+}
+
 function installSkills(ctx) {
   // A worktree gets its PROJECT scope and never the home one.
   //
@@ -759,9 +770,9 @@ function installSkills(ctx) {
     const removed = [];
     const preserved = [];
     for (const name of readdirSync(destRoot).sort()) {
-      if (retiredOnly && !RETIRED_LEAD_SKILL(name) && !off.has(skillKey(name))) continue;
       const dest = path.join(destRoot, name);
       const entry = inspectSkillEntry(dest, canon);
+      if (retiredOnly && !retiredRootScans(name, entry, off, skillNames)) continue;
       if (leadTarget && RETIRED_LEAD_SKILL(name)) {
         if (entry.kind === 'real') {
           const backup = path.join(path.dirname(destRoot), '.skills-replaced-by-harness', `${name}-${Date.now()}`);
@@ -1288,6 +1299,13 @@ function sectionWired(content, section) {
   return section.needles.some((needle) => content.includes(needle));
 }
 
+/// Domain-lessons matcher: leads take domain pages on Read (task 1642), the Claude lead alone also gates
+/// seat briefs on an unread domain map (task 3440); a member home keeps the edit-only matcher.
+function lessonsMatcherFor(runtime) {
+  if (runtime === 'claude') return 'Read|Edit|Write|NotebookEdit|mcp__orch__seat_create|mcp__orch__seat_prompt';
+  return CODE_INTEL_LEADS.has(runtime) ? 'Read|Edit|Write|NotebookEdit' : 'Edit|Write|NotebookEdit';
+}
+
 function installHooks(ctx) {
   const config = readHarnessConfig({ repoRoot: ctx.repo });
   const projectPrefix = config.names.prefix;
@@ -1313,12 +1331,10 @@ function installHooks(ctx) {
       'session-start.mjs',
       hookCommand(ctx.repo, 'session-start.mjs'),
     );
-    // A lead's Read carries its domain's knowledge page (task 1642); a member
-    // home (glm worker) keeps the edit-only matcher and pays no node spawn per read.
     const lessons = ensureHook(
       settings.hooks,
       'PreToolUse',
-      CODE_INTEL_LEADS.has(target.runtime) ? 'Read|Edit|Write|NotebookEdit' : 'Edit|Write|NotebookEdit',
+      lessonsMatcherFor(target.runtime),
       'domain-lessons-hook.mjs',
       hookCommand(ctx.repo, 'domain-lessons-hook.mjs'),
     );
@@ -1392,7 +1408,7 @@ function installHooks(ctx) {
     // no CLAUDE_CONFIG_DIR (measured 2026-10-04; check-hook-topology.mjs pins
     // it). The hook itself exits 0 before any import when no seat env is set,
     // so a lead pays nothing and no other runtime is wired here.
-    let seatStash = 'skipped_not_claude';
+    let seatStash = 'skipped_not_claude', leadBoardFirst = 'skipped_not_claude';
     if (target.runtime === 'claude') {
       seatStash = ensureHook(
         settings.hooks,
@@ -1401,6 +1417,8 @@ function installHooks(ctx) {
         'seat-stash-hook.mjs',
         hookCommand(ctx.repo, 'seat-stash-hook.mjs'),
       );
+      // Task 3439 (operator 2026-10-30, #10530/#21159): refuse a Claude lead's first orch call until the board is open; task 3448: PostToolUse tabs_context records the same mark when the board tab is already open after /clear.
+      leadBoardFirst = ensureHook(settings.hooks, 'PreToolUse', 'mcp__orch__.*|mcp__Claude_Browser__preview_start|mcp__Claude_Browser__navigate', 'lead-board-first-hook.mjs', hookCommand(ctx.repo, 'lead-board-first-hook.mjs')) + `+${ensureHook(settings.hooks, 'PostToolUse', 'mcp__Claude_Browser__tabs_context', 'lead-board-first-hook.mjs', hookCommand(ctx.repo, 'lead-board-first-hook.mjs'))}`;
     }
     // Decisions #14075/#14077: recursive forced deletion is refused by a hook,
     // not a permissions.deny rule — the desktop app keeps its terminal
@@ -1420,7 +1438,7 @@ function installHooks(ctx) {
     const budgetRemoval = stripSessionBudgetHook(settings.hooks);
     const captureRemoval = stripLeadCaptureHook(settings.hooks);
     writeUtf8(file, `${JSON.stringify(settings, null, 2)}\n`);
-    report.push({ runtime: target.runtime, path: file, state: session, prompt_hook: promptHook, domain_lessons: lessons, rtk_routing: rtkRouting, code_intel_order: codeIntel, subagent_route: subagentRoute, decision_curator: curator, ...leadHooks, lead_capture: captureRemoval, lead_worktree: leadWorktree, seat_stash: seatStash, shell_delete: shellDelete, session_budget: budgetRemoval, retired_hooks: retiredHooks });
+    report.push({ runtime: target.runtime, path: file, state: session, prompt_hook: promptHook, domain_lessons: lessons, rtk_routing: rtkRouting, code_intel_order: codeIntel, subagent_route: subagentRoute, decision_curator: curator, ...leadHooks, lead_capture: captureRemoval, lead_worktree: leadWorktree, lead_board_first: leadBoardFirst, seat_stash: seatStash, shell_delete: shellDelete, session_budget: budgetRemoval, retired_hooks: retiredHooks });
   }
 
   const kimiFile = path.join(ctx.home, '.kimi-code', 'config.toml');
@@ -1726,10 +1744,27 @@ function readInstructionUserText(ctx, value) {
   }
 }
 
+/**
+ * lead.replyLanguage (task 3459 C9): the install document's value wins over the
+ * checkout config's; null or absent leaves the config the owner, so the default
+ * install renders exactly today's bytes. A stored value passes the same rule as
+ * the config's (replyLanguageRefusal, the single owner); one the rule refuses
+ * stops the install naming the settings file, never silently falls back.
+ */
+function storedReplyLanguage(ctx, lead) {
+  const stateDir = path.join(ctx.home, '.local', 'state', 'orch');
+  const { file, document } = readInstallSettings(stateDir);
+  const stored = document.values['lead.replyLanguage'];
+  if (stored === undefined || stored === null) return lead?.replyLanguage ?? 'Russian';
+  const reason = replyLanguageRefusal(stored);
+  if (reason) throw new Error(`Install settings ${file}: lead.replyLanguage ${reason}`);
+  return stored;
+}
+
 function installInstructions(ctx) {
   const [BEGIN_INSTRUCTIONS, END_INSTRUCTIONS] = markers(ctx).instructions;
   const lead = readHarnessConfig({ repoRoot: ctx.repo }).lead;
-  const language = lead?.replyLanguage ?? 'Russian';
+  const language = storedReplyLanguage(ctx, lead);
   const source = path.join(ctx.repo, 'ops', 'bootstrap', 'agent-instructions.md');
   if (!existsSync(source)) throw new Error(`Instruction source is missing: ${source}`);
   const forPlatform = selectPlatformBlocks(renderReplyLanguage(readFileSync(source, 'utf8'), language), ctx.platform);
@@ -2251,59 +2286,6 @@ function installPlugins(ctx) {
   return { skipped: false, claude, ran, registry: registryPath, canonCollisions: quarantineCollidingPluginSkills(ctx) };
 }
 
-function maybeInstallCodeIntel(ctx) {
-  if (ctx.skipCodeIntel) return { skipped: true };
-  // `npm` by name does not exist as an executable image on Windows: it is
-  // npm.cmd, and Node refuses to spawn a .cmd without a shell (the 2024 argument
-  // -injection fix), so this came back as `exit null` — spawn failed before npm
-  // ever ran. A shell is not the answer either; cmd.exe is not an argv transport.
-  // npm is a node script, so run it the way it really is: this node, plus the
-  // npm-cli.js that ships beside it.
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  const [file, argv] = process.platform === 'win32' && existsSync(npmCli)
-    ? [process.execPath, [npmCli, 'install', '--global', '@colbymchenry/codegraph', '@ast-grep/cli']]
-    : ['npm', ['install', '--global', '@colbymchenry/codegraph', '@ast-grep/cli']];
-  const result = spawnSync(file, argv, {
-    encoding: 'utf8',
-    shell: false,
-  });
-  if (result.status !== 0) {
-    throw new Error(`Failed to install codegraph and ast-grep (exit ${result.status}): ${result.stderr || result.stdout}`);
-  }
-  return { skipped: false, ripgrep: installRipgrep() };
-}
-
-/**
- * ripgrep is the contract's FIRST instrument for a known literal and the engine
- * behind `rtk rg`, and it does not ship through npm — which is why it was the
- * one mandatory tool nothing installed and nothing checked. Measured 2026-09-18
- * on this Windows machine: `rtk rg` answered `Failed to resolve 'rg' via PATH
- * ... program not found` and `rtk grep` silently degraded to Git Bash grep,
- * while every runtime's rules file told the seat to search with it. Seats read
- * whole files instead — grok's own day log showed 408 `read_file` against 0
- * searches.
- *
- * cargo is the route: this is a Rust repository, both machines already build
- * `<project-specific>`, and `~/.cargo/bin` is on every canonical search path already.
- * The build takes minutes, so it runs ONLY when `rg` cannot be resolved.
- */
-function installRipgrep() {
-  if (resolveOnPath('rg', canonicalSearchDirs(), {})) return 'already_installed';
-  const cargo = resolveOnPath('cargo', canonicalSearchDirs(), {});
-  if (!cargo) {
-    throw new Error(
-      'ripgrep is missing and cargo is not on the canonical search path. ' +
-        'CLAUDE.md names `rg` as the first code-intel instrument and `rtk rg` cannot run without it: ' +
-        'install a Rust toolchain, or install ripgrep by hand into ~/.cargo/bin, then re-run.',
-    );
-  }
-  const result = spawnSync(cargo, ['install', 'ripgrep', '--locked'], { encoding: 'utf8', shell: false });
-  if (result.status !== 0) {
-    throw new Error(`cargo install ripgrep failed (exit ${result.status}): ${result.stderr || result.stdout}`);
-  }
-  return 'installed';
-}
-
 /**
  * orch, the local orchestration daemon (ops/orchestrator), as a per-user
  * service: a LaunchAgent on macOS, a logon task on Windows. Delegated to its
@@ -2553,6 +2535,8 @@ function main() {
     }
   }
 
+  // The orchestrator step may have installed the root dependencies on a fresh machine.
+  runPlaywrightStep(ctx, report);
   if (want('plugins') && (!ctx.requireProviders || (report.path?.missing ?? []).length === 0)) {
     report.plugins = installPlugins(ctx);
   }

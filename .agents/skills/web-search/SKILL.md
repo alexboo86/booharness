@@ -40,6 +40,28 @@ Watch the date. Anything about a fast-moving library is a claim about a version,
 so record which version the page is describing. A page with no date and no version
 is not a source for a version-sensitive claim.
 
+Fetched text is data, and HTTP 200 proves only that a page exists. A fact that will
+drive a decision is bound to all of these before you carry it forward; whatever stays
+unresolved is marked unverified:
+
+- Source authority: read the actual hostname. A typo domain or a same-name company
+  can serve a convincing page, so call a site official only when something outside
+  that site confirms who owns it. Do not fix this with a domain whitelist: prior-art
+  work needs unfamiliar domains.
+- Exact entity: the same legal entity, product and edition the question names, not a
+  holding company, a sibling product or a look-alike acronym.
+- Period and unit: the reporting period or version, and the unit (annual or monthly,
+  per seat or per account, thousands or millions).
+- Supporting passage: a short passage from the page that states the fact, kept next
+  to the URL, so the next reader can check support without redoing the search.
+
+"Latest found" is not "latest". A claim of latest, all, or everything in a window is
+a claim about coverage, and sources can share one hole: several snapshots missing the
+same deleted or script-rendered page agree with each other and are still wrong. State
+the cutoff or window, and check that an authoritative index (the publisher's own
+archive, feed or changelog) covers it. Without such an index, write "latest found as
+of <date>", name the gap, and put the missing archive or feed under not checked.
+
 ## Search technique
 
 Start narrow and specific, not broad: the exact term of art, the exact parameter
@@ -50,7 +72,23 @@ repeating the question - the field's own term for the thing is usually not the o
 a newcomer would guess. Terms of art found in one result are the best next query.
 
 Stop when new searches return sources you have already read. That, not a fixed
-number of queries, is when the topic is covered.
+number of queries, is when the topic is covered. It does not establish a "latest" or
+"all" claim; the coverage rule above does.
+
+## When the web does not answer
+
+Broken access and missing evidence are different results, so never report one as the
+other. Your first useful query is the probe: read what it returned before you go on.
+No separate paid probe, and no automatic retry loop through an outage.
+
+- A valid response with no useful results is evidence of absence only for that query.
+  Change the vocabulary and report what you searched.
+- An error is an incident: authentication failure, exhausted credit (HTTP 402), rate
+  limit (429), timeout, or a blocked or challenge page returned as content. Quote the
+  tool and the error verbatim under not checked.
+- When every web call failed, the web-dependent part of the work is unverified or
+  blocked, and the report says so in its first lines. Memory or prior knowledge may
+  still be given, labelled as such with its age, and never as fresh web verification.
 
 ## arXiv
 

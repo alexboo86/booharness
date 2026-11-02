@@ -12,6 +12,6 @@
 
 At the MCP boundary, `languageOf` (`ops/orchestrator/src/http.ts`) adds `language` to `seat_prompt` and `chat_post` answers in non-off modes; clean text, missing dictionaries or throws leave answers unchanged. In `enforce`, `leadLanguageRefusal` refuses a brief with rejected/unknown words or long sentences before storing a turn or event. It names up to five words per kind and `main.ts language flag`; correction turns are checked too. Orch-composed rechecks, replacement-reviewer, lesson-repair and scout prompts enter through `SeatManager.prompt` and are not judged. Missing/damaged dictionaries never refuse; board operator posts receive no key. Coverage: `scripts/test-orch-language-prompt.mjs` (not in this kit).
 
-Static switch text in `.agents/skills/orch-team/SKILL.md` and `ops/bootstrap/agent-instructions.md` is conditional, with no STE rules or word list; rules arrive only at switch readers, leaving no active rule text when off. CLAUDE.md and AGENTS.md do not name the switch.
+Static switch text in `.agents/skills/orch/SKILL.md` and `ops/bootstrap/agent-instructions.md` is conditional, with no STE rules or word list; rules arrive only at switch readers, leaving no active rule text when off. CLAUDE.md and AGENTS.md do not name the switch.
 
 verified: 2026-09-23

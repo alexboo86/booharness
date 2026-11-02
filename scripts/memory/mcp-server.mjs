@@ -89,7 +89,7 @@ const TOOL = {
     + '• lessons {path} — durable lessons for a REPO-RELATIVE file; run before editing it\n'
     + '• search {query, kind?, limit?} — search before writing anything; ask in English, and '
     + 'quote a stored title or an exact identifier verbatim to reach a record '
-    + 'written in another language. Answers a BARE ARRAY of {id, title, snippet}\n'
+    + 'written in another language. Answers {results:[{id,title,snippet}], knowledge:[{title,snippet,source_commit}]} (knowledge is read-only, at most 3).\n'
     + '• get {id|uuid, follow?} — one entry whole, body included. An id written down '
     + 'earlier names the version live back then: follow:"latest" reads the current one '
     + 'instead, follow:"full_history" adds the lineage root to leaf\n'
@@ -170,7 +170,7 @@ function plan(action, args) {
     }
     case 'search': {
       if (!a.query) throw new Error('search needs {query}');
-      return { method: 'GET', path: `/api/memory/search${query({ q: a.query, kind: a.kind, limit: a.limit })}` };
+      return { method: 'GET', path: `/api/memory/search${query({ q: a.query, kind: a.kind, limit: a.limit, knowledge: 1 })}` };
     }
     case 'get': {
       // search answers with a snippet and hot with a line apiece, so without this

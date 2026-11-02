@@ -22,10 +22,10 @@ and include the Claude archive step below (except for handover in place).
 In Codex use the predecessor's actual thread ID only if available, never
 `get_session` or a Claude archive instruction. An orch lead's prompt holds the
 board line as its first numbered step, or its second after the memory read of a
-handover in place (orch-team, decisions #10530, #17572 and #17608):
-in Claude desktop, "Do not open the web board: the orch pane is the operator's
-view and he opens it with /orch-board." Codex leads keep opening
-http://127.0.0.1:7760/ in the app's browser. A successor executes
+handover in place (orch, decisions #10530 and #21159):
+in Claude desktop, "Open the orch board: preview_start with url
+http://127.0.0.1:7760/ (the operator's view; do not read it)." Codex leads
+open the same URL in the app's browser. A successor executes
 the prompt's numbered steps literally, and a rule left only in the skill's
 prose was skipped (operator, 2026-09-30).
 
@@ -35,7 +35,7 @@ successor's own session id, not the predecessor's. Name the track handle in
 the prompt. This supersedes the predecessor's binding and inherits the
 handle's receipts; a superseded predecessor cannot reclaim that handle until
 the operator releases it on the board.
-Follow [orch-team](../../orch-team/SKILL.md)'s lead-chat rules: coordinate there,
+Follow [orch](../../orch/SKILL.md)'s lead-chat rules: coordinate there,
 address only who must act, `wake: true` only for "act now", no acknowledgement
 posts and no narration of lead traffic to the operator; bodies are at most
 600 characters.
@@ -127,8 +127,11 @@ the turn, in this order:
    cron job. The clear waits for an idle session (tool text), and a late
    notification would reach a session that holds no context (not probed).
 3. Send the relay ONE message with `send_message`. Its first line is
-   `RELAY to=<your desktop session id> delay=150`; the rest is the successor
-   prompt. `delivered` is a yes: the relay's turn started on it (observed).
+   `RELAY to=<your desktop session id> delay=150`; its second line is
+   `Procedure: .agents/skills/next/reference/relay.md`; the rest is the
+   successor prompt. The procedure line lets a fresh or compacted relay
+   recover its instructions and is not part of the prompt. `delivered` is a
+   yes: the relay's turn started on it (observed).
    `queued` is a yes too: it waits behind the relay's current turn (tool
    text, not probed). A refusal: do not clear; take the next path below.
 4. Give the operator the `/next` report. Keep it short: the turn must end
@@ -233,15 +236,17 @@ operator to delete later.
 
 ## Codex desktop app, new chat
 
-Operator decision #15403 adds this route; it does not invoke `/next` merely
+Operator decision #21166 adds this route; it does not invoke `/next` merely
 because this skill is being edited. The tools require an **explicit user
-request for a new task**: user-invoked `/next` can request this described
-successor, but a context-limit hook alone cannot. Without that request, keep
-the handoff and give continuation text; do not create a chat.
+request for a new task**: user-invoked `/next` is one, and the operator's
+standing order #21159 is one when the lead-context hook reports the handover
+limit. Automatic compaction is not a handover: at that report, run this route
+instead of working on. Without either, keep the handoff and give continuation
+text; do not create a chat.
 
 1. Persist and read back the durable handoff first. Prepare a self-contained
    prompt naming the repository, working directory, handoff/task/decision IDs
-   (including #15403), track handle, inherited seats and pending orch turn IDs.
+   (including #21166), track handle, inherited seats and pending orch turn IDs.
    Its numbered start steps are: open the orch board; `chat_join` under the
    successor's **own** session ID using its startup line; read the handoff and
    decisions; then perform the named first work step and resume inherited

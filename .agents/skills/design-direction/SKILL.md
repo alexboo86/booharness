@@ -1,6 +1,6 @@
 ---
 name: design-direction
-description: Pick a visual direction that is not generic before any layout — inventory the real objects, write two or three mood directions, run the competitor-substitution test, and vary hierarchy, layout, density, interaction and expression on inherited tokens. Use this before a design or redesign of an application screen, data view or web page, and whenever the user says design, redesign, дизайн or редизайн. Reach for it when a first drawing looks like a default component library, even if the project's design rules are already satisfied.
+description: Pick a visual direction that is not generic before any layout — open the brief's references, inventory the real objects, write two or three mood directions, run the competitor-substitution test, and vary hierarchy, layout, density, interaction and expression on the project's design rules and tokens. Use this before a design or redesign of an application screen, data view, product window or web page, and whenever the user says design, redesign, дизайн or редизайн. Reach for it when a first drawing looks like a default component library, even if the project's design rules are already satisfied.
 ---
 
 # Design direction before the first layout
@@ -11,11 +11,13 @@ cards, Inter as the only face, glass as the default surface, emoji as icons,
 and decoration that encodes nothing. Canon-clean code still looks like that.
 This pass runs before layout. It does not implement the screen.
 
-The adopted project's design rules and theme tokens win every conflict,
-including against this skill and against impeccable. A dense data screen and a
-marketing page do not share a look: same method, different result. A
-one-control fix is not a direction; send it to the design rules and
-`visual-critique`.
+The brief names the surface's design rules; none named, stop and ask the lead.
+Its design rules and theme tokens win every conflict, including against this skill
+and impeccable. The adopted project keeps its own theme and tokens; other
+products keep theirs. Different surfaces use the same method, not the same
+look. Do not paste one product's chrome onto another, or a marketing hero
+onto a data view. A one-control fix is not a direction; send it to the design
+rules and `visual-critique`.
 
 ## 1. Read our identity first
 
@@ -28,6 +30,11 @@ Read, and do not draw yet.
 3. `.agents/skills/impeccable/SKILL.md` so the direction has a point of view
    and does not sand the new look back into the old one. Do not copy its
    command list or its sentences. It loses to the project's design rules.
+
+Open every reference the brief names before proposing a direction. Record
+each URL or capture and what you take from it: a mood or a working interaction,
+not its face. Missing or inaccessible references: ask the lead. Taste with
+no opened reference is refused.
 
 ## 2. Subject inventory, before any layout
 
@@ -98,14 +105,23 @@ change touches, light and dark if it has both.
 
 Then run the project's design checks when it has them; the captures prove the
 result. A failure rejects the direction.
-A direction that works in only one theme is not chosen.
+A direction that works in only one supported theme is not chosen. Other
+products run their own design-rule and theme checks; one product's check result
+is not proof for another.
+
+The designer never approves itself. A critic of another family judges only
+the captures, not code or the designer's account. At most two critique/fix
+rounds, then the operator looks. For each screen, answer from its capture:
+convenient, beautiful, useful, intuitive? Each answer names what the eye sees.
+A green test answers none.
 
 ## 8. Output
 
 Stop when these four are written. Do not implement in this pass unless the
 brief already asked for the edit.
 
-- Directions: mood words, rationale, the two reference lists kept apart.
+- Directions: mood words, rationale, opened references and takeaways, the two lists kept apart.
 - The chosen one, why the others lost, and the substitution result.
-- Before and after captures, read, each defect named on the image.
+- Before and after captures, read; defects, four answers per screen, independent
+  critic's verdict and operator's look.
 - The design check results, command and exit, not a recollection.

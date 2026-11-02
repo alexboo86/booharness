@@ -973,7 +973,7 @@ cmd_search() {
     esac
   done
   local qs
-  qs="q=$(urlencode "$query")"
+  qs="knowledge=1&q=$(urlencode "$query")"
   [[ -n "$kind" ]] && qs="${qs}&kind=$(urlencode "$kind")"
   [[ -n "$limit" ]] && qs="${qs}&limit=$(urlencode "$limit")"
   call_api GET "/api/memory/search?${qs}" "" 0

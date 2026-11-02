@@ -85,8 +85,10 @@ export type TurnResult = {
 export type TurnEvent =
   | { kind: 'text'; delta: string }
   | { kind: 'thought'; delta: string }
-  /** `args`: the call's input as the provider sent it, when the adapter can see it (orch's loop watch compares them). */
-  | { kind: 'tool'; name: string; status: string; args?: unknown }
+  /** `args`: the call's input as the provider sent it, when the adapter can see it (orch's loop watch compares them).
+   *  `id`/`durationMs`/`isError` serve the live turn stream (event-stream.ts): started/pending/running
+   *  statuses open a call, `status: 'ended'` closes it. */
+  | { kind: 'tool'; name: string; status: string; args?: unknown; id?: string; durationMs?: number; isError?: boolean }
   /** Pi emits usage after each assistant message, before another model request. */
   | { kind: 'usage'; tokens: number }
   /** A successful Pi compaction, identified by its persisted session entry. */

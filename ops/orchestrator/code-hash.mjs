@@ -13,14 +13,35 @@ const sideEffectImport = /^[ \t]*import[ \t]*['"](\.\.?\/[^'"]+)['"]/gm;
 // Skip comments; include plain template literals, but not interpolated paths.
 const fileLiteral = /\/\/[^\r\n]*|\/\*[\s\S]*?\*\/|'((?:\\.|[^'\\\r\n])*)'|"((?:\\.|[^"\\\r\n])*)"|`((?:\\.|[^`\\])*)`/g;
 
+// Remove whole type-only statements before BOTH scans, so their specifiers do
+// not come back as file-literal edges. The default daemon walk keeps them.
+function importSource(source, skipTypeOnly) {
+  if (!skipTypeOnly) return source;
+  return source.replace(moduleFrom, (statement) => (
+    /^[ \t]*(?:import|export)[ \t]+type\b/.test(statement) ? '' : statement
+  ));
+}
+
+// A marker must be a real line comment, not marker text inside a string.
+function inputLiterals(source) {
+  const matches = [...source.matchAll(fileLiteral)];
+  const line = (match) => source.lastIndexOf('\n', match.index);
+  const pathOnlyLines = new Set(matches
+    .filter((match) => /^\/\/[ \t]*suite-inputs: path only, not a load[ \t]*$/.test(match[0]))
+    .map(line));
+  return matches.filter((match) => !pathOnlyLines.has(line(match)));
+}
+
 /** Static local imports from arbitrary entrypoints. Missing targets may be
  * retained by a change sensor so that deleting an input still triggers it.
  * A change sensor can also follow file literals and override working-tree bytes
  * (null means absent, retaining literal edges when allowMissing), and collect
- * in `edges` the names that each file leads to. No option changes the daemon
- * fingerprint's walk. */
+ * in `edges` the names that each file leads to. `skipTypeOnly` excludes whole
+ * type-only imports/re-exports from both scans; it defaults to false, preserving
+ * the daemon fingerprint's walk. */
 export function relativeImportFiles(workdir, seeds, {
   allowMissing = false, includeFileLiterals = false, contents = new Map(), edges = null,
+  skipTypeOnly = false,
 } = {}) {
   const pending = [...seeds];
   const files = new Map();
@@ -56,7 +77,7 @@ export function relativeImportFiles(workdir, seeds, {
     files.set(name, bytes);
     if (name.endsWith('.json')) continue;
     if (includeFileLiterals && !/\.(?:[cm]?[jt]s|[jt]sx)$/.test(name)) continue;
-    const source = bytes.toString('utf8');
+    const source = importSource(bytes.toString('utf8'), skipTypeOnly);
     const from = pending.length;
     for (const [, specifier] of [...source.matchAll(moduleFrom), ...source.matchAll(sideEffectImport)]) {
       const target = path.posix.join(path.posix.dirname(name), specifier);
@@ -71,7 +92,7 @@ export function relativeImportFiles(workdir, seeds, {
       pending.push(...(resolved ? [resolved] : candidates));
     }
     if (includeFileLiterals) {
-      for (const match of source.matchAll(fileLiteral)) {
+      for (const match of inputLiterals(source)) {
         const literal = match[1] ?? match[2] ?? match[3];
         if (!literal || literal.includes('${') || path.posix.isAbsolute(literal)) continue;
         const specifier = literal.replace(/\\(['"`\\])/g, '$1');

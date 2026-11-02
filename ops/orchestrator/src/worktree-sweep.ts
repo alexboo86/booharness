@@ -139,8 +139,29 @@ async function registeredWorktrees(root: string): Promise<Registered[]> {
   return found;
 }
 
+async function removeCacheDrop(dropping: string, spellings: string[], result: WorktreeSweepResult): Promise<void> {
+  try {
+    const bytes = await treeBytes(dropping);
+    // Sample AFTER the byte walk, at the deletion moment (task 2861).
+    if (busyIn(await processSnapshot(), [...spellings, dropping])) {
+      result.skipped.push({ path: dropping, reason: 'process inside the dropped leftover' });
+      return;
+    }
+    if (result.dryRun) {
+      result.candidates.push({ path: dropping, bytesBefore: bytes, branch: null });
+      result.bytesBefore += bytes;
+    } else {
+      await rm(dropping, { recursive: true, force: true });
+      result.removed.push({ path: dropping, bytes, branch: null, kind: 'cache' });
+    }
+  } catch (error) {
+    result.skipped.push({ path: dropping, reason: (error as Error).message });
+  }
+}
+
 /** Delete `<cache>.dropping-<ms>` leftovers past the grace age: an interrupted
- *  recursive delete dies with its stamp, and a live delete is never that old. */
+ *  recursive delete dies with its stamp, and a live delete is never that old.
+ *  Dry runs inspect the same leftovers without removing them. */
 async function removeStaleDrops(dir: string, spellings: string[], result: WorktreeSweepResult, now: number): Promise<void> {
   let entries;
   try { entries = await opendir(dir); } catch (error) { if (missing(error)) return; throw error; }
@@ -151,19 +172,7 @@ async function removeStaleDrops(dir: string, spellings: string[], result: Worktr
       const stamp = Number(entry.name.slice(prefix.length));
       const dropping = path.join(dir, entry.name);
       if (!Number.isInteger(stamp) || stamp < 0 || now - stamp < DROP_GRACE) continue;
-      try {
-        const bytes = await treeBytes(dropping);
-        // Liveness is sampled AFTER the byte walk, right before the rm (task 2861
-        // review r3): a process entering during the walk keeps the leftover.
-        if (busyIn(await processSnapshot(), [...spellings, dropping])) {
-          result.skipped.push({ path: dropping, reason: 'process inside the dropped leftover' });
-          continue;
-        }
-        await rm(dropping, { recursive: true, force: true });
-        result.removed.push({ path: dropping, bytes, branch: null, kind: 'cache' });
-      } catch (error) {
-        result.skipped.push({ path: dropping, reason: (error as Error).message });
-      }
+      await removeCacheDrop(dropping, spellings, result);
     }
   }
 }
@@ -174,7 +183,7 @@ async function removeStaleDrops(dir: string, spellings: string[], result: Worktr
  *  process snapshot at its own deletion moment. */
 async function dropCaches(context: SweepContext, dir: string, spellings: string[], cutoff: number): Promise<void> {
   const { dryRun, now, result } = context;
-  if (!dryRun) await removeStaleDrops(dir, spellings, result, now);
+  await removeStaleDrops(dir, spellings, result, now);
   const caches: { rel: string; target: string; bytes: number }[] = [];
   for (const rel of CACHE_DIRS) {
     let target: string;

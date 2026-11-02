@@ -16,7 +16,7 @@ Name the cause and the smallest change that removes it, before the first line.
 - Decide the size BEFORE writing: a larger design is the operator's money, so say its price out loud.
 - Stop planning when the next step is obvious and its proof is named.
 
-A lead's plan goes to a [plan critic](../plan-critic/SKILL.md) before the first coder only when a wrong plan costs more than one correction turn; the five cases are in [orch-team](../orch-team/SKILL.md), "The loop" (operator #15067). Every other plan has the reviewer of the diff as its check.
+A lead's plan goes to a [plan critic](../plan-critic/SKILL.md) before the first coder only when a wrong plan costs more than one correction turn; the five cases are in [orch](../orch/SKILL.md), "The loop" (operator #15067). Every other plan has the reviewer of the diff as its check.
 
 Report the plan and the check that decides it. Write no code the plan does not require.
 

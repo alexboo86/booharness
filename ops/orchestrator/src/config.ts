@@ -34,12 +34,22 @@ export function stateDirFor(home: string): string {
   return path.join(home, '.local', 'state', 'orch');
 }
 
+export type HostTransport = 'ssh' | 'agent';
+
 export type RemoteHost = {
   ssh: string; platform: NodeJS.Platform; repo: string; node: string;
   /** Optional Windows native toolchain for Pi seats; paths are host-local, not daemon paths. */
   native?: { vcvars64: string; pathPrepend: string[]; cmakePrefixPath: string };
+  /** How remote commands reach this host: managed ssh (default) or the paired host agent. The ssh entry stays for rollback. */
+  transport?: HostTransport;
+  /** The paired orch host agent identity ('ag-...'); commands over the agent link resolve through it. */
+  agent?: string;
 };
 
+/** The effective transport of a host entry: absent means ssh. */
+export function hostTransport(host: RemoteHost): HostTransport {
+  return host.transport ?? 'ssh';
+}
 /** Hosts are explicit: a missing registry is empty, but malformed entries never silently disappear. */
 export function readHosts(stateDir = loadConfig().stateDir): Record<string, RemoteHost> {
   const file = path.join(stateDir, 'hosts.json');
@@ -54,6 +64,10 @@ export function readHosts(stateDir = loadConfig().stateDir): Record<string, Remo
   return hosts;
 }
 
+/** The one host-name rule: checkHosts validates with it and the hosts revoke route (http-hosts.ts REVOKE_NAME) matches with it. No length cap: a name hosts.json can hold must stay loadable and removable. */
+export const HOST_NAME = '[a-zA-Z0-9_-]+';
+const HOST_NAME_RE = new RegExp(`^${HOST_NAME}$`);
+
 /** The one set of hosts.json rules: readHosts applies it to the file, the writer to the content it is about to write. */
 export function checkHosts(hosts: unknown, file: string): asserts hosts is Record<string, RemoteHost> {
   if (!plain(hosts)) throw new Error('hosts.json must be an object');
@@ -67,11 +81,28 @@ export function checkHosts(hosts: unknown, file: string): asserts hosts is Recor
 
 const WIN_PATH_RULE = 'an absolute drive path of at most 512 characters without " % ^ & | < > ! or a line break';
 
+/** The optional fields' own rules: the accepted set, then the transport and agent values. */
+function optionalFieldProblem(value: Record<string, unknown>): string | null {
+  const expected = ['node', 'platform', 'repo', 'ssh'];
+  if (value.native !== undefined) expected.push('native');
+  if (value.transport !== undefined) expected.push('transport');
+  if (value.agent !== undefined) expected.push('agent');
+  if (Object.keys(value).sort().join(',') !== expected.sort().join(',')) return 'fields: exactly ssh, platform, repo and node, plus optional transport, agent and native';
+  if (value.transport !== undefined && value.transport !== 'ssh' && value.transport !== 'agent') return "transport: 'ssh' or 'agent'";
+  return agentFieldProblem(value.agent);
+}
+
+function agentFieldProblem(agent: unknown): string | null {
+  if (agent === undefined) return null;
+  return typeof agent === 'string' && /^ag-[A-Za-z0-9_-]{1,32}$/.test(agent) ? null : 'agent: an agent id (ag-...): letters, digits, _ and - after ag-';
+}
+
 /** The first rule an entry breaks, as `<field>: <rule>`; null for a valid entry. */
 function hostProblem(key: string, value: unknown): string | null {
-  if (!/^[a-zA-Z0-9_-]+$/.test(key)) return 'name: letters, digits, _ and - only';
+  if (!HOST_NAME_RE.test(key)) return 'name: letters, digits, _ and - only';
   if (!plain(value)) return 'entry: must be an object';
-  if (Object.keys(value).sort().join(',') !== (value.native === undefined ? 'node,platform,repo,ssh' : 'native,node,platform,repo,ssh')) return 'fields: exactly ssh, platform, repo and node, plus an optional native';
+  const problem = optionalFieldProblem(value);
+  if (problem) return problem;
   if (typeof value.ssh !== 'string' || !/^[a-zA-Z0-9_.@][a-zA-Z0-9_.@-]*$/.test(value.ssh)) return 'ssh: letters, digits, _ . @ and -, not starting with -';
   if (!['win32', 'darwin', 'linux'].includes(value.platform as string)) return 'platform: one of win32, darwin, linux';
   if (typeof value.repo !== 'string' ||
@@ -142,6 +173,14 @@ export function removeHost(name: string, stateDir = loadConfig().stateDir): Reco
   return changeHosts(stateDir, (hosts) => {
     if (!Object.hasOwn(hosts, name)) throw new Error(`unknown orch host '${name}'`);
     return Object.fromEntries(Object.entries(hosts).filter(([key]) => key !== name));
+  });
+}
+
+/** Set a host's transport; every other field (the ssh entry included) stays untouched. Returns the registry as written. */
+export function setHostTransport(name: string, transport: HostTransport, stateDir = loadConfig().stateDir): Record<string, RemoteHost> {
+  return changeHosts(stateDir, (hosts) => {
+    if (!Object.hasOwn(hosts, name)) throw new Error(`unknown orch host '${name}'`);
+    return { ...hosts, [name]: { ...hosts[name], transport } };
   });
 }
 

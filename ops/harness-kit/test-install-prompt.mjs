@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { promisify } from 'node:util';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -222,6 +222,49 @@ export function loginSliceProblems(markdown) {
 
 const prompt = readFileSync(promptPath, 'utf8');
 
+// Test 0: run the documented clone boundary, not prose/command-presence checks.
+// Without the CLT guard the missing-CLT case calls git on a clean Mac.
+test('the POSIX clone entry stops before git when macOS CLT is missing', { skip: process.platform === 'win32' }, () => {
+  const guide = readFileSync(path.join(path.dirname(promptPath), 'INSTALL.md'), 'utf8');
+  const script = codeBlocks(guide).find((block) => block.includes("git clone '"));
+  assert.ok(script, 'documented POSIX clone command');
+  const root = mkdtempSync(path.join(tmpdir(), 'kit-clt-'));
+  try {
+    const bin = path.join(root, 'bin');
+    mkdirSync(bin);
+    for (const [name, body] of Object.entries({
+      uname: 'printf "%s\\n" "$TEST_OS"',
+      'xcode-select': 'printf "xcode-select %s\\n" "$*" >> "$TEST_LOG"\nif [ "$1" = "-p" ]; then exit "$TEST_CLT"; fi\nexit "$TEST_INSTALL"',
+      git: 'printf "git\\n" >> "$TEST_LOG"',
+    })) {
+      const file = path.join(bin, name);
+      writeFileSync(file, `#!/bin/sh\n${body}\n`);
+      chmodSync(file, 0o755);
+    }
+    for (const [os, clt, install, expected] of [
+      ['Darwin', '1', '0', ['xcode-select -p', 'xcode-select --install']],
+      ['Darwin', '1', '1', ['xcode-select -p', 'xcode-select --install']],
+      ['Darwin', '0', '0', ['xcode-select -p', 'git']],
+      ['Linux', '1', '0', ['git']],
+    ]) {
+      const log = path.join(root, 'calls');
+      writeFileSync(log, '');
+      const run = spawnSync('bash', ['--noprofile', '--norc', '-c', script], {
+        encoding: 'utf8',
+        env: { ...process.env, HOME: root, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+          BASH_ENV: '', ENV: '', TEST_OS: os, TEST_CLT: clt, TEST_INSTALL: install, TEST_LOG: log },
+      });
+      const calls = readFileSync(log, 'utf8').trim().split('\n');
+      assert.deepEqual(calls, expected, `${os}, CLT status ${clt}, install status ${install}`);
+      const missing = os === 'Darwin' && clt === '1';
+      assert.equal(run.status, missing ? 1 : 0, run.stdout + run.stderr);
+      if (missing) assert.match(run.stdout + run.stderr, /rerun.*after.*finish/i);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('each fenced node command names a real script and a usage verb', () => {
   const problems = commandProblems(prompt);
   assert.deepEqual(problems, [], problems.join('\n'));
@@ -331,31 +374,6 @@ test('the interview starts in the UI language, asks singly, and prepares Git bef
   assert.match(interview, /updater consent and git identity.*Apply/);
 });
 
-// Test-audit: decision 19348 adds a lead recommendation and a GUI/CLI boundary
-// absent from the existing command/order checks. Check both emitted documents;
-// settings registration must not become a claim of successful mod loading.
-test('both install docs recommend the desktop lead and state the CLI limits', () => {
-  const guide = readFileSync(path.join(path.dirname(promptPath), 'INSTALL.md'), 'utf8');
-  const verify = (text) => {
-    assert.match(text, /\*\*Recommended setup:\*\* paste this install prompt into the \*\*Claude Code desktop app \(GUI\)\*\*/);
-    assert.match(text, /worker seats run under orch/);
-    assert.match(text, /\*\*Claude Code terminal CLI\*\*/);
-    assert.match(text, /terminal surface renders a\s+text\s+summary/);
-    assert.match(text, /no attached surface/);
-    assert.match(text, /(?:installer|It) does not install the desktop app/);
-    assert.match(text, /registration (?:alone does not prove|as proof of) (?:a loaded mod|mod loading)/);
-  };
-  for (const text of [prompt, guide]) {
-    verify(text);
-    assert.throws(() => verify(text.replace('**Recommended setup:**', 'Alternative setup:')));
-  }
-  assert.match(guide, /On both macOS and\s+Windows, the installer's `permissions` step/);
-  for (const name of ['collision-guard', 'delay-no-more', 'handover', 'orch-board', 'secrets-veil']) {
-    assert.ok(guide.includes(`| \`${name}\` |`), `mod table row: ${name}`);
-  }
-  assert.match(guide, /All default patterns are empty: registration alone changes nothing/);
-});
-
 test('each login pin fails when only that sentence is removed from its section', () => {
   assert.deepEqual(loginSliceProblems(prompt), []);
   for (const spec of SECTION_PINS) {
@@ -393,7 +411,7 @@ test('--families separates pinned Pi availability from login state', () => {
       'qwen-token-plan-individual': { type: 'api_key', key: 'fixture-key' },
     }));
     for (const rel of ['ops/bootstrap/resolve-runtime-path.mjs', 'ops/bootstrap/wizard-steps/families.mjs',
-      'ops/bootstrap/family-logins.json', 'scripts/lib/family-logins.mjs', 'scripts/lib/harness-config.mjs', 'scripts/lib/runtime-search.mjs']) {
+      'ops/bootstrap/family-logins.json', 'scripts/lib/family-logins.mjs', 'scripts/lib/harness-config.mjs', 'scripts/lib/skill-map.mjs', 'scripts/lib/harness-settings.mjs', 'scripts/lib/runtime-search.mjs']) {
       const file = path.join(root, rel);
       mkdirSync(path.dirname(file), { recursive: true });
       copyFileSync(path.join(repoRoot, rel), file);
@@ -542,7 +560,7 @@ globalThis.fetch = async (url) => {
   for (const mode of ['missing-local', 'present-remote', 'missing-remote', 'absent-binary', 'wrong-pin', 'foreign-binary', 'bad-model-hash', 'missing-other']) {
     const root = mkdtempSync(path.join(tmpdir(), 'ollama-guide-'));
     try {
-      for (const rel of ['scripts/lib/harness-config.mjs', 'scripts/lib/import-embed-model.mjs', 'scripts/memory/embed-recipe.mjs', 'ops/bootstrap/tool-pins.json', 'ops/bootstrap/ollama-setup.mjs']) {
+      for (const rel of ['scripts/lib/harness-config.mjs', 'scripts/lib/skill-map.mjs', 'scripts/lib/harness-settings.mjs', 'scripts/lib/import-embed-model.mjs', 'scripts/memory/embed-recipe.mjs', 'ops/bootstrap/tool-pins.json', 'ops/bootstrap/ollama-setup.mjs']) {
         mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
         copyFileSync(path.join(repoRoot, rel), path.join(root, rel));
       }
@@ -669,7 +687,7 @@ test('the manual embedding verification reads the checkout config and prints the
   try {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}`;
-    for (const rel of ['scripts/lib/harness-config.mjs', 'scripts/memory/embed-recipe.mjs']) {
+    for (const rel of ['scripts/lib/harness-config.mjs', 'scripts/lib/skill-map.mjs', 'scripts/lib/harness-settings.mjs', 'scripts/memory/embed-recipe.mjs']) {
       mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
       copyFileSync(path.join(repoRoot, rel), path.join(root, rel));
     }

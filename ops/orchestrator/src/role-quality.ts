@@ -4,9 +4,10 @@
 // and the reader answers with one warning instead of throwing (unlike paused-families.ts,
 // a bad tier file must not stop the choice).
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { known, type RoleStats, type RoleStatsRow } from './role-stats.ts';
+import { SAFE } from './seats-defs.ts';
 
 export type Tier = 'WEAK' | 'NORMAL';
 /** One matrix cell: a role, a wallet (an orch family is one wallet), a model and an effort. */
@@ -27,7 +28,7 @@ export const JUDGED_MIN_CELLS = 5;
 /** A qualified cell of a judged role is WEAK at this failure share, or this far below the median while under P25. */
 export const WEAK_FAIL_SHARE = 0.15;
 export const WEAK_MEAN_MARGIN = 0.05;
-/** A file older than this answers NORMAL for every cell. */
+/** Computed cells expire after this age; manual overrides do not. */
 export const TIER_FILE_MAX_AGE_MS = 14 * 86_400_000;
 
 export const qualityFile = (stateDir: string): string => path.join(stateDir, 'role-quality.json');
@@ -95,8 +96,8 @@ function parseQuality(text: string): RoleQuality | null {
 export type QualityAnswer = { tier: Tier; manual: boolean; warning: string | null; cell: QualityCell | null };
 
 /** The tier of one cell. A manual entry wins over cells; an entry that names no known cell is
- * ignored because it is never looked up. An absent file, a file older than 14 days or a file
- * that does not parse answers NORMAL with one warning, so `picked` prints it once. Never throws. */
+ * ignored because it is never looked up. Absent or invalid files answer NORMAL with a warning.
+ * Computed cells expire after 14 days, but manual overrides remain effective. Never throws. */
 export function tierOf(stateDir: string, cell: CellRef, now: number | Date = Date.now()): QualityAnswer {
   const file = qualityFile(stateDir);
   const at = now instanceof Date ? now.getTime() : now;
@@ -108,28 +109,84 @@ export function tierOf(stateDir: string, cell: CellRef, now: number | Date = Dat
   }
   const parsed = parseQuality(text);
   if (parsed === null) return { tier: 'NORMAL', manual: false, warning: `role-quality: ${file} does not parse; every cell is NORMAL`, cell: null };
-  if (at - Date.parse(parsed.writtenAt) > TIER_FILE_MAX_AGE_MS) {
-    return { tier: 'NORMAL', manual: false, warning: `role-quality: ${file} is older than 14 days; every cell is NORMAL`, cell: null };
-  }
   const key = cellKey(cell);
   const found = parsed.cells.find((entry) => cellKey(entry) === key) ?? null;
   const manualTier = parsed.manual[key];
   if (isTier(manualTier)) return { tier: manualTier, manual: true, warning: null, cell: found };
+  if (at - Date.parse(parsed.writtenAt) > TIER_FILE_MAX_AGE_MS) {
+    return { tier: 'NORMAL', manual: false, warning: `role-quality: ${file} is older than 14 days; computed cells are NORMAL`, cell: null };
+  }
   return { tier: found?.tier ?? 'NORMAL', manual: false, warning: null, cell: found };
+}
+
+/** Set or clear an operator override without replacing the computed window. */
+export function setManualTier(stateDir: string, cell: CellRef, tier: Tier | null): void {
+  if (tier !== null && !isTier(tier)) throw new Error('tier must be WEAK, NORMAL or null');
+  for (const [key, value] of Object.entries(cell)) {
+    const pattern = key === 'model' ? SAFE : /^[A-Za-z0-9._-]{1,128}$/;
+    if (typeof value !== 'string' || !pattern.test(value)) throw new Error('invalid tier cell');
+  }
+  withTierLock(stateDir, () => changeManualTier(stateDir, cell, tier));
+}
+
+function changeManualTier(stateDir: string, cell: CellRef, tier: Tier | null): void {
+  const file = qualityFile(stateDir);
+  const previous = readQualityForWrite(file) ?? { version: ROLE_QUALITY_VERSION, writtenAt: new Date().toISOString(), since: new Date().toISOString(), cells: [], manual: {} };
+  if (tier === null) delete previous.manual[cellKey(cell)];
+  else previous.manual[cellKey(cell)] = tier;
+  saveQuality(file, previous);
+}
+
+function readQualityForWrite(file: string): RoleQuality | null {
+  try {
+    const parsed = parseQuality(readFileSync(file, 'utf8'));
+    if (!parsed) throw new Error('role-quality file does not parse; refusing to overwrite');
+    return parsed;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/** Both writers acquire the same directory before reading. A killed writer leaves a visible,
+ * fail-closed lock; never steal it while another process could still be renaming. */
+function withTierLock<T>(stateDir: string, change: () => T): T {
+  mkdirSync(stateDir, { recursive: true });
+  const lock = `${qualityFile(stateDir)}.lock`;
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try { mkdirSync(lock); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (Date.now() >= deadline) throw new Error(`${lock}: tier edit lock busy; nothing written`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try { return change(); } finally { rmdirSync(lock); }
+}
+
+function saveQuality(file: string, next: RoleQuality): void {
+  const temp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(next)}\n`, { encoding: 'utf8', flag: 'wx' });
+    renameSync(temp, file);
+  } finally { rmSync(temp, { force: true }); }
 }
 
 export type TierWrite = { file: string; cells: QualityCell[]; manual: Record<string, Tier>; entered: QualityCell[]; left: QualityCell[] };
 
 /** Write the tier file for a computed window: a temporary file in the same directory plus a
  * rename, so a pick never reads half a file. The manual key of the existing file is kept as
- * found (a file that does not parse has nothing to keep). entered and left are the cells whose
+ * found (an unreadable or invalid file is refused without overwriting it). entered and left are the cells whose
  * computed tier changed to and from WEAK against the previous file's cells; a cell absent from
  * the previous file counts as entered. A manual entry is not a cell and never enters or leaves. */
 export function writeTierFile(stateDir: string, stats: RoleStats, now: number | Date = Date.now()): TierWrite {
-  mkdirSync(stateDir, { recursive: true });
+  return withTierLock(stateDir, () => writeLockedTiers(stateDir, stats, now));
+}
+
+function writeLockedTiers(stateDir: string, stats: RoleStats, now: number | Date): TierWrite {
   const file = qualityFile(stateDir);
-  let previous: RoleQuality | null = null;
-  try { previous = parseQuality(readFileSync(file, 'utf8')); } catch { /* absent or unreadable: nothing to keep or compare */ }
+  const previous = readQualityForWrite(file);
   const cells = tierCells(stats);
   const wasWeak = new Map((previous?.cells ?? []).map((cell) => [cellKey(cell), cell.tier === 'WEAK'] as const));
   const isWeak = new Set(cells.filter((cell) => cell.tier === 'WEAK').map(cellKey));
@@ -138,12 +195,7 @@ export function writeTierFile(stateDir: string, stats: RoleStats, now: number | 
     writtenAt: new Date(now instanceof Date ? now.getTime() : now).toISOString(),
     since: stats.since, cells, manual: previous?.manual ?? {},
   };
-  const temp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  try {
-    writeFileSync(temp, `${JSON.stringify(next)}\n`, { encoding: 'utf8', flag: 'wx' });
-    // Windows can throw EPERM here with two writers at one time; accepted: the weekly routine is the only writer and the file stays whole.
-    renameSync(temp, file);
-  } finally { rmSync(temp, { force: true }); }
+  saveQuality(file, next);
   return {
     file, cells, manual: next.manual,
     entered: cells.filter((cell) => cell.tier === 'WEAK' && wasWeak.get(cellKey(cell)) !== true),

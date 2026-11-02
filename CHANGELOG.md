@@ -4,6 +4,20 @@
 
 Each publication of BooHarness to this repository adds an entry here, newest first.
 
+## 0.2.1 — 2026-11-02
+
+- Restarting orch no longer refuses on an install with no orch test suite. A kit ships no orch tests and no `check:orch-tests`, so the restart gate stopped every kit install and named a command that does not exist there. A checkout that has those tests still needs a passing suite receipt.
+
+This release also ships everything merged since 0.2.0:
+
+- Settings: a settings core with history, reset and crash-safe publication. Jev bands, review count, brief words, report budget, team presets, instruments, review independence, placement, retention, git sync and the push gate are now settings.
+- Leads: a lead runs behind one provider seam. A codex lead runs through Pi. A lead start can name a family, model and effort. A supervised lead hands over by itself at the context limit, and a post wakes it.
+- Hosts: a host agent with per-user install, update and rollback, TLS pairing, commands over its link and revoke. Ssh starts per host stay under the server's limit, and a refused start is retried only in provably repeatable provisioning steps.
+- Pi: a machine may run a Pi beside the repository pin, and an update action shows the current and latest version, installs beside the old one, switches and rolls back.
+- Picking: a usable reset of the longest window outranks both pace groups. Seat roles are data in a catalogue, and the lead skill orch-team is now orch.
+- Daemon API for a desktop client: chat roster and feed, transcripts, diff, model status and login, storage, lessons and model quality. The desktop client itself is not in this kit.
+- Kit: the build is green again and ships the host agent. The install prompt handles a Mac without Command Line Tools, and vulnerable stand lockfiles no longer ship.
+
 ## 0.2.0 — 2026-10-29
 
 - The new motion role makes video and motion assets with Higgsfield and ffmpeg-full. It runs on this Mac only and writes only landing media and motion drafts. The kit ships its Higgsfield credit-boundary wrapper and test.

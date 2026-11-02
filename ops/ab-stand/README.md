@@ -211,9 +211,9 @@ The `jcodemunch` arm installs PyPI `jcodemunch-mcp==1.108.320` (jCodeMunch-MCP D
 
 When the `jcodemunch.json` pin moves, regenerate the committed lock on Darwin
 arm64 for Python 3.12 from the repository root:
-`node -e 'const p=require("./ops/ab-stand/jcodemunch.json"); console.log(p.package+"=="+p.version)' | uv pip compile --python 3.12 --python-platform aarch64-apple-darwin --generate-hashes - -o ops/ab-stand/jcodemunch.requirements.txt`.
+`node -e 'const p=require("./ops/ab-stand/jcodemunch.json"); console.log(p.package+"=="+p.version)' | uv pip compile --python 3.12 --python-platform aarch64-apple-darwin --generate-hashes - -o ops/ab-stand/jcodemunch.requirements.txt` (`ops/ab-stand/jcodemunch.requirements.txt` not in this kit).
 Review all changed versions/hashes and verify a fresh scratch venv install with
-`uv pip install --python <scratch-venv>/bin/python --require-hashes --no-deps -r ops/ab-stand/jcodemunch.requirements.txt`;
+`uv pip install --python <scratch-venv>/bin/python --require-hashes --no-deps -r ops/ab-stand/jcodemunch.requirements.txt` (`ops/ab-stand/jcodemunch.requirements.txt` not in this kit);
 compare `uv pip freeze --python <scratch-venv>/bin/python` with the lock's exact package set.
 Licence (wheel `licenses/LICENSE`, Dual-Use 1.1): free for personal, academic, research, or other non-commercial use, including this stand (operator #13163). Commercial use — a for-profit organization, a product or service offered for a fee, or internal tooling that supports revenue — needs a paid license (Builder $79, Studio $349, Platform $1,999). Copies must keep the copyright and attribution notices, must not rename or rebrand the software, and must not be published to a public package registry. The software is provided "AS IS" without warranty. This arm does not modify or republish the package.
 
@@ -270,9 +270,9 @@ including the top-level package and every transitive dependency. A missing lock
 file or a top-level version differing from `openviking.json` refuses installation
 before arm state changes. When that JSON pin moves, regenerate the committed
 lock on Darwin arm64 for Python 3.12 from the repository root:
-`node -e 'const p=require("./ops/ab-stand/openviking.json"); console.log(p.package+"=="+p.version)' | uv pip compile --python 3.12 --python-platform aarch64-apple-darwin --generate-hashes - -o ops/ab-stand/openviking.requirements.txt`.
+`node -e 'const p=require("./ops/ab-stand/openviking.json"); console.log(p.package+"=="+p.version)' | uv pip compile --python 3.12 --python-platform aarch64-apple-darwin --generate-hashes - -o ops/ab-stand/openviking.requirements.txt` (`ops/ab-stand/openviking.requirements.txt` not in this kit).
 Review all changed versions/hashes and verify a fresh scratch venv install with
-`uv pip install --python <scratch-venv>/bin/python --require-hashes --no-deps -r ops/ab-stand/openviking.requirements.txt`;
+`uv pip install --python <scratch-venv>/bin/python --require-hashes --no-deps -r ops/ab-stand/openviking.requirements.txt` (`ops/ab-stand/openviking.requirements.txt` not in this kit);
 compare `uv pip freeze --python <scratch-venv>/bin/python` with the lock's exact package set.
 
 The `sleev` arm (operator #13197) installs `sleev@1.8.5` plus its

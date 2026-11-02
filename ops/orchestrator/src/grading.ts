@@ -11,6 +11,8 @@
 // report goes out, never the seat's prose.
 import { ask as jevAsk } from '../../bootstrap/jev-client.mjs';
 import { tableRows } from './report.ts';
+import { readInstallSetting, readAdvisoryInstallSettings, FINISHED_P, SUPPORTED_P, SAME_DEFECT_P } from './settings/index.ts';
+import { loadConfig } from './config.ts';
 
 /**
  * A sibling is another reviewer seat on the same task (same title, same repo) whose latest turn
@@ -29,14 +31,15 @@ export type Grade =
 export type Finding = { claim: string; evidence: string; reproduced: boolean; severity: string };
 /** A blocker/major finding whose evidence names no concrete command, test, file:line or URL. */
 export type Unsupported = { finding: number; severity: string; score: number; claim: string };
+type ReportFields = Record<string, any>;
 type Ask = (input: { text: string; questions: Record<string, unknown>; timeoutMs?: number }) => Promise<any>;
 
 /** The Jev client's privacy gate caps its state at 6000 characters; a larger report comes back ungraded (report.ts aims seats at 5500). */
 const STATE_LIMIT = 6000;
 /** Below this real_report a report is flagged as not finished, and is no sibling to compare with. */
-export const FINISHED_P = 0.5;
+export { FINISHED_P } from './settings/index.ts';
 /** Below this evidenceSupports a blocker/major finding is flagged and earns one support round (seats.ts, task 1447). Structural checks store 1 or 0; 0.6 still admits a stored Jev score. */
-export const SUPPORTED_P = 0.6;
+export { SUPPORTED_P } from './settings/index.ts';
 
 const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 /** A claim line and an evidence line this far apart still name the same spot. */
@@ -234,7 +237,7 @@ function withTableRowCount(report: Record<string, unknown>): Record<string, unkn
  * is never ungraded for its size (#10514 still applies to the finish question: a report over the
  * state cap is asked on a copy with every text cut). Same-defect does not call Jev.
  */
-export async function gradeReport(report: Record<string, any>, siblings: Sibling[] = [], ask: Ask = jevAsk, roots: readonly string[] = []): Promise<Grade> {
+export async function gradeReport(report: ReportFields, siblings: Sibling[] = [], ask: Ask = jevAsk, roots: readonly string[] = []): Promise<Grade> {
   report = withTableRowCount(report);
   const findings: Finding[] = Array.isArray(report.findings) ? report.findings : [];
   const whole = JSON.stringify({ report });
@@ -290,12 +293,16 @@ function compareSibling(findings: Finding[], sibling: Sibling, roots: readonly s
 }
 
 /** Blocker/major findings the structural check did not support; empty when ungraded or all supported. */
-export function unsupportedFindings(report: Record<string, any>, grade: Grade): Unsupported[] {
+export function unsupportedFindings(report: ReportFields, grade: Grade, stateDir = loadConfig().stateDir): Unsupported[] {
   if (grade.status !== 'graded') return [];
+  return findUnsupported(report, grade, readInstallSetting(stateDir, 'jev.grading.supported') as number);
+}
+
+function findUnsupported(report: ReportFields, grade: Extract<Grade, { status: 'graded' }>, supported: number): Unsupported[] {
   const findings: Finding[] = Array.isArray(report.findings) ? report.findings : [];
   const unsupported: Unsupported[] = [];
   findings.forEach((finding, i) => {
-    if (finding.reproduced === true && ['blocker', 'major'].includes(finding.severity) && grade.evidenceSupports[i] < SUPPORTED_P) {
+    if (finding.reproduced === true && ['blocker', 'major'].includes(finding.severity) && grade.evidenceSupports[i] < supported) {
       unsupported.push({ finding: i, severity: finding.severity, score: grade.evidenceSupports[i], claim: String(finding.claim ?? '') });
     }
   });
@@ -303,11 +310,14 @@ export function unsupportedFindings(report: Record<string, any>, grade: Grade): 
 }
 
 /** What the lead must look at. Empty means: accept the report as it stands (memory #10313). */
-export function gradeFlags(report: Record<string, any>, grade: Grade): string[] {
+export function gradeFlags(report: ReportFields, grade: Grade, stateDir = loadConfig().stateDir): string[] {
   if (grade.status !== 'graded') return [`ungraded: ${grade.reason}`];
   const flags: string[] = [];
-  if (grade.realReport < FINISHED_P) flags.push(`not a finished report (real_report ${grade.realReport.toFixed(2)})`);
-  for (const unsupported of unsupportedFindings(report, grade)) {
+  const settings = readAdvisoryInstallSettings(stateDir, {
+    'jev.grading.finished': FINISHED_P, 'jev.grading.supported': SUPPORTED_P, 'jev.grading.sameDefect': SAME_DEFECT_P,
+  }, flags);
+  if (grade.realReport < (settings['jev.grading.finished'] as number)) flags.push(`not a finished report (real_report ${grade.realReport.toFixed(2)})`);
+  for (const unsupported of findUnsupported(report, grade, settings['jev.grading.supported'] as number)) {
     flags.push(`${unsupported.severity} finding ${unsupported.finding + 1} names no concrete command, test, file:line or URL`);
   }
   for (const sibling of grade.siblings) {
@@ -317,7 +327,7 @@ export function gradeFlags(report: Record<string, any>, grade: Grade): string[] 
     }
     // An overlap of cited lines, not a proven duplicate: two defects in one range stay two (task 3285).
     for (const pair of sibling.pairs) {
-      if (pair.probability >= 0.6) flags.push(`finding ${pair.finding + 1} cites the same lines as ${sibling.seat} finding ${pair.siblingFinding + 1} (${pair.probability.toFixed(2)})`);
+      if (pair.probability >= (settings['jev.grading.sameDefect'] as number)) flags.push(`finding ${pair.finding + 1} cites the same lines as ${sibling.seat} finding ${pair.siblingFinding + 1} (${pair.probability.toFixed(2)})`);
     }
   }
   return flags;

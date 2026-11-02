@@ -7,7 +7,11 @@
 # already looks whole in here (verified). What it CAN judge is the content of the commit
 # itself, and a staged deletion is part of that content.
 # It also refuses an index tree check:commit did not stamp. A partial stage
-# committed without a pathspec has a different tree and is refused.
+# committed without a pathspec has a different tree and is refused. Task 3447:
+# a stamp whose exact name does not match still authorizes the commit when the
+# stamp's recorded path→blob map covers every changed path and its work half
+# still equals the working-tree tree — committing one checked pathspec no longer
+# invalidates a sibling path's stamp by moving HEAD.
 #
 # It also covers less than it looks like it covers, which is why .githooks/pre-push runs
 # the same check over the range being published. Verified in a scratch repository:
@@ -44,10 +48,12 @@ writer="$repo/scripts/check-commit.mjs"
 if [ -f "$writer" ] && ! grep -q 'check-pass' "$writer"; then
     echo "pre-commit: this branch's check:commit writes no pass stamp; merge master to get the git gate" >&2
 else
-    # Pass stamp from check:commit: <git-common-dir>/check-pass/<commitTree>-<workTree>.
+    # Pass stamp from check:commit: <git-common-dir>/check-pass/<commitTree>-<workTree>,
+    # and since task 3447 the file's CONTENT is the checked commit's path→blob map.
     # The work-tree half is that command's cache key. This hook authorizes the index
-    # tree git handed us, a pathspec commit's temporary index included. No stamp, or
-    # a git error, fails closed.
+    # tree git handed us, a pathspec commit's temporary index included. Modern
+    # readers revalidate operator approval before exact-name or map reuse.
+    # No stamp, an approval failure, or a git error fails closed.
     tree=$(git write-tree) || {
         echo "pre-commit: blocked. Could not hash the index." >&2
         exit 1
@@ -57,11 +63,20 @@ else
         exit 1
     }
     found=
-    for f in "$common/check-pass/$tree"-*; do
-        [ -e "$f" ] || continue
-        found=1
-        break
-    done
+    # The committing tree's own reader must judge current approvals even for an
+    # exact stamp. Task 3447's map path also handles checked sibling pathspecs.
+    if [ -f "$writer" ] && grep -q -e '--authorize-index' "$writer"; then
+        if (cd "$repo" && node scripts/check-commit.mjs --authorize-index "$tree"); then
+            found=1
+        fi
+    else
+        # Compatibility for a stamp writer predating the Node reader only.
+        for f in "$common/check-pass/$tree"-*; do
+            [ -e "$f" ] || continue
+            found=1
+            break
+        done
+    fi
     if [ -z "$found" ]; then
         echo "pre-commit: blocked. No check:commit pass stamp for this index tree." >&2
         echo "Run npm run check:commit -- <paths>, then commit. SKIP_GIT_GUARD=1 for a deliberate exception." >&2

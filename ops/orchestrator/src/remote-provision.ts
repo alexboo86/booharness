@@ -32,7 +32,7 @@ const NPM_DESTINATION_GUARD = `node -e 'const fs=require("node:fs"),p=require("n
 export type RemoteStep = { line: string; skip?: string };
 
 /** Full setup for writing seats; read-only seats run only the reviewed host index step. */
-export function remoteSetup(setup: string[], hostRtkLine?: string, readOnly = false): RemoteStep[] {
+export function remoteSetup(setup: string[], hostRtkLine?: string, readOnly = false, codegraphInit = true): RemoteStep[] {
   const selected = readOnly ? setup.filter(line => line === CODEGRAPH_INIT) : setup;
   if (readOnly && selected.length !== 1) throw new Error('read-only remote setup needs exactly one canonical codegraph init step');
   return selected.map((line) => {
@@ -41,7 +41,7 @@ export function remoteSetup(setup: string[], hostRtkLine?: string, readOnly = fa
     return ENV_FILE.test(command)
       ? { line: command, skip: 'skipped on a remote host: the .env step would copy secrets, and secrets stay on the Mac' }
       : { line: command.includes('npm ci') ? `${NPM_DESTINATION_GUARD} && ${command}` : command };
-  });
+  }).filter(({ line }) => codegraphInit || !line.includes('codegraph init'));
 }
 
 /** What a host runs to find its bash: a win32 host asks git where Git for Windows lives. */
@@ -63,7 +63,7 @@ export function assertGitBash(bash: string, uname: string): void {
   if (!/^(MINGW|MSYS)/.test(uname.trim())) throw new Error(`${bash} is not Git for Windows bash: uname -s = '${uname.trim()}'`);
 }
 
-type Run = { code: number | null; output: string; ms: number };
+type Run = { code: number | null; output: string; ms: number; stdoutSeen: boolean };
 
 // `keepBytes` bounds the retained output: a step's tail, or a whole file read back.
 // A gated step (host build-gate --exec) only queues until the gate prints SLOT_ACQUIRED_MARKER,
@@ -73,6 +73,7 @@ function runOnHost(host: string | undefined, command: string, args: string[], cw
   const started = Date.now();
   return new Promise((resolve) => {
     let output = '';
+    let stdoutSeen = false;
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let slotTimer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +82,7 @@ function runOnHost(host: string | undefined, command: string, args: string[], cw
       settled = true;
       clearTimeout(timer);
       clearTimeout(slotTimer);
-      resolve({ code, output, ms: Date.now() - started });
+      resolve({ code, output, ms: Date.now() - started, stdoutSeen });
     };
     let child: ReturnType<typeof spawnProvider>;
     try { child = spawnProvider({ host, command, args, cwd, env }); }
@@ -97,7 +98,7 @@ function runOnHost(host: string | undefined, command: string, args: string[], cw
     // The marker is detected on the stderr stream alone, against a stderr-only rolling tail: stdout
     // chunks interleaved between marker fragments must not push a fragment out of view (task 2930).
     let stderrTail = '';
-    const onStdout = (chunk: Buffer) => { output = (output + chunk.toString('utf8')).slice(-keepBytes); };
+    const onStdout = (chunk: Buffer) => { stdoutSeen = true; output = (output + chunk.toString('utf8')).slice(-keepBytes); };
     const onStderr = (chunk: Buffer) => {
       const text = chunk.toString('utf8');
       if (gated && timer === undefined) {
@@ -122,13 +123,65 @@ function runOnHost(host: string | undefined, command: string, args: string[], cw
   });
 }
 
+const REFUSED_START_BACKOFF_MS = 250;
+const REFUSAL_TEXT_MAX = 8_192;
+/**
+ * ssh's own connection or authentication stage wording, reproduced against a live sshd (task 3077):
+ * `ssh: connect to host 127.0.0.1 port 22: Connection timed out`, a dropped pre-auth `Connection
+ * closed by ...`, `Permission denied (publickey)`. Client noise (known-hosts notices, server banner
+ * warnings) accompanies a refusal without widening it. This text says the START failed at that
+ * stage; it can NOT prove the remote command never ran, since a command that already mutated host
+ * state may print the same line and exit 255 itself. It therefore authorizes a repeat only of a step
+ * that is safe to repeat whatever the first start did.
+ */
+const REFUSAL_LINE = /^(?:ssh: |kex_exchange_identification: |banner exchange: |Connection closed by \S+(?: port \d+)?(?: \[preauth\])?$|(?:\S+@\S+: )?Permission denied \([^)]*\)\.$)/;
+const NOISE_LINE = /^(?:Warning: |\*\* )/;
+
+function isRefusalText(text: string): boolean {
+  if (!text.trim() || text.length > REFUSAL_TEXT_MAX) return false;
+  let sawRefusal = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line) continue;
+    if (REFUSAL_LINE.test(line)) { sawRefusal = true; continue; }
+    if (NOISE_LINE.test(line)) continue;
+    return false;
+  }
+  return sawRefusal;
+}
+
+/**
+ * A start refused before its remote command produced anything: ssh's own exit 255, no stdout byte,
+ * and refusal-only output. `stdoutSeen` is tracked apart from `output` because keepBytes keeps only
+ * the tail: a long stdout would otherwise be sliced away and leave nothing but the refusal text.
+ * A killed or timed-out step resolves with a null code and an `[orch]` note, so it is never a refusal.
+ */
+function isRefusedStart(run: Run): boolean {
+  return run.code === 255 && !run.stdoutSeen && isRefusalText(run.output);
+}
+
+/**
+ * Repeat one host step whose repeat its caller has proven safe: a read-only query, or an installer
+ * that republishes atomically. Exactly two starts at most, 250 ms apart, so a host that stays down
+ * fails once and never storms, and the second run is returned unchanged so the caller reports the
+ * real stderr of the last start. A step that is not proven repeatable calls runOnHost directly.
+ */
+async function runRepeatableOnHost(step: () => Promise<Run>): Promise<Run> {
+  const first = await step();
+  if (!isRefusedStart(first)) return first;
+  await new Promise<void>((resolve) => { setTimeout(resolve, REFUSED_START_BACKOFF_MS).unref(); });
+  return step();
+}
+
 async function hostBash(host: string | undefined, platform: NodeJS.Platform, dir: string): Promise<string> {
   const resolution = bashResolution(platform);
   if (!resolution) return 'bash';
-  const found = await runOnHost(host, resolution.command, resolution.args, dir, {}, 60_000);
+  // Read-only query of Git's own layout: a repeat reads the same value.
+  const found = await runRepeatableOnHost(() => runOnHost(host, resolution.command, resolution.args, dir, {}, 60_000));
   if (found.code !== 0) throw new Error(`git --exec-path failed on ${host}: ${found.output.trim()}`);
   const bash = gitBashFromExecPath(found.output);
-  const uname = await runOnHost(host, bash, ['-c', 'uname -s'], dir, {}, 60_000);
+  // Read-only identity query: a repeat prints the same uname.
+  const uname = await runRepeatableOnHost(() => runOnHost(host, bash, ['-c', 'uname -s'], dir, {}, 60_000));
   if (uname.code !== 0) throw new Error(`${bash} did not run on ${host}: ${uname.output.trim()}`);
   assertGitBash(bash, uname.output);
   return bash;
@@ -152,7 +205,10 @@ export async function provisionCheckDependencies(host: string | undefined, dir: 
 /** The installer owns readiness; serialize its host-wide site lock independently of clone mutation. */
 export async function provisionCheckPyTools(host: string | undefined, dir: string): Promise<void> {
   await withPyToolsInstall(JSON.stringify(host ?? null), async () => {
-    const run = await runOnHost(host, 'node', ['ops/py-tools/install.mjs'], dir, {}, 10 * 60_000);
+    // The installer stages a fresh tree and republishes it with an atomic rename, restoring the
+    // previous one on failure (ops/py-tools/install.mjs provision/publish), so a repeat rebuilds
+    // instead of half-writing the site; withPyToolsInstall already serializes it per host.
+    const run = await runRepeatableOnHost(() => runOnHost(host, 'node', ['ops/py-tools/install.mjs'], dir, {}, 10 * 60_000));
     if (run.code !== 0) throw new Error(`check-on py-tools install exit ${run.code}: ${run.output.trim()}`);
   });
 }
@@ -160,7 +216,8 @@ export async function provisionCheckPyTools(host: string | undefined, dir: strin
 /** The checkout's own setup, or orch's copy when the checkout's commit predates the file. */
 async function readSetup(host: string, dir: string): Promise<{ setup: string[]; gate?: string[]; source: 'seat' | 'orch' }> {
   // LC_ALL=C: the missing-path test below matches git's English message; a localized host would otherwise throw.
-  const shown = await runOnHost(host, 'git', ['show', `HEAD:${CONFIG}`], dir, { LC_ALL: 'C' }, 60_000, Infinity);
+  // Read-only: `git show` of a tracked file at HEAD, safe to repeat.
+  const shown = await runRepeatableOnHost(() => runOnHost(host, 'git', ['show', `HEAD:${CONFIG}`], dir, { LC_ALL: 'C' }, 60_000, Infinity));
   if (shown.code === 0) {
     const parsed = JSON.parse(shown.output);
     return { setup: parsed?.setup ?? [], gate: Array.isArray(parsed?.gate) ? parsed.gate : undefined, source: 'seat' };
@@ -345,11 +402,43 @@ export async function checkHashlineEditOnHost(host: string, options: { timeoutMs
 
 async function checkPinnedEditOnHost(host: string, name: string, prefix: string, options: { timeoutMs?: number }): Promise<CodexEditVerdict> {
   const { repo } = readHost(host);
-  const run = await runOnHost(host, 'node', [`${repo}/ops/ab-stand/${name}-install.mjs`, '--check', '--prefix', prefix], repo, {}, options.timeoutMs ?? 120_000);
+  // Read-only `--check`: the installer verifies its own prefix and prints one JSON verdict.
+  const run = await runRepeatableOnHost(() => runOnHost(host, 'node', [`${repo}/ops/ab-stand/${name}-install.mjs`, '--check', '--prefix', prefix], repo, {}, options.timeoutMs ?? 120_000));
   const line = run.output.trim().split(/\r?\n/).pop() ?? '';
   let verdict: CodexEditVerdict | null = null;
   try { const parsed = JSON.parse(line) as CodexEditVerdict; verdict = typeof parsed?.ok === 'boolean' ? parsed : null; } catch { verdict = null; }
   return verdict && (!verdict.ok || run.code === 0) ? verdict : { ok: false, prefix, reason: `host ${host} reported no ${name} verdict (exit ${run.code}): ${run.output.trim().slice(-300)}` };
+}
+
+/**
+ * Task 3545: after a host runtime sync, keep each pinned edit extension the daemon pins in step
+ * with the checkout's own pin — the repo pin changing (a runtime move to a new ops/ab-stand pin) or
+ * a missing/stale .pi-extensions tree must not fail a codex seat's start after a restart. Each pin
+ * is re-checked on the host first and only a failing check is provisioned: a host that verifies
+ * makes no install call. Per-pin outcomes are notes; one pin's failure never skips the other and the
+ * function never throws.
+ */
+export async function ensurePinnedEdits(host: string, options: { timeoutMs?: number } = {}): Promise<{ ok: boolean; notes: string[] }> {
+  const pins: [string, string][] = [
+    ['codex-edit', codexEditHostPrefix(readHost(host))],
+    ['hashline-edit', hashlineEditHostPrefix(readHost(host))],
+  ];
+  const notes: string[] = [];
+  let ok = true;
+  for (const [name, prefix] of pins) {
+    try {
+      const verdict = await checkPinnedEditOnHost(host, name, prefix, options);
+      if (verdict.ok) { notes.push(`${name}: verified`); continue; }
+      const result = await provisionPinnedEdit(host, name, prefix, options);
+      const failed = result.steps[result.steps.length - 1];
+      if (result.ok) notes.push(`${name}: re-provisioned`);
+      else { ok = false; notes.push(`${name}: ensure failed: ${failed?.tail ?? 'no output'}`); }
+    } catch (error) {
+      ok = false;
+      notes.push(`${name}: ${(error as Error).message}`);
+    }
+  }
+  return { ok, notes };
 }
 
 // Seed gates sync internally and streams the slot marker through stderr.
@@ -362,7 +451,7 @@ function runCodegraphOnHost(host: string, dir: string, repo: string, bash: strin
 }
 
 /** `notes` is everything the seat should know about its checkout; seats store it as remoteProvisionNotes. */
-export async function provisionRemote(host: string, dir: string, options: { readOnly?: boolean; timeoutMs?: number; codexEdit?: boolean; hashlineEdit?: boolean; role?: string } = {}): Promise<{ ok: boolean; steps: ProvisionStep[]; notes: string[]; codexEditExtension?: string; hashlineEditExtension?: string }> {
+export async function provisionRemote(host: string, dir: string, options: { readOnly?: boolean; timeoutMs?: number; codexEdit?: boolean; hashlineEdit?: boolean; role?: string; codegraphInit?: boolean } = {}): Promise<{ ok: boolean; steps: ProvisionStep[]; notes: string[]; codexEditExtension?: string; hashlineEditExtension?: string }> {
   const { readOnly = false, codexEdit = false, hashlineEdit = false, timeoutMs = 20 * 60_000, role } = options;
   const { platform, repo } = readHost(host);
   const bash = await hostBash(host, platform, dir);
@@ -379,7 +468,7 @@ export async function provisionRemote(host: string, dir: string, options: { read
     : runOnHost(host, bash, ['-c', line], dir, env, ms);
   const steps: ProvisionStep[] = [];
   const notes: string[] = [];
-  for (const { line, skip } of remoteSetup(readOnly ? own : setup, hostRtkLine, readOnly)) {
+  for (const { line, skip } of remoteSetup(readOnly ? own : setup, hostRtkLine, readOnly, options.codegraphInit)) {
     const command = `[${source} ${CONFIG} on ${host}] ${line}`;
     if (skip) {
       steps.push({ command, code: 0, ms: 0, tail: skip });
@@ -396,7 +485,8 @@ export async function provisionRemote(host: string, dir: string, options: { read
     steps.push({ command, code: run.code, ms: run.ms, tail: run.output.slice(-1500) });
     if (run.code !== 0) return { ok: false, steps, notes };
     if (line.includes('codegraph init')) {
-      const status = await runOnHost(host, bash, ['-c', 'codegraph status --json .'], dir, env, 60_000);
+      // Read-only index status: a repeat reads the same database.
+      const status = await runRepeatableOnHost(() => runOnHost(host, bash, ['-c', 'codegraph status --json .'], dir, env, 60_000));
       const note = codegraphIndexNote({ code: status.code, output: status.output }, dir);
       steps.push({ command: `[${host}] codegraph status --json .`, code: status.code, ms: status.ms, tail: note ?? 'codegraph index verified' });
       if (note) notes.push(note);
@@ -406,7 +496,8 @@ export async function provisionRemote(host: string, dir: string, options: { read
   // CodeGraph's installed npm shim on the host before writing the seat config;
   // spawning a bare `codegraph` would fail inside the role gate on Windows.
   const probe = `${CODEGRAPH_INVOCATION}process.stdout.write(JSON.stringify(invocation));`;
-  const detected = await runOnHost(host, 'node', ['-e', probe], dir, {}, timeoutMs);
+  // Read-only probe: resolves the installed codegraph invocation and prints it as JSON.
+  const detected = await runRepeatableOnHost(() => runOnHost(host, 'node', ['-e', probe], dir, {}, timeoutMs));
   steps.push({ command: `resolve host codegraph for seat MCP on ${host}`, code: detected.code, ms: detected.ms, tail: detected.output.slice(-1500) });
   if (detected.code !== 0) return { ok: false, steps, notes };
   // The installed Pi profile belongs to the host operator. Provision only this
@@ -420,9 +511,10 @@ export async function provisionRemote(host: string, dir: string, options: { read
         const base='ops/mcp-vendor/',marker=base+'node_modules/.orch-lock-sha256';
         const server=base+'node_modules/@brightdata/mcp/server.js';
         const hash=crypto.createHash('sha256').update(fs.readFileSync(base+'package-lock.json')).digest('hex');`;
-      const inspect = await runOnHost(host, 'node', ['-e', `${state}
+      // Read-only inspection: hashes the lock and prints the marker verdict as JSON.
+      const inspect = await runRepeatableOnHost(() => runOnHost(host, 'node', ['-e', `${state}
         let saved;try{saved=fs.readFileSync(marker,'utf8').trim()}catch(e){if(e.code!=='ENOENT')throw e}
-        process.stdout.write(JSON.stringify({hash,ready:fs.existsSync(server)&&saved===hash}));`], repo, {}, timeoutMs);
+        process.stdout.write(JSON.stringify({hash,ready:fs.existsSync(server)&&saved===hash}));`], repo, {}, timeoutMs));
       steps.push({ command: `check host vendor MCP on ${host}`, code: inspect.code, ms: inspect.ms, tail: inspect.output.slice(-1500) });
       if (inspect.code !== 0) return false;
       const installed = JSON.parse(inspect.output) as { hash: string; ready: boolean };

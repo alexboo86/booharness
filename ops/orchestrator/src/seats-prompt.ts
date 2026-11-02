@@ -4,15 +4,16 @@ import type { SeatManager } from './seats.ts';
 import type { Family } from './providers/types.ts';
 import { isStandArm } from './stand.ts';
 import type { Seat, Turn, TurnPending } from './store.ts';
-import { accountingRole, appliesToModel, DEFAULT_TURN_BURN, paceReading, roleMatrix, type AccountingRole, type Load, type ProfileRole, type Reservation } from './profiles.ts';
+import { accountingRole, appliesToModel, DEFAULT_TURN_BURN, paceReading, roleMatrix, turnLimitMs, type AccountingRole, type Load, type ProfileRole, type Reservation } from './profiles.ts';
 import { tierOf, type QualityAnswer } from './role-quality.ts';
 import {
-  ROLE_POLICY, roleTurnLimit, turnLimitMs, landable, BRIEF_WORDS, WIDE_BRIEF_P, MAX_QUEUED_TURNS, FILES_ROLES, currentScope, normalizeFile, stringsOf, wordCount,
+  ROLE_POLICY, roleTurnLimit, landable, MAX_QUEUED_TURNS, FILES_ROLES, currentScope, normalizeFile, stringsOf, wordCount,
  } from './seats-defs.ts';
 import type { Choose, PromptOptions, SeatRole } from './seats-defs.ts';
 import { parseReport } from './report.ts';
 import { seatModel, tableMembers, tableContractOf } from './seats-scope.ts';
 import { memberLabel } from './table.ts';
+import { readInstallSetting } from './settings/index.ts';
 
   /** What pickFamily reads beside the loads: each working seat's reserved burn, each family's working coder count, A (task 2382): the wallet's seats in the role of this pick, and the quality tier of each cell of the role's matrix (task 2382 P3b). */
 export function pickInputs(self: SeatManager, choose: Choose, role: ProfileRole, model?: string, burnRole: AccountingRole = role): { loads: Load[]; reservations: Reservation[]; workingCoders: Map<Family, number>; workingSeats: Map<Family, number>; tiers: Map<Family, QualityAnswer> } {
@@ -97,14 +98,15 @@ export async function promptScoped(self: SeatManager, seatId: string, text: stri
       const scope = options.assessed !== undefined ? options.assessed : await self.assessScope(seatId, text, wideBrief);
       // role 'auto' with wide_brief: the create-time reading already scored wide; it is kept on the
       // turn, the bypass is recorded as usual, and no background reading is made (task 2955).
-      const injectedBypass = options.assessed?.status === 'scored' && options.assessed.score > WIDE_BRIEF_P && wideBrief !== undefined;
-      if (scope?.status === 'scored' && scope.score > WIDE_BRIEF_P && !injectedBypass) {
+      const injectedBypass = options.assessed?.status === 'scored' && wideBrief !== undefined;
+      const refuse = readInstallSetting(self.options.stateDir, 'jev.scope.refuse') as number;
+      if (scope?.status === 'scored' && scope.score > refuse && !injectedBypass) {
         const sha256 = createHash('sha256').update(text).digest('hex');
         self.options.log('info', 'seat.brief_refused', { seat: seatId, title: self.store.getSeat(seatId)!.title,
-          score: scope.score, threshold: WIDE_BRIEF_P, sha256, brief: text.slice(0, 300) });
-        // A refusal leaves no turn: the event log is the durable record the threshold is calibrated from (task 1943; 0.75 -> 0.85 by task 2817).
-        self.store.appendEvent('seat.brief_refused', { score: scope.score, threshold: WIDE_BRIEF_P, features: scope.features, model: scope.model ?? null, sha256 }, seatId);
-        throw new Error(`coder brief scope ${scope.score} above ${WIDE_BRIEF_P.toFixed(2)}: split the behaviors or new units across sequential seats, or pass wide_brief explaining why that cannot be done`);
+          score: scope.score, threshold: refuse, sha256, brief: text.slice(0, 300) });
+        // A refusal leaves no turn: preserve its auditable score (task 1943; decision #22398).
+        self.store.appendEvent('seat.brief_refused', { score: scope.score, threshold: refuse, features: scope.features, model: scope.model ?? null, sha256 }, seatId);
+        throw new Error(`coder brief scope ${scope.score} above ${refuse.toFixed(2)}: split the behaviors or new units across sequential seats, or pass wide_brief explaining why that cannot be done`);
       }
       const turn = self.prompt(seatId, text, timeoutMs, { ...options, scope: scope ?? undefined });
       if (scope?.status === 'bypassed') {
@@ -150,6 +152,17 @@ export async function promptScoped(self: SeatManager, seatId: string, text: stri
     return lines.join('\n');
   }
 
+  function checkDebaterIndependence(self: SeatManager, seat: Seat, other: Seat, named: string): void {
+    const independence = readInstallSetting(self.options.stateDir, 'logic.independence.debaterDebater');
+    if (independence === 'different-family' && seat.family === other.family) {
+      throw new Error(`rebut '${named}': ${seat.id} and ${other.id} must use different families`);
+    }
+    const model = seatModel(seat);
+    if (independence !== 'none' && model !== undefined && model === seatModel(other)) {
+      throw new Error(`rebut '${named}': ${seat.id} and ${other.id} both run ${model}; the two debaters of one fork never run the same model (operator #16088)`);
+    }
+  }
+
   /**
    * A debater's second turn requires rebut: another debater's done first turn with a parsed report.
    * Anything else is refused, and the message names the parameter. The appendix is outside the word count.
@@ -186,10 +199,7 @@ export async function promptScoped(self: SeatManager, seatId: string, text: stri
     const parsed = parseReport(turn.text, 'debater', [], { stored: true, table: tableContractOf(other) });
     if (!parsed.ok) throw new Error(`rebut '${named}' has no parsed report`);
     // Operator #16088: a fork is two models, so a rebuttal between two seats of one model is refused.
-    const model = seatModel(seat);
-    if (model !== undefined && model === seatModel(other)) {
-      throw new Error(`rebut '${named}': ${seat.id} and ${other.id} both run ${model}; the two debaters of one fork never run the same model (operator #16088)`);
-    }
+    checkDebaterIndependence(self, seat, other, named);
     return opponentReport(turn.id, parsed.report);
   }
 
@@ -206,8 +216,9 @@ export function prompt(self: SeatManager, seatId: string, text: string, timeoutM
     }
     const words = wordCount(text);
     const longBrief = typeof options.longBrief === 'string' ? options.longBrief.trim() : '';
-    if (words > BRIEF_WORDS && !longBrief) {
-      throw new Error(`the brief is ${words} words; the limit is ${BRIEF_WORDS}. Cut it to the task, owned files, evidence and acceptance and link larger artifacts, or pass long_brief with the reason it cannot be shorter`);
+    const briefWords = readInstallSetting(self.options.stateDir, 'jev.brief.words') as number;
+    if (words > briefWords && !longBrief) {
+      throw new Error(`the brief is ${words} words; the limit is ${briefWords}. Cut it to the task, owned files, evidence and acceptance and link larger artifacts, or pass long_brief with the reason it cannot be shorter`);
     }
     const files = options.files ?? [];
     if (!Array.isArray(files) || files.some((file) => typeof file !== 'string' || !file.trim() || path.isAbsolute(file))) {

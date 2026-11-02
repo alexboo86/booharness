@@ -6,6 +6,12 @@ import type { Family } from './providers/types.ts';
 import { accountingRoleSql, lenientMatrix, type ProfileRole } from './profiles.ts';
 import { landable } from './seats-defs.ts';
 import { quotaUnits, type QuotaParts } from './quota-rates.ts';
+export { acquireSweepGate, DAY, DROP_GRACE, directoryBelow, newestMtime, treeBytes, type SweepGate } from './sweep-shared.ts';
+export { readSeatTranscript, type SeatTranscript, type SeatTranscriptEntry, type SeatTranscriptOptions } from './seat-transcripts.ts';
+export { roleStats, type RoleStatsRow } from './role-stats.ts';
+export { tierOf, setManualTier, type CellRef, type Tier } from './role-quality.ts';
+export { qualityReviewStats, qualityProfileKey } from './pick-stats.ts';
+export { qualityRemovalCheck } from './profiles.ts';
 
 type Migration = { version: number; sql: string };
 
@@ -255,6 +261,13 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX lead_lesson_deliveries_lesson ON lead_lesson_deliveries(lesson_id);
     `,
   },
+  {
+    // Operator decisions 22275/22280: an addressed lead post wakes any holder, but class 'fyi'
+    // never does. The class was validated at input only, so the wake poll could not see it;
+    // persist it here. NULL is every pre-existing and non-fyi post.
+    version: 16,
+    sql: `ALTER TABLE chat_posts ADD COLUMN class TEXT CHECK (class IS NULL OR class = 'fyi');`,
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -302,6 +315,12 @@ export type Turn = {
   watch: TurnWatchRecord | null;
 };
 
+/** A turn's immutable repeat-validation list; missing legacy metadata means shape-only parsing. */
+export function turnRepeatLessons(turn: Pick<Turn, 'watch'>): string[] | undefined {
+  const ids = turn.watch?.repeatLessons;
+  return Array.isArray(ids) ? ids : undefined;
+}
+
 /** Jev's reading of a first coder brief; each feature is a probability, or null when its answer was missing or invalid. */
 export type ScopeFeatures = { difficulty: number | null; layer_ui: number | null; layer_rust: number | null; layer_orch: number | null; look: number | null; logic: number | null; defect: number | null; tests_only: number | null };
 
@@ -339,6 +358,8 @@ export type ReviewerShadow = { family: string | null; reason: string; domain: st
   ranking: ReviewerShadowRank[] };
 
 export type TurnWatchRecord = {
+  /** This turn's full author/coauthor lesson ids for repeat validation; absent on legacy turns. */
+  repeatLessons?: string[];
   /** continued: the seat's provider session went on; fresh: a new session, with why. Absent for a turn that never ran. */
   session?: { mode: 'continued' | 'fresh' | 'first'; reason: string | null; context: { tokens: number; window: number } | null; model?: string | null };
   /**
@@ -412,6 +433,8 @@ export type SeatQuery = { status: string; updatedSince?: string } | { notStatus:
 export type Store = {
   db: DatabaseSync;
   schemaVersion: () => number;
+  /** Unbound sessions directly succeeded on a chat handle at or after their last activity. */
+  supersededChatSessions: (leads: readonly { session: string; at: string | null }[]) => Set<string>;
   insertSeat: (seat: NewSeat) => Seat;
   getSeat: (id: string) => Seat | null;
   /** One seat by its stored `data.requestId`, first in the (created_at, id) order the unbounded
@@ -472,9 +495,47 @@ export type Store = {
   recordLeadLessonApplied: (session: string, lessonId: string, applied: boolean, why: string) => number;
   leadLessonDeliveries: (session: string) => LeadLessonDelivery[];
   appendEvent: (kind: string, payload?: Record<string, unknown>, seatId?: string | null) => void;
+  /** Observe every appended event row at its write point (append-only log, no re-reads). */
+  onEvent: (listener: (row: StoreEvent) => void) => () => void;
   eventCount: () => number;
   close: () => void;
 };
+
+/** One row of the append-only `events` table as an observer reads it (payload parsed once). */
+export type StoreEvent = { seq: number; ts: string; kind: string; seatId: string | null; payload: Record<string, unknown> };
+
+/** Notify in-process observers of one appended row; a listener fault may not break the write it observes. */
+function notifyEvent(listeners: ReadonlySet<(row: StoreEvent) => void>, row: StoreEvent): void {
+  for (const listener of listeners) {
+    try {
+      listener(row);
+    } catch {
+      // The observer's owner logs its own faults; this write still commits.
+    }
+  }
+}
+
+function supersededChatSessions(db: DatabaseSync, leads: Parameters<Store['supersededChatSessions']>[0]): Set<string> {
+  if (!leads.length) return new Set();
+  // A takeover ends the old row exactly when its next generation binds.
+  // An operator release inserts that next generation as a tombstone instead;
+  // a later join or a session moving between handles is not a takeover.
+  const rows = db.prepare(`
+    SELECT DISTINCT previous.session
+    FROM json_each(?) AS lead
+    JOIN chat_bindings AS previous ON previous.session = json_extract(lead.value, '$.session')
+    JOIN chat_bindings AS successor ON successor.handle = previous.handle
+      AND successor.generation = previous.generation + 1
+      AND successor.bound_at = previous.ended_at
+      AND successor.session != previous.session AND successor.session != 'operator'
+    WHERE julianday(previous.ended_at) >= julianday(json_extract(lead.value, '$.at'))
+      AND NOT EXISTS (
+        SELECT 1 FROM chat_bindings AS live
+        WHERE live.session = previous.session AND live.ended_at IS NULL
+      )
+  `).all(JSON.stringify(leads.map(({ session, at }) => ({ session, at })))) as { session: string }[];
+  return new Set(rows.map((row) => row.session));
+}
 
 export function transaction<T>(db: DatabaseSync, work: () => T): T {
   db.exec('BEGIN IMMEDIATE');
@@ -551,13 +612,18 @@ export function openStore(file: string): Store {
   db.exec('PRAGMA foreign_keys = ON');
   migrate(db);
 
+  // In-process observers of the append-only log (the /events push channel).
+  const eventListeners = new Set<(row: StoreEvent) => void>();
   const appendEventRaw = (kind: string, payload: Record<string, unknown> = {}, seatId: string | null = null) => {
-    db.prepare('INSERT INTO events (ts, kind, seat_id, payload) VALUES (?, ?, ?, ?)').run(
-      new Date().toISOString(),
+    const now = new Date().toISOString();
+    const { lastInsertRowid } = db.prepare('INSERT INTO events (ts, kind, seat_id, payload) VALUES (?, ?, ?, ?)').run(
+      now,
       kind,
       seatId,
       JSON.stringify(payload),
     );
+    const row: StoreEvent = { seq: Number(lastInsertRowid), ts: now, kind, seatId, payload };
+    notifyEvent(eventListeners, row);
   };
 
   return {
@@ -725,6 +791,7 @@ export function openStore(file: string): Store {
       const queued = (db.prepare("SELECT COUNT(*) AS n FROM turns JOIN seats ON seats.id = turns.seat_id WHERE turns.status = 'queued' AND seats.role NOT IN ('scout', 'critic')").get() as { n: number }).n;
       return { since: event.ts, running, queued };
     },
+    supersededChatSessions: (leads) => supersededChatSessions(db, leads),
     // Defect 2026-10-16: an unbounded read parses every seat's data JSON on the event loop, so the
     // board poll starved /health on ~15k seats. Hot callers pass a bound; every branch below is an
     // index range scan that never touches the closed history it does not need.
@@ -864,6 +931,10 @@ export function openStore(file: string): Store {
       (db.prepare('SELECT * FROM lead_lesson_deliveries WHERE session = ? ORDER BY mode, lesson_id').all(session) as Record<string, unknown>[])
         .map((row) => ({ ...(row as unknown as LeadLessonDelivery), applied: row.applied === null ? null : row.applied === 1 })),
     appendEvent: (kind, payload = {}, seatId = null) => transaction(db, () => appendEventRaw(kind, payload, seatId)),
+    onEvent: (listener) => {
+      eventListeners.add(listener);
+      return () => eventListeners.delete(listener);
+    },
     eventCount: () => (db.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n,
     close: () => db.close(),
   };

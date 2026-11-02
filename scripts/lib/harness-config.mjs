@@ -5,6 +5,8 @@ import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, r
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+export { CLASSES, STACKS, excludedSkillNames, listClass, listSkillDirs, mcpServerIds, skillProblems } from './skill-map.mjs';
+export { readHarnessSettings, readHarnessBoolean, readInstallSettings, settingsAuditLine } from './harness-settings.mjs';
 
 // Project policy is opt-in. In particular, no absent list grants new deletion
 // permissions; the sole default sweep path is Cargo's conventional target.
@@ -312,10 +314,20 @@ function validatePrefix(prefix) {
   }
 }
 
+// The reply-language rule has one owner (task 3459 C9): the checkout config's
+// lead.replyLanguage and the install settings document's lead.replyLanguage pass
+// the same pattern, exported for the settings registry's string pattern check.
+export const REPLY_LANGUAGE_PATTERN = '^(?=.*\\p{L})[\\p{L} -]{2,40}$';
+
+export function replyLanguageRefusal(value) {
+  return new RegExp(REPLY_LANGUAGE_PATTERN, 'u').test(value)
+    ? ''
+    : 'must be a language name of letters, spaces and hyphens, 2 to 40 characters';
+}
+
 function validateReplyLanguage(value, file) {
-  if (!/^[\p{L} -]{2,40}$/u.test(value) || !/\p{L}/u.test(value)) {
-    throw new Error(`Harness config ${file}: lead.replyLanguage must be a language name of letters, spaces and hyphens, 2 to 40 characters`);
-  }
+  const reason = replyLanguageRefusal(value);
+  if (reason) throw new Error(`Harness config ${file}: lead.replyLanguage ${reason}`);
 }
 
 function validateUserTextFile(value, file) {

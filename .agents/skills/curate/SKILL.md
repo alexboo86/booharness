@@ -16,12 +16,16 @@ every promotion or supersede requires human/lead judgment per item.
 
 ## Inputs (read first)
 1. `memoryctl status` and `memoryctl hot` — prove the standalone service is healthy.
-2. Inbox: `memoryctl search "inbox" --kind lesson --limit 100`; captured lessons
-   come only from `capture-lesson.mjs`.
+2. Legacy inbox: `memoryctl search "inbox" --kind lesson --limit 100` — only older lessons carry
+   `status=inbox`; new captures go through `capture-lesson.mjs` and land `status=active` at once
+   (decision #12333).
 3. Sweep: `node scripts/memory/sweep-anchors.mjs` — anchor health (keep/drift/gone) and writes the
    `anchor-sweep-latest` report entry.
-4. Budget: **the sum of active lesson BODIES anchored at one FILE, ≤ 24 576 B** — the budget the
-   memory-routing suite enforces (agents may run it again, #14235).
+4. Budget: the delivery ceiling is **48 × 1024 B of wire (envelope) bytes per FILE** — the ceiling
+   `check-domain-routing.mjs` gates: `deliveredLessonBytes` builds the same JSON envelope the store
+   sends, compared against `LESSON_PAYLOAD_BUDGET_PER_FILE` (agents may run it again, #14235).
+   The consolidate `scan.mjs` default `--anchor-budget 24576` is a separate, earlier BODY warning
+   threshold (the raw sum of lesson bodies), not the service ceiling.
    That is the only lesson budget there is. A per-DOMAIN count
    guard existed until 2026-08-11 and was removed: a domain has not entered any context as a unit
    since delivery went per-file, and the count was blocking promotion of 77 captured lessons to
@@ -59,12 +63,13 @@ every promotion or supersede requires human/lead judgment per item.
      it (or put it back) at `status: inbox`; it is not rot and retiring it throws away knowledge that
      becomes deliverable the day the branch lands.
    NEVER silent-drop knowledge.
-3. **Promote captured lessons**: `node scripts/memory/promote-lesson.mjs <domain>|--all` —
+3. **Promote legacy inbox lessons**: `node scripts/memory/promote-lesson.mjs <domain>|--all` —
    supersedes inbox→active with `{domain,anchor,title}`+content_hash dedup. Contradiction with an
    existing active lesson → surface to operator, don't pick silently.
-4. **Budget squeeze** (domain >30 active): merge overlapping lessons (one supersede carrying the
+4. **Budget squeeze** (one file's delivery over the 48 × 1024 B envelope ceiling):
+   merge overlapping lessons (one supersede carrying the
    merged body, others superseded with `MERGED-INTO: <id>`), retire historical-incident ones.
-5. **Hygiene while touching entries**: titles ≤500 chars (short rule-style), structured lesson links
+5. **Hygiene while touching entries**: lesson titles ≤120 code points unless `--long` explains the excess; use short rule-style titles and structured lesson links
    `{domain, anchor, globs, status}`, evidence lines honest (observed-once ≠ operator-confirmed).
 6. **Verify (evidence, not assertions)**: re-run sweep → expect `drift=0 gone=0`; inbox count of
    unresolved items → report; spot-check delivery with `memoryctl lessons --path <a touched anchor>`;

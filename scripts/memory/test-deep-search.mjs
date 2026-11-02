@@ -8,7 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parsePicked, rerankPrompt } from './deep-search.mjs';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'deep-search.mjs');
@@ -111,7 +111,7 @@ function fakeJev(t, response) {
     };
   `);
   return { capture, env: {
-    NODE_OPTIONS: `--import=${preload}`, TYPESAFE_API_KEY: 'test-key',
+    NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, TYPESAFE_API_KEY: 'test-key',
     JEV_STATE_DIR: path.join(dir, 'ledger'), DEEP_SEARCH_MODEL_CMD: '',
   } };
 }

@@ -8,11 +8,13 @@ import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { MAX_FINDINGS } from './report.ts';
+import { readAdvisoryInstallSettings, WARN_BRIEF_P, WIDE_BRIEF_P } from './settings/index.ts';
+import { loadConfig } from './config.ts';
 import type { Logger } from './log.ts';
 import type { Access, Family, Harness, ProviderAdapter, Usage } from './providers/types.ts';
 import type { ContextInput } from './context.ts';
 import type { Grade, Sibling, SiblingGrade } from './grading.ts';
-import type { Seat, TurnEnd, TurnWatchRecord, ScopeFeatures } from './store.ts';
+import type { Seat, Turn, TurnEnd, TurnWatchRecord, ScopeFeatures } from './store.ts';
 import type { Ask } from './watch.ts';
 import type { AccountingRole, Load } from './profiles.ts';
 import type { Target, LoadProbe } from './placement.ts';
@@ -54,19 +56,19 @@ export function roleHint(files: readonly string[], scope: ScopeFeatures | null):
   const hints: RoleHint[] = [];
   if ((files.length && files.every((file) => pathInWriteScope(file, TESTER_WRITE_SCOPE))) ||
       (scope !== null && scope.tests_only !== null && scope.tests_only >= 0.7)) {
-    hints.push({ kind: 'tester', text: 'tester fits: every file is a test, fixture or capture (orch-team: Which role)' });
+    hints.push({ kind: 'tester', text: 'tester fits: every file is a test, fixture or capture (orch: Which role)' });
   }
   if (scope !== null && scope.defect !== null && scope.defect >= 0.7) {
-    hints.push({ kind: 'test0', text: 'a reported defect: a tester writes the red test first (Test 0), then the fix coder gets it (orch-team: Which role)' });
+    hints.push({ kind: 'test0', text: 'a reported defect: a tester writes the red test first (Test 0), then the fix coder gets it (orch: Which role)' });
   }
   if (scope !== null && scope.look !== null && scope.look >= 0.7 &&
       files.some((file) => pathInWriteScope(file, DESIGNER_WRITE_SCOPE) && !pathInWriteScope(file, TESTER_WRITE_SCOPE))) {
     hints.push({ kind: 'designer', text: scope.logic !== null && scope.logic >= 0.5
-      ? 'this brief has a look part and a logic part: add a designer seat for the look (colours, layout, defaults, the .tsx/.css form); keep this coder for the logic and .ts renderer code; one task, two seats (orch-team: Which role)'
-      : 'this brief is mainly how a surface looks (desktop terminal UI included): a designer seat fits instead of this coder (orch-team: Which role)' });
+      ? 'this brief has a look part and a logic part: add a designer seat for the look (colours, layout, defaults, the .tsx/.css form); keep this coder for the logic and .ts renderer code; one task, two seats (orch: Which role)'
+      : 'this brief is mainly how a surface looks (desktop terminal UI included): a designer seat fits instead of this coder (orch: Which role)' });
   }
   if (files.some((file) => pathInWriteScope(file, ['src/locales/**']))) {
-    hints.push({ kind: 'copywriter', text: 'user-facing text goes to a copywriter seat (orch-team: Which role)' });
+    hints.push({ kind: 'copywriter', text: 'user-facing text goes to a copywriter seat (orch: Which role)' });
   }
   return hints;
 }
@@ -77,7 +79,7 @@ export type AutoRolePick = { role: 'tester' | 'coder'; rule: 'files' | 'tests_on
 /** The orch-composed line a defect brief gains when the auto pick is a tester (task 2955); appended after the word count, like a rebuttal appendix. */
 export const AUTO_ROLE_TEST0 = 'Your part: Test 0 — a red test on the target commit that reproduces the defect; do not fix it';
 /** The refusal when role 'auto' cannot get a Jev reading (task 2955). */
-export const AUTO_ROLE_UNJUDGED = 'Jev unavailable: pick the role yourself (orch-team: Which role)';
+export const AUTO_ROLE_UNJUDGED = 'Jev unavailable: pick the role yourself (orch: Which role)';
 
 /**
  * The tester-or-coder pick of role 'auto' (task 2955). Pure: rule 1 (every file a test, fixture or
@@ -115,29 +117,15 @@ export function roleTurnLimit(role: SeatRole): number {
   return 'turns' in policy ? policy.turns : 1;
 }
 
-/**
- * A turn's limit when the lead names none. A glm coder at effort max gets 60 minutes (operator
- * 2026-10-28, task 3279): at 30 it timed out in 22 of 84 scored turns. Every other seat keeps `fallback`.
- */
-export function turnLimitMs(seat: Pick<Seat, 'role' | 'family' | 'data'>, fallback: number): number {
-  return seat.role === 'coder' && seat.family === 'glm' && seat.data.effort === 'max' ? 60 * 60_000 : fallback;
-}
+export { pathInWriteScope } from './shared.entry.ts';
+import { pathInWriteScope, extraWriteScope, type ExtraWriteScope } from './shared.entry.ts';
 
-/** The role's write-scope globs, or unrestricted when the policy has no list. */
-export function writeScopeOf(role: string): readonly string[] | undefined {
+/** Role scope plus the validated lead addition; roles without a list stay unrestricted. */
+export function writeScopeOf(role: string, extra?: unknown): readonly string[] | undefined {
   if (!(role in ROLE_POLICY)) return undefined;
   const policy = ROLE_POLICY[role as SeatRole];
-  return 'writeScope' in policy ? policy.writeScope : undefined;
-}
-
-/** A repo-relative path is inside a write-scope list. Absolute paths and `..` are outside. */
-export function pathInWriteScope(file: string, scope: readonly string[]): boolean {
-  if (!file || file.includes('\0')) return false;
-  const slashed = file.replaceAll('\\', '/');
-  if (path.posix.isAbsolute(slashed) || path.win32.isAbsolute(file) || slashed.split('/').includes('..')) return false;
-  const safe = path.posix.normalize(slashed);
-  if (!safe || safe === '.' || safe.startsWith('../') || path.posix.isAbsolute(safe)) return false;
-  return scope.some((pattern) => path.posix.matchesGlob(safe, pattern));
+  const addition = extraWriteScope(extra, 'writeScope' in policy);
+  return 'writeScope' in policy ? [...policy.writeScope, ...(addition?.globs ?? [])] : undefined;
 }
 
 export type CreateSeat = {
@@ -182,6 +170,8 @@ export type CreateSeat = {
   request_id?: string;
   /** True when this seat must read images (task 2385). Omitted is false unless a role default skill requires input:image. The effective value is what is stored. */
   images?: boolean;
+  /** Lead-declared extra paths for a restricted specialist role; validated before creation. */
+  writeScope?: ExtraWriteScope;
   /** scout only: a plan critic — the scout lifecycle on the reviewer matrix's family pool, model and effort, never a named plan author's family; claude alone may share the lead's family (#13286, #13875). */
   critic?: boolean;
   /** debater round table (operator #19423): the 2-4 option strings every open sibling of the title must carry identically; each at most 60 characters. */
@@ -299,6 +289,7 @@ export type SeatData = {
   tablePosted?: boolean;
   /** Lead override that landed paths outside the role write scope (task 2802). */
   writeScopeOverride?: { reason: string; at: string; paths: string[] };
+  writeScope?: ExtraWriteScope;
 };
 
 /** Whether recovery recorded the host checkout as gone (task 2774); only an `{ at: string }` record counts. */
@@ -414,6 +405,8 @@ export type Choose = {
   leadFamilies?: Family[];
   /** The creating lead's own family when seat_create's `session` resolved to an active lead; stored on the seat so orch's own recheck reviewer steps aside from the task's lead. */
   leadFamily?: Family | null;
+  /** Creating hook session, distinct from the seat's provider session. */
+  leadSession?: string;
   /** Said in `picked` when the step-aside fell back to every active lead family. */
   leadAsideNote?: string;
   estimate?: (load: Load, role: AccountingRole, model?: string, window?: string) => Load['estimate'];
@@ -463,8 +456,21 @@ export const SCOPE_FEATURES: Record<keyof ScopeFeatures, string> = {
  * The lead's brief is short, at most 300 words (operator 2026-09-25, was 200):
  * the task, owned files, evidence and acceptance, with larger artifacts linked.
  */
-export const BRIEF_WORDS = 300;
-export const WIDE_BRIEF_P = 0.85;
+export { BRIEF_WORDS, WIDE_BRIEF_P, WARN_BRIEF_P } from './settings/index.ts';
+/** Non-blocking scope advice, shared by tool replies and persisted-turn digests. */
+export function scopeWarnings(turn: Pick<Turn, 'id' | 'watch'>, seatData: Record<string, unknown>, stateDir = loadConfig().stateDir): string[] {
+  const scope = turn.watch?.scope;
+  const flags: string[] = [];
+  const settings = readAdvisoryInstallSettings(stateDir, { 'jev.scope.warn': WARN_BRIEF_P, 'jev.scope.refuse': WIDE_BRIEF_P }, flags);
+  const warn = settings['jev.scope.warn'] as number;
+  const refuse = settings['jev.scope.refuse'] as number;
+  // A wide_brief on this turn already said why the work cannot be split: no split advice (role 'auto' keeps a scored reading).
+  if ((seatData.wideBrief as { turn?: unknown } | undefined)?.turn === turn.id) return flags;
+  if (scope?.status === 'scored' && scope.score !== undefined && scope.score > warn && scope.score <= refuse) {
+    flags.push(`coder brief scope ${scope.score} above warning threshold ${warn.toFixed(2)} (refusal threshold ${refuse.toFixed(2)}): split the behaviors or new units across sequential seats`);
+  }
+  return flags;
+}
 export const SCOPE_JEV_CHARS = 6000;
 /** Bound pending work on one seat; a running turn does not count. */
 export const MAX_QUEUED_TURNS = 5;

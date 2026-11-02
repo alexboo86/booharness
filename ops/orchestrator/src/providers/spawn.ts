@@ -6,15 +6,18 @@
 // the shim is read and its target is run directly: a script under this Node, or
 // the native .exe some packages (opencode) point their shim at.
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import { PassThrough, type Readable, type Writable } from 'node:stream';
 import { existsSync, readFileSync } from 'node:fs';
 import { cpus, homedir } from 'node:os';
 import path from 'node:path';
-import { RTK_DB_PATH, readHost, stateDirFor, type RemoteHost } from '../config.ts';
+import { hostTransport, RTK_DB_PATH, readHost, stateDirFor, type RemoteHost } from '../config.ts';
 import { buildGateScript, gateEnv, writeBuildShims } from '../build-gate.ts';
 import { span } from '../shared.entry.ts';
 import { quoteShellPath } from '../role-policy.ts';
+import { spawnSsh } from './ssh-start-gate.ts';
 export { quoteShellPath } from '../role-policy.ts';
+export { SSH_START_BOUND_MS, SSH_START_LIMIT, spawnSsh } from './ssh-start-gate.ts';
 
 export type Command = { file: string; args: string[] };
 
@@ -201,55 +204,244 @@ export function refuseHostSsh(target: string): void {
   }
 }
 
+// ---- the remote-command facade: one remote command over ssh or the paired host agent ----
+
+/** The named failures of a remote command over the agent link (PROTOCOL.md v1). Never a silent ssh fallback. */
+export type AgentCommandErrorCode = 'not connected' | 'version too old' | 'revoked' | 'denied' | 'no-runtime' | 'stream reset' | 'state unreadable';
+
+export class AgentCommandError extends Error {
+  readonly code: AgentCommandErrorCode;
+  constructor(code: AgentCommandErrorCode, message: string) {
+    super(message);
+    this.name = 'AgentCommandError';
+    this.code = code;
+  }
+}
+
+/** The exec header one remote command becomes on the agent link (PROTOCOL.md v1). */
+export type AgentExecHeader = { kind: 'seat' | 'bootstrap'; cwd: string; command: string; args: string[]; env: Record<string, string> };
+export type AgentExecResult = { code: number | null; signal: string | null; pid: number };
+
+/** The live agent link of one paired agent: one exec stream per command, plus revocation. */
+export type AgentLink = {
+  /** The protocol version the link speaks; a command needs the exec-capable v1. */
+  protocolVersion: number;
+  exec(header: AgentExecHeader, io: { stdin?: Readable; stdout: Writable; stderr: Writable }, options?: { signal?: AbortSignal }): Promise<AgentExecResult>;
+  revoke?: () => void;
+};
+
+const agentLinks = new Map<string, AgentLink | 'revoked'>();
+let agentLinkStatus: ((agentId: string) => 'active' | 'revoked' | undefined) | undefined;
+
+/** Register the live link of a paired agent; null unregisters, 'revoked' tombstones the identity. */
+export function setAgentLink(agentId: string, link: AgentLink | 'revoked' | null): void {
+  if (link === null) agentLinks.delete(agentId);
+  else agentLinks.set(agentId, link);
+}
+
+/** Drop the agent's live link and refuse its further commands as revoked. */
+export function revokeAgentLink(agentId: string): void {
+  const link = agentLinks.get(agentId);
+  agentLinks.set(agentId, 'revoked');
+  if (link !== undefined && link !== 'revoked') link.revoke?.();
+}
+
+/** The durable half of revocation (the link state file) answers through this hook. */
+export function setAgentLinkStatus(status: (agentId: string) => 'active' | 'revoked' | undefined): void {
+  agentLinkStatus = status;
+}
+
+/** The link a host entry names, or a named refusal: revoked, version too old, not connected. */
+/** The link a host entry names, or a named refusal: revoked, version too old, not connected. */
+function agentLinkFor(entry: RemoteHost): { agentId: string; link: AgentLink } {
+  const agentId = entry.agent;
+  if (agentId === undefined) throw new AgentCommandError('not connected', `host '${entry.ssh}' has no paired agent link`);
+  const link = agentLinks.get(agentId);
+  if (link === 'revoked') {
+    throw new AgentCommandError('revoked', `host '${entry.ssh}' agent '${agentId}' is revoked; pair again before any further command`);
+  }
+  if (link === undefined) {
+    if (agentLinkStatus?.(agentId) === 'revoked') {
+      throw new AgentCommandError('revoked', `host '${entry.ssh}' agent '${agentId}' is revoked; pair again before any further command`);
+    }
+    throw new AgentCommandError('not connected', `host '${entry.ssh}' agent '${agentId}' is not connected`);
+  }
+  if (link.protocolVersion < 1) {
+    throw new AgentCommandError('version too old', `host '${entry.ssh}' agent '${agentId}' link protocol ${link.protocolVersion} is older than the required 1`);
+  }
+  return { agentId, link };
+}
+
+/** A remote argv word for the ssh bootstrap shape: quoted only when the remote shell could re-read it. */
+function shellWord(value: string, platform: NodeJS.Platform): string {
+  const safe = platform === 'win32' ? /^[A-Za-z0-9_.\-:@/+~=\\]+$/ : /^[A-Za-z0-9_.\-:@/+~=]+$/;
+  return safe.test(value) ? value : quoteShellPath(value, platform);
+}
+
+export type HostCommand = {
+  entry: RemoteHost;
+  /** 'seat' runs through the checkout's remote-exec relay; 'bootstrap' is a self-contained direct command. */
+  kind: 'seat' | 'bootstrap';
+  command: string;
+  args: string[];
+  /** The remote working directory (the agent exec header's cwd); over ssh the login dir stays as today. */
+  cwd: string;
+  /** The remote environment (already merged); over ssh bootstrap the login environment stays as today. */
+  env?: Record<string, string>;
+  forward?: string;
+  forwardTimeoutMs?: number;
+  ownGroup?: boolean;
+  stdin?: 'pipe' | 'ignore';
+};
+
+/** One remote command: managed ssh or the paired agent exec stream, chosen by the host entry's transport. */
+export function spawnHost(spec: HostCommand): ChildProcessWithoutNullStreams {
+  if (hostTransport(spec.entry) === 'agent') return spawnHostAgent(spec);
+  return spec.kind === 'seat' ? spawnHostSeatSsh(spec) : spawnHostBootstrapSsh(spec);
+}
+
+function spawnHostSeatSsh(spec: HostCommand): ChildProcessWithoutNullStreams {
+  const remoteHost = spec.entry;
+  refuseHostSsh(remoteHost.ssh);
+  const forwardPort = spec.forward === undefined ? undefined : loopbackPort(spec.forward);
+  const child = spawnSsh(remoteHost.ssh, sshArgs(remoteHost, forwardPort), {
+    stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...ownGroup(spec.ownGroup === true),
+  });
+  const env = spec.env ?? {};
+  const header = (env: Record<string, string>) => JSON.stringify({ cwd: spec.cwd, env, command: spec.command, args: spec.args }) + '\n';
+  if (forwardPort === undefined) {
+    // ssh can die before this write lands (unreachable host, refused key): its stdin pipe is gone,
+    // and an unheard EPIPE would crash orch before any caller can attach its own listener. The
+    // child's exit already reports the dead pipe; later caller writes still reach their own stdin errors.
+    child.stdin.on('error', () => {});
+    child.stdin.write(header(env));
+    return child;
+  }
+  // The header carries the host port, known only once sshd allocates it: the caller's stdin
+  // writes are held until the header has gone out first.
+  const stdin = child.stdin;
+  const held = new PassThrough();
+  // The caller listens on the swapped stream only: a dead ssh pipe (EPIPE) must reach it there,
+  // as it would on the plain path, not crash orch as an unheard 'error' on the original.
+  stdin.on('error', (error) => held.destroy(error));
+  let seen = '';
+  const onStderr = (chunk: Buffer | string) => {
+    seen = (seen + chunk.toString()).slice(-8192);
+    const port = allocatedPort(seen, forwardPort);
+    if (port === null) return;
+    clearTimeout(deadline);
+    child.stderr.off('data', onStderr);
+    stdin.write(header(forwardEnv(env, spec.forward!, port)));
+    held.pipe(stdin);
+  };
+  const timeoutMs = spec.forwardTimeoutMs ?? FORWARD_ALLOCATION_MS;
+  const deadline = setTimeout(() => {
+    child.stderr.off('data', onStderr);
+    child.emit('error', new Error(`ssh forward to 127.0.0.1:${forwardPort} did not report an allocated port within ${timeoutMs} ms`));
+    child.kill();
+  }, timeoutMs);
+  deadline.unref();
+  child.stderr.on('data', onStderr);
+  child.once('exit', () => {
+    clearTimeout(deadline);
+    held.unpipe(stdin);
+    held.destroy();
+  });
+  Object.defineProperty(child, 'stdin', { value: held, configurable: true });
+  return child;
+}
+
+function spawnHostBootstrapSsh(spec: HostCommand): ChildProcessWithoutNullStreams {
+  refuseHostSsh(spec.entry.ssh);
+  // ssh joins the remote argv into one shell command; quote only the words the shell could re-read.
+  const words = [spec.command, ...spec.args].map((word) => shellWord(word, spec.entry.platform));
+  return spawnSsh(spec.entry.ssh, ['-T', '-o', 'BatchMode=yes', '-o', 'SendEnv=-*', spec.entry.ssh, ...words], {
+    stdio: [spec.stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsHide: true, ...ownGroup(spec.ownGroup === true),
+  });
+}
+
+function spawnHostAgent(spec: HostCommand): ChildProcessWithoutNullStreams {
+  const { agentId, link } = agentLinkFor(spec.entry);
+  if (spec.forward !== undefined) {
+    throw new Error(`host '${spec.entry.ssh}': a forwarded seat over the agent link is not available in this slice; no silent ssh fallback`);
+  }
+  return new AgentExecChild(agentId, link, {
+    kind: spec.kind, cwd: spec.cwd, command: spec.command, args: spec.args, env: spec.env ?? {},
+  }, spec.stdin !== 'ignore') as unknown as ChildProcessWithoutNullStreams;
+}
+
+/** Map an exec rejection to its named failure: revoked after a revoke, a dead link, an unreadable link state file by name, else a reset stream. */
+function namedExecFailure(agentId: string, error: unknown): AgentCommandError {
+  if (error instanceof AgentCommandError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (agentLinks.get(agentId) === 'revoked') return new AgentCommandError('revoked', `agent '${agentId}' was revoked while the command ran: ${message}`);
+  if (/not connected|session is not ready/.test(message)) return new AgentCommandError('not connected', message);
+  if (/agent link state file is unreadable/.test(message)) return new AgentCommandError('state unreadable', message);
+  return new AgentCommandError('stream reset', `agent command failed: ${message}`);
+}
+
+/**
+ * One remote command over the agent exec stream as a ChildProcess: the same stdin/stdout/stderr,
+ * exit code, signal and kill-tree semantics as the ssh launcher (kill aborts the stream, which the
+ * agent answers by killing the whole command tree). No resume: a broken link fails the command at
+ * once, as ssh does. `pid` stays undefined: the remote pid is never a local process to signal.
+ */
+class AgentExecChild extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly pid = undefined;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  private killed: NodeJS.Signals | null = null;
+  private readonly controller = new AbortController();
+  private readonly done: Promise<void>;
+
+  constructor(agentId: string, link: AgentLink, header: AgentExecHeader, keepStdin: boolean) {
+    super();
+    this.done = link.exec(
+      header,
+      { stdin: keepStdin ? this.stdin : undefined, stdout: this.stdout, stderr: this.stderr },
+      { signal: this.controller.signal },
+    ).then((result) => {
+      this.exitCode = result.code;
+      this.signalCode = (result.signal ?? null) as NodeJS.Signals | null;
+      this.finish();
+    }, (error: unknown) => {
+      if (this.killed !== null) {
+        this.signalCode = this.killed;
+        this.finish();
+        return;
+      }
+      this.stdout.end();
+      this.stderr.end();
+      this.emit('error', namedExecFailure(agentId, error));
+      this.emit('close', null, null);
+    });
+  }
+
+  kill(signal?: NodeJS.Signals): boolean {
+    if (this.killed === null) {
+      this.killed = signal ?? 'SIGTERM';
+      this.controller.abort();
+    }
+    return true;
+  }
+
+  private finish(): void {
+    this.stdout.end();
+    this.stderr.end();
+    this.emit('exit', this.exitCode, this.signalCode);
+    this.emit('close', this.exitCode, this.signalCode);
+  }
+}
+
 export function spawnProvider(spec: SpawnSpec): ChildProcessWithoutNullStreams {
   if (spec.host) {
-    const remoteHost = readHost(spec.host);
-    refuseHostSsh(remoteHost.ssh);
-    const forwardPort = spec.forward === undefined ? undefined : loopbackPort(spec.forward);
-    const child = spawn('ssh', sshArgs(remoteHost, forwardPort), {
-      stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...ownGroup(spec.ownGroup === true),
+    return spawnHost({
+      entry: readHost(spec.host), kind: 'seat', command: spec.command, args: spec.args, cwd: spec.cwd,
+      env: remoteEnv(spec.env), forward: spec.forward, forwardTimeoutMs: spec.forwardTimeoutMs, ownGroup: spec.ownGroup === true,
     });
-    const header = (env: Record<string, string>) => JSON.stringify({ cwd: spec.cwd, env, command: spec.command, args: spec.args }) + '\n';
-    if (forwardPort === undefined) {
-      // ssh can die before this write lands (unreachable host, refused key): its stdin pipe is gone,
-      // and an unheard EPIPE would crash orch before any caller can attach its own listener. The
-      // child's exit already reports the dead pipe; later caller writes still reach their own stdin errors.
-      child.stdin.on('error', () => {});
-      child.stdin.write(header(remoteEnv(spec.env)));
-      return child;
-    }
-    // The header carries the host port, known only once sshd allocates it: the caller's stdin
-    // writes are held until the header has gone out first.
-    const stdin = child.stdin;
-    const held = new PassThrough();
-    // The caller listens on the swapped stream only: a dead ssh pipe (EPIPE) must reach it there,
-    // as it would on the plain path, not crash orch as an unheard 'error' on the original.
-    stdin.on('error', (error) => held.destroy(error));
-    let seen = '';
-    const onStderr = (chunk: Buffer | string) => {
-      seen = (seen + chunk.toString()).slice(-8192);
-      const port = allocatedPort(seen, forwardPort);
-      if (port === null) return;
-      clearTimeout(deadline);
-      child.stderr.off('data', onStderr);
-      stdin.write(header(forwardEnv(remoteEnv(spec.env), spec.forward!, port)));
-      held.pipe(stdin);
-    };
-    const timeoutMs = spec.forwardTimeoutMs ?? FORWARD_ALLOCATION_MS;
-    const deadline = setTimeout(() => {
-      child.stderr.off('data', onStderr);
-      child.emit('error', new Error(`ssh forward to 127.0.0.1:${forwardPort} did not report an allocated port within ${timeoutMs} ms`));
-      child.kill();
-    }, timeoutMs);
-    deadline.unref();
-    child.stderr.on('data', onStderr);
-    child.once('exit', () => {
-      clearTimeout(deadline);
-      held.unpipe(stdin);
-      held.destroy();
-    });
-    Object.defineProperty(child, 'stdin', { value: held, configurable: true });
-    return child;
   }
   const env = providerEnv(process.env, spec.env, spec.unset);
   const resolved = resolveCommand(spec.command, env);

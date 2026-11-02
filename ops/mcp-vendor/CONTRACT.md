@@ -26,6 +26,8 @@ with `npm ci --prefix ops/mcp-vendor`; the kit builder ships this package.
 | `@brightdata/mcp` | Pins version `2.11.1`; bootstrap launches its installed server by absolute path. |
 | `@sinco-lab/mcp-youtube-transcript` | Pins version `0.0.12` for the configured transcript server. |
 | `@upstash/context7-mcp` | Pins version `3.2.5` for the configured documentation server. |
+| override `@modelcontextprotocol/sdk` | Exact `1.32.2` everywhere (task 3354): clears the `<=1.31.0` high advisories (first patched 1.32.0); `@brightdata/mcp` still pins `1.21.2` itself, and its latest release does too, so only an override fixes the tree. |
+| override `zod` | Exact `4.6.7` everywhere (task 3354): clears GHSA-mrhx-c7xc-m3w5 (memory exhaustion; first patched 4.6.6, no 3.x fix exists, so zod-3 consumers are forced onto the zod-4 line the SDK already supports). |
 
 ## Inputs
 
@@ -43,6 +45,8 @@ with `npm ci --prefix ops/mcp-vendor`; the kit builder ships this package.
 
 - The package is private and is not a publishable application artifact. Source: `package.json` (`private`).
 - Each direct server dependency is an exact version, not a floating range. Source: `package.json`; `package-lock.json`.
+- The `overrides` map pins `@modelcontextprotocol/sdk` and `zod` to exact patched versions; npm applies them to the whole vendor tree, so a clean `npm audit --omit=dev` holds without a top-level upgrade (none clears the sdk finding). Source: `package.json` (`overrides`); task 3354.
+- Every vendored server still answers MCP `initialize` + `tools/list` over stdio under the overridden tree (all three probed 2026-10-31: brightdata 5 tools incl. `search_engine` on a dead token, transcript 5, context7 2).
 - The installation verb uses `npm ci --omit=dev`, retaining lockfile-based resolution rather than a startup-time latest-package fetch. Source: `package.json` (`scripts`).
 - Bright Data's configured launcher uses the repository-local installed server path. Source: `ops/bootstrap/mcp-servers.json`; `docs/agent/harness-allowlist.md`.
 
@@ -71,4 +75,5 @@ with `npm ci --prefix ops/mcp-vendor`; the kit builder ships this package.
 
 ## Changelog
 
+- Task 3354 step (a): add exact-version `overrides` for `@modelcontextprotocol/sdk` `1.32.2` and `zod` `4.6.7`; server pins unchanged; `npm audit --omit=dev` now reports 0 vulnerabilities.
 - Task 2409 slice C: describe existing package pins and the local installation boundary; no dependency change.
