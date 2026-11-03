@@ -20,7 +20,7 @@
     "orch:smoke": "node ops/orchestrator/src/main.ts smoke"
   },
   "dependencies": {
-    "minimatch": "10.2.5",
+    "minimatch": "11.0.1",
     "typescript": "5.9.3",
     "yaml": "2.9.0"
   }
